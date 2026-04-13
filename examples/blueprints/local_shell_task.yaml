@@ -1,0 +1,17 @@
+name: local_shell_task
+description: Example blueprint that needs shell, python package, and a local model.
+required_models:
+  - qwen2.5:7b
+required_tools:
+  - shell
+required_packages:
+  - requests
+allowed_shell_commands:
+  - echo
+  - ls
+install_policy:
+  auto: true
+  fallback: true
+execution:
+  type: shell
+  command: ["echo", "hello"]

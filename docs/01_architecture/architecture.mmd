@@ -1,0 +1,47 @@
+graph TD
+
+User[User] --> Input[Input Layer]
+
+Input -->|App| API[API Layer]
+Input -->|TV Box| Local[Local Input / Local Runtime]
+Input -->|Mail| Mail[Mail Channel]
+
+API --> Interface
+Local --> Interface
+Mail --> Interface
+
+Interface[Interface Layer\nNormalization] --> Core[AI Core]
+Core --> EnvMgr[Environment Manager]
+
+Core --> Router[Router]
+Core --> Planner[Planner]
+Core --> Resolver[Capability Resolver]
+
+Planner --> Blueprint[Blueprint]
+Router --> Feature[Feature]
+Blueprint --> Feature
+Blueprint --> Resolver
+Feature --> Resolver
+
+Resolver --> ModelRegistry[Model Registry]
+Resolver --> ToolRegistry[Tool Registry]
+Resolver --> PackageRegistry[Package / Dependency Registry]
+Resolver --> EnvMgr
+
+EnvMgr --> RuntimeProfile[Runtime Profile\nOS / Arch / Shell / Permissions]
+EnvMgr --> Bootstrap[Bootstrap Loader]
+EnvMgr --> PackageInstaller[Package Installer]
+EnvMgr --> ModelPuller[Model Puller]
+EnvMgr --> ToolInstaller[Tool Installer]
+
+Feature --> Service[Service]
+Feature --> Memory[Memory]
+Service --> Memory
+
+Memory --> Response[Response]
+Response --> Output[Output]
+
+Output --> Text[Text]
+Output --> Voice[Voice]
+Output --> Image[Image]
+Output --> File[File]

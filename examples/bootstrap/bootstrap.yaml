@@ -1,0 +1,11 @@
+default_packages:
+  - requests
+  - pyyaml
+default_tools:
+  - shell
+default_models:
+  - qwen2.5:7b
+allowed_shell_commands:
+  - echo
+  - ls
+  - pwd

@@ -1,0 +1,88 @@
+.
+├── api
+│   └── public_api
+├── apps
+│   └── mobile_app
+├── docs
+│   ├── 01_architecture
+│   │   ├── architecture.drawio
+│   │   ├── architecture.mmd
+│   │   ├── architecture.png
+│   │   ├── mermaid-diagram.png
+│   │   └── project_context.md
+│   ├── 02_modules
+│   ├── 03_runtime
+│   ├── 04_blueprint
+│   ├── 05_deployment
+│   ├── 06_apps
+│   └── 07_api
+├── examples
+│   ├── blueprints
+│   │   └── local_shell_task.yaml
+│   └── bootstrap
+│       └── bootstrap.yaml
+├── logs
+├── MODULES.md
+├── nethub_runtime
+│   ├── __init__.py
+│   ├── agents
+│   │   ├── base
+│   │   │   └── base_agent.py
+│   │   ├── executor
+│   │   │   └── executor_agent.py
+│   │   └── planner
+│   │       └──  planner_agent.py
+│   ├── app
+│   │   ├── bootstrap.py
+│   │   └── main.py
+│   ├── blueprint
+│   │   ├── executor.py
+│   │   ├── loader.py
+│   │   └── manifest.py
+│   ├── capability
+│   │   ├── install_plan.py
+│   │   ├── registry.py
+│   │   └── resolver.py
+│   ├── config
+│   │   └── settings.py
+│   ├── core
+│   │   ├── enums.py
+│   │   └── models.py
+│   ├── environment
+│   │   ├── installers
+│   │   │   ├── base.py
+│   │   │   ├── ollama_installer.py
+│   │   │   ├── pip_installer.py
+│   │   │   ├── shell_installer.py
+│   │   │   └── tool_installer.py
+│   │   └── manager.py
+│   ├── execution
+│   │   ├── dispatcher.py
+│   │   ├── pipeline.py
+│   │   └── task_runner.py 
+│   ├── integrations
+│   │   ├── external_api
+│   │   ├── mail
+│   │   ├── storage
+│   │   └── web
+│   ├── models
+│   │   ├── ollama_provider.py
+│   │   └── provider.py
+│   ├── platform
+│   │   ├── detector.py
+│   │   └── os_profile.py
+│   ├── runtime
+│   │   ├── command_runner.py
+│   │   └── policies.py
+│   ├── tools
+│   │   ├── base.py
+│   │   ├── python_tool.py
+│   │   └── shell_tool.py
+│   └── ui
+│       └── tvbox
+├── pyproject.toml
+├── README.md
+├── requirements.txt
+└── structure.txt
+
+41 directories, 45 files
