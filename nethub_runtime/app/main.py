@@ -13,22 +13,24 @@ def start_app() -> dict[str, Any]:
     Application initialization entry.
 
     Responsibilities:
-    - bootstrap runtime environment
-    - load registries and configuration
-    - prepare execution pipeline
-    - return application context
+    - bootstrap runtime
+    - initialize core components
+    - return shared application context
     """
-    LOGGER.info("Initializing application runtime...")
+    LOGGER.info("🔧 Initializing application...")
 
     context = bootstrap_runtime()
 
-    LOGGER.info("Application runtime initialized.")
+    # 这里可以扩展初始化 execution / agent 等
+    context["status"] = "ready"
+
+    LOGGER.info("✅ Application initialized.")
+
     return context
 
 
+# 👉 允许单独调试
 if __name__ == "__main__":
-    # Usually this file is called by nethub_runtime/main.py
-    # but it can also be executed directly for debugging.
     import logging
 
     logging.basicConfig(
@@ -37,5 +39,7 @@ if __name__ == "__main__":
     )
 
     ctx = start_app()
-    print("Application context loaded:")
-    print(ctx)
+
+    print("\n=== App Context ===")
+    for k, v in ctx.items():
+        print(f"{k}: {v}")

@@ -1,44 +1,19 @@
-from __future__ import annotations
+# nethub_runtime/ui/tvbox/main.py
 
-import logging
-import time
+from fastapi import FastAPI
+import uvicorn
 
-LOGGER = logging.getLogger("nethub_runtime.ui.tvbox.main")
-
-
-def setup_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-    )
+app = FastAPI()
 
 
-def start_ui() -> None:
-    """
-    TV Box local UI entry.
-
-    This is currently a placeholder loop.
-    Later you can replace it with:
-    - FastAPI + local web UI
-    - Flask
-    - PySide6
-    - Tkinter
-    - WebView / kiosk frontend
-    """
-    LOGGER.info("TV Box UI starting...")
-    LOGGER.info("TV Box UI ready.")
-
-    try:
-        while True:
-            time.sleep(5)
-            LOGGER.debug("TV Box UI heartbeat...")
-    except KeyboardInterrupt:
-        LOGGER.info("TV Box UI stopped by user.")
+@app.get("/")
+def home():
+    return {"status": "TV Box UI running"}
 
 
-def main() -> None:
-    setup_logging()
-    start_ui()
+def main():
+    print("📺 TV Box UI starting at http://127.0.0.1:7788")
+    uvicorn.run(app, host="0.0.0.0", port=7788)
 
 
 if __name__ == "__main__":
