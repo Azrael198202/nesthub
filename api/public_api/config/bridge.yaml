@@ -1,0 +1,13 @@
+bridge:
+  token_env: HOMEHUB_EXTERNAL_BRIDGE_TOKEN
+im_bindings:
+  line:
+    enabled: true
+    inbound_message_key: text
+    inbound_user_key: userId
+    inbound_chat_key: groupId
+    outbound_target_key: replyToken
+custom_kv:
+  family_code: A001
+  homehub_mode: production
+  preferred_locale: ja-JP
