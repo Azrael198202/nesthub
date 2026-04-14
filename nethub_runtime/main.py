@@ -1,3 +1,24 @@
+import importlib.util
+def start_line_demo():
+    """
+    启动 line_demo.py 的 poll_and_reply 协程（以守护线程方式）。
+    """
+    import threading
+    import asyncio
+    import sys
+    import os
+    # 动态导入 line_demo.py
+    demo_path = os.path.join(os.path.dirname(__file__), "integrations/im/line_demo.py")
+    spec = importlib.util.spec_from_file_location("line_demo", demo_path)
+    line_demo = importlib.util.module_from_spec(spec)
+    sys.modules["line_demo"] = line_demo
+    spec.loader.exec_module(line_demo)
+    # 启动 poll_and_reply 协程
+    def _run():
+        asyncio.run(line_demo.poll_and_reply())
+    t = threading.Thread(target=_run, name="LineDemoThread", daemon=True)
+    t.start()
+    return t
 from __future__ import annotations
 
 import logging
@@ -163,6 +184,13 @@ def main() -> None:
     except Exception as exc:
         LOGGER.exception("Application bootstrap failed: %s", exc)
         raise
+
+    # 启动 line_demo 线程
+    try:
+        start_line_demo()
+        LOGGER.info("line_demo.py started in background thread.")
+    except Exception as exc:
+        LOGGER.exception("Failed to start line_demo.py: %s", exc)
 
     if app_context.get("start_tvbox_ui", True):
         try:

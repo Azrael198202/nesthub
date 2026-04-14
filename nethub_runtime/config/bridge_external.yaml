@@ -1,0 +1,15 @@
+# 外部桥接API配置（用于nethub_runtime主动对接public_api/railway桥）
+bridge_api: "https://nesthub-production.up.railway.app/api/bridge"
+bridge_token_env: HOMEHUB_EXTERNAL_BRIDGE_TOKEN
+
+# 可选：本地直接指定token（优先级高于env）
+bridge_token: "homehubbridge2026k8m4q7v1s9t2"
+
+# 可选：IM平台相关配置
+im:
+  provider: line
+  enabled: true
+  # 其他字段可按需扩展
+
+# 其他可扩展参数
+poll_interval_seconds: 5
