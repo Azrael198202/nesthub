@@ -3,3 +3,9 @@ PyYAML>=6.0,<7
 httpx>=0.27,<1
 packaging>=24.1,<25
 psutil>=6.0,<7
+fastapi
+uvicorn[standard]
+pydantic
+pyyaml
+httpx
+
