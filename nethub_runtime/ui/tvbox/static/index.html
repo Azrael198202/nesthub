@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HomeHub Runtime</title>
+    <link rel="stylesheet" href="/static/assets/app.css" />
+  </head>
+  <body>
+    <div class="installer-overlay" id="installer-overlay" hidden>
+      <div class="installer-modal">
+        <div class="installer-spinner" id="installer-spinner"></div>
+        <p class="eyebrow" id="installer-eyebrow">First Run</p>
+        <h2 id="installer-title">Preparing HomeHub</h2>
+        <p class="installer-text" id="installer-text">HomeHub is checking local tools, models, and document support.</p>
+        <p class="installer-status" id="installer-status"></p>
+        <button class="installer-action remote-target" id="installer-approve" type="button">Approve One-Time Setup</button>
+      </div>
+    </div>
+    <main class="screen">
+      <header class="topbar panel">
+        <div class="brand-block">
+          <p class="eyebrow" id="brand-eyebrow">AI Box for the Living Room</p>
+          <h1>HomeHub</h1>
+        </div>
+        <div class="topbar-center" id="status-strip"></div>
+        <div class="clock-block">
+          <div class="clock-time" id="clock-time"></div>
+          <div class="clock-date" id="clock-date"></div>
+        </div>
+      </header>
+
+      <nav class="tabbar" id="tabbar" aria-label="HomeHub tabs" role="tablist">
+        <button class="tab-chip remote-target is-selected" role="tab" aria-selected="true" aria-controls="panel-home" id="tab-home" data-tab="home" tabindex="0">Home</button>
+        <button class="tab-chip remote-target" role="tab" aria-selected="false" aria-controls="panel-exchange" id="tab-exchange" data-tab="exchange" tabindex="-1">Exchange</button>
+        <button class="tab-chip remote-target" role="tab" aria-selected="false" aria-controls="panel-work" id="tab-work" data-tab="work" tabindex="-1">Work</button>
+        <button class="tab-chip remote-target" role="tab" aria-selected="false" aria-controls="panel-cortex" id="tab-cortex" data-tab="cortex" tabindex="-1">Cortex</button>
+        <button class="tab-chip remote-target" role="tab" aria-selected="false" aria-controls="panel-blueprints" id="tab-blueprints" data-tab="blueprints" tabindex="-1">Blueprints</button>
+        <button class="tab-chip remote-target" role="tab" aria-selected="false" aria-controls="panel-agents" id="tab-agents" data-tab="agents" tabindex="-1">Agents</button>
+        <button class="tab-chip remote-target" role="tab" aria-selected="false" aria-controls="panel-settings" id="tab-settings" data-tab="settings" tabindex="-1">Settings</button>
+      </nav>
+
+      <section class="panel stage">
+        <section class="tab-panel is-visible" id="panel-home" role="tabpanel" aria-labelledby="tab-home">
+          <div class="home-layout">
+            <article class="panel section-card hero-card" id="hero"></article>
+            <div class="home-overview-grid" id="home-overview" hidden></div>
+
+            <div class="home-lower-grid">
+              <article class="panel section-card">
+                <div class="panel-header">
+                  <h2 id="home-assistant-title">Household Assistant</h2>
+                  <span class="pill" id="home-assistant-pill">Starter Layer</span>
+                </div>
+                <div class="module-list" id="modules"></div>
+              </article>
+
+              <article class="panel section-card">
+                <div class="panel-header">
+                  <h2 id="home-dev-title">AI Development Board</h2>
+                  <span class="pill" id="home-dev-pill">Live Workflow</span>
+                </div>
+                <div class="timeline" id="timeline"></div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="panel-agents" role="tabpanel" aria-labelledby="tab-agents" hidden>
+          <div class="stage-grid two-col">
+            <article class="panel section-card">
+              <div class="panel-header">
+                <h2 id="agents-title">Parallel Agents</h2>
+                <span class="pill" id="agents-pill">Core Engine</span>
+              </div>
+              <div class="agent-list" id="agents"></div>
+            </article>
+
+            <article class="panel section-card">
+              <div class="panel-header">
+                <h2 id="models-skills-title">Models and Skills</h2>
+                <span class="pill" id="models-skills-pill">Extensible</span>
+              </div>
+              <div class="agent-runtime-detail" id="agent-runtime-detail"></div>
+              <div class="agent-runtime-timeline" id="agent-runtime-timeline"></div>
+              <div class="split">
+                <div>
+                  <h3 id="models-title">Models</h3>
+                  <ul class="mini-list" id="models"></ul>
+                </div>
+                <div>
+                  <h3 id="skills-title">Skills</h3>
+                  <ul class="mini-list" id="skills"></ul>
+                </div>
+              </div>
+            </article>
+
+          </div>
+        </section>
+
+        <section class="tab-panel" id="panel-exchange" role="tabpanel" aria-labelledby="tab-exchange" hidden>
+          <article class="panel section-card exchange-chat-card">
+            <div class="panel-header">
+              <h2 id="test-title">Conversation Workspace</h2>
+              <div class="exchange-header-right">
+                <div class="exchange-hover-trigger" tabindex="0">
+                  <span class="pill" id="test-pill">Voice / Text / Files</span>
+                  <div class="exchange-hover-popover">
+                    <div class="exchange-voice-summary exchange-voice-summary-header" id="voice"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="test-upload-meta" id="test-upload-meta"></div>
+            <div class="conversation-list test-conversation-list exchange-thread" id="test-conversation"></div>
+            <div class="exchange-composer">
+              <div class="exchange-toolbar">
+                <button id="test-image-pick" class="exchange-tool-button remote-target" type="button" title="Attach image">🖼</button>
+                <input id="test-image-input" type="file" accept="image/*" hidden>
+                <button id="test-file-pick" class="exchange-tool-button remote-target" type="button" title="Attach file">📎</button>
+                <input id="test-file-input" type="file" accept=".pdf,.txt,.md,.doc,.docx,.xls,.xlsx,.ppt,.pptx,image/*" hidden>
+                <button class="exchange-tool-button mic-orb remote-target focusable-card" id="mic-orb" tabindex="0" type="button" title="Voice input">
+                  <div class="mic-core">MIC</div>
+                </button>
+              </div>
+              <div class="exchange-input-wrap">
+                <textarea id="test-input" class="settings-input test-input exchange-textarea" rows="3" placeholder="Type a message for HomeHub."></textarea>
+              </div>
+              <div class="exchange-send-wrap">
+                <button id="test-send" class="test-action remote-target exchange-send-button" type="button">Send</button>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section class="tab-panel" id="panel-cortex" role="tabpanel" aria-labelledby="tab-cortex" hidden>
+          <div class="cortex-layout">
+            <div class="cortex-primary-column">
+              <article class="panel section-card">
+                <div class="panel-header">
+                  <h2 id="cortex-title">Cortex Unpacked</h2>
+                  <span class="pill" id="cortex-pill">Request Loop</span>
+                </div>
+                <div class="voice-guidance" id="cortex-guidance">Test a request and inspect how HomeHub's cortex decides, plans, and learns.</div>
+                <div id="cortex-overview"></div>
+              </article>
+
+              <article class="panel section-card">
+                <div class="panel-header">
+                  <h2 id="cortex-test-title">Cortex Test Console</h2>
+                  <span class="pill" id="cortex-test-pill">Shared Brain</span>
+                </div>
+                <div class="cortex-form-grid">
+                  <textarea id="cortex-request-input" class="settings-input full-span custom-summary" rows="4" placeholder="Describe a request for HomeHub to analyze."></textarea>
+                  <select id="cortex-task-type" class="settings-input remote-target">
+                    <option value="general_chat">general_chat</option>
+                    <option value="agent_creation">agent_creation</option>
+                    <option value="document_analysis">document_analysis</option>
+                    <option value="ocr_analysis">ocr_analysis</option>
+                    <option value="network_lookup">network_lookup</option>
+                  </select>
+                  <input id="cortex-locale-input" class="settings-input" type="text" placeholder="Locale" value="zh-CN" />
+                  <input id="cortex-input-modes" class="settings-input full-span" type="text" placeholder="text,image,voice" value="text" />
+                  <label class="settings-toggle"><input id="cortex-requires-network" type="checkbox" checked> <span>Use network research</span></label>
+                  <label class="settings-toggle"><input id="cortex-require-artifacts" type="checkbox"> <span>Need artifacts</span></label>
+                  <label class="settings-toggle"><input id="cortex-speak-reply" type="checkbox"> <span>Need voice reply</span></label>
+                </div>
+                <div class="studio-actions">
+                  <button id="cortex-run-test" class="test-action remote-target" type="button">Run Cortex Analysis</button>
+                </div>
+                <div class="mail-tester-status" id="cortex-test-status"></div>
+              </article>
+            </div>
+
+            <div class="cortex-secondary-column">
+              <article class="panel section-card">
+                <div class="panel-header compact">
+                  <h3 id="cortex-loop-title">Request Loop</h3>
+                </div>
+                <div class="cortex-step-list" id="cortex-loop"></div>
+              </article>
+
+              <article class="panel section-card">
+                <div class="panel-header compact">
+                  <h3 id="cortex-architecture-title">Architecture Explorer</h3>
+                </div>
+                <div class="cortex-zone-list" id="cortex-architecture"></div>
+              </article>
+
+              <article class="panel section-card">
+                <div class="panel-header compact">
+                  <h3 id="cortex-capability-title">Capability Explorer</h3>
+                </div>
+                <div class="cortex-capability-list" id="cortex-capabilities"></div>
+              </article>
+
+              <article class="panel section-card">
+                <div class="panel-header compact">
+                  <h3 id="cortex-status-title">Feature Status</h3>
+                </div>
+                <div class="cortex-status-list" id="cortex-status"></div>
+              </article>
+
+              <article class="panel section-card">
+                <div class="panel-header compact">
+                  <h3 id="cortex-json-title">Raw Blueprint</h3>
+                </div>
+                <pre class="cortex-json-view" id="cortex-json"></pre>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="panel-work" role="tabpanel" aria-labelledby="tab-work" hidden>
+          <div class="work-layout">
+            <article class="panel section-card work-list-card">
+              <div class="panel-header">
+                <h2 id="work-title">Work</h2>
+                <span class="pill" id="work-pill">Execution Board</span>
+              </div>
+              <div class="voice-guidance" id="work-guidance">Watch how HomeHub turns a request into a running pipeline of skills and agents.</div>
+              <div class="work-request-list" id="work-request-list"></div>
+            </article>
+
+            <article class="panel section-card work-pipeline-card">
+              <div class="panel-header">
+                <h2 id="work-factory-title">Factory Line</h2>
+                <span class="pill" id="work-factory-pill">Skill / Agent Pipeline</span>
+              </div>
+              <div class="work-pipeline-scroll" id="work-pipeline-scroll">
+                <div class="work-pipeline" id="work-pipeline"></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="panel-blueprints" role="tabpanel" aria-labelledby="tab-blueprints" hidden>
+          <article class="panel section-card blueprint-studio-shell">
+            <div class="panel-header">
+              <h2 id="test-blueprints-title">Blueprint Studio</h2>
+              <span class="pill" id="test-blueprints-pill">Generate Feature</span>
+            </div>
+            <div class="blueprint-studio-content">
+              <div class="studio-list blueprint-scroll-area" id="studio-blueprints"></div>
+              <div class="blueprint-sticky-actions" id="studio-actions-log">
+                <div class="settings-card"><p>Select a blueprint to inspect details.</p></div>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section class="tab-panel" id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
+          <div class="settings-shell">
+            <aside class="panel section-card settings-nav-card">
+              <div class="panel-header">
+                <h2 id="settings-directory-title">Settings</h2>
+                <span class="pill" id="settings-directory-pill">Directory</span>
+              </div>
+              <div class="settings-directory-list" id="settings-directory-list"></div>
+            </aside>
+            <section class="panel section-card settings-detail-card">
+              <div class="settings-detail-scroll" id="settings-detail-scroll">
+                <div id="settings-detail"></div>
+              </div>
+            </section>
+          </div>
+        </section>
+      </section>
+
+      <section class="panel dialogue-dock">
+        <div class="dock-header">
+          <div>
+            <p class="eyebrow" id="dock-eyebrow">Conversation Dock</p>
+            <h2 id="dock-title">Current Spoken Request</h2>
+          </div>
+          <div class="dock-mic-status">
+            <span class="mic-badge"></span>
+            <strong id="mic-status">Listening</strong>
+          </div>
+        </div>
+        <div class="spoken-line" id="spoken-line"></div>
+      </section>
+    </main>
+    <section class="reminder-overlay" id="reminder-overlay" hidden aria-live="assertive">
+      <div class="reminder-modal panel">
+        <p class="eyebrow" id="reminder-eyebrow">Time Reminder</p>
+        <h2 id="reminder-title">No reminder</h2>
+        <p class="reminder-time" id="reminder-time"></p>
+        <p class="reminder-notes" id="reminder-notes"></p>
+        <button class="reminder-action remote-target" id="reminder-complete" type="button">Mark Complete</button>
+      </div>
+    </section>
+    <aside class="floating-buddy-shell" id="floating-buddy" aria-live="polite"></aside>
+    <script src="/static/assets/app.js"></script>
+  </body>
+</html>

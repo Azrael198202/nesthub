@@ -1,0 +1,30 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    
+    {
+      "name": "Run NetHub Runtime (main)",
+      "type": "python",
+      "request": "launch",
+      "module": "nethub_runtime.main",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Run App (nethub_runtime.app.main)",
+      "type": "python",
+      "request": "launch",
+      "module": "nethub_runtime.app.main",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Run TV Box UI (nethub_runtime.ui.tvbox.main)",
+      "type": "python",
+      "request": "launch",
+      "module": "nethub_runtime.ui.tvbox.main",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ]
+}

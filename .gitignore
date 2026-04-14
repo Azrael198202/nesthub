@@ -1,0 +1,40 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Unit test / coverage reports
+.pytest_cache/
+.coverage
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+venv.bak/
+
+# Environment variables file (do not commit secrets)
+.env
+.env.*
+
+# pyenv
+.python-version
+
+# mypy
+.mypy_cache/
+
+# VS Code workspace storage (keep settings files, ignore workspace storage)
+.vscode/.workspace/*
+
+# Local python environment file (if you store interpreter info)
+python_env.json
+
+# Editor backups
+*~
+.DS_Store

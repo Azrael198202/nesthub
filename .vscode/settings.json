@@ -1,0 +1,12 @@
+{
+  // Use a workspace-local virtual environment by default. Adjust if you use a different path.
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+
+  // Help the language server locate the package root so "nethub_runtime" imports resolve.
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}"
+  ],
+
+  // Avoid forcing test discovery here; the repo may not use pytest by default.
+  "python.testing.pytestEnabled": false
+}

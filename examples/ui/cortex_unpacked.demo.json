@@ -1,0 +1,97 @@
+{
+  "ok": true,
+  "seed": {
+    "agentId": "homehub-shared-brain",
+    "agentName": "HomeHub Shared Brain",
+    "stage": "shared-brain"
+  },
+  "request": {
+    "command": "Analyze a household expense request and decide whether to reuse or create an agent.",
+    "locale": "zh-CN",
+    "taskType": "document_analysis",
+    "inputModes": ["text", "image"],
+    "requireArtifacts": true,
+    "requiresNetwork": false,
+    "speakReply": false
+  },
+  "item": {
+    "summary": {
+      "agentName": "HomeHub Shared Brain",
+      "brainMode": "execution-first",
+      "primaryPlanner": "gpt-5.4-mini",
+      "primaryExecutor": "gpt-5.4-mini"
+    },
+    "autonomousCreation": {
+      "decision": "reuse_then_extend",
+      "requirement": {
+        "requiredCapabilities": ["ocr", "categorization", "timeline"]
+      }
+    },
+    "requestLoop": {
+      "steps": [
+        {
+          "id": "intake",
+          "label": "Request Intake",
+          "purpose": "Normalize multimodal request and extract goals",
+          "modelRole": "router"
+        },
+        {
+          "id": "retrieve",
+          "label": "Knowledge Retrieval",
+          "purpose": "Check existing blueprints and reminder memory",
+          "modelRole": "retriever"
+        },
+        {
+          "id": "plan",
+          "label": "Execution Plan",
+          "purpose": "Compose OCR + summary + reminder actions",
+          "decisionMode": "hybrid"
+        }
+      ]
+    },
+    "architectureExplorer": {
+      "zones": [
+        {
+          "id": "conversation",
+          "label": "Conversation",
+          "purpose": "User input and follow-up handling",
+          "modules": ["voice_router", "conversation_log"]
+        },
+        {
+          "id": "work",
+          "label": "Work Pipeline",
+          "purpose": "Task decomposition and execution stages",
+          "modules": ["planner", "agent_runtime", "packager"]
+        }
+      ]
+    },
+    "capabilityExplorer": {
+      "groups": [
+        {
+          "id": "analysis",
+          "label": "Analysis",
+          "items": ["OCR", "Cost Categorization", "Trend Summary"]
+        },
+        {
+          "id": "automation",
+          "label": "Automation",
+          "items": ["Reminder Generation", "Follow-up Tasking"]
+        }
+      ]
+    },
+    "featureStatus": {
+      "items": [
+        {
+          "id": "family_finance",
+          "label": "Family Finance",
+          "status": "stable"
+        },
+        {
+          "id": "mail_bridge",
+          "label": "Mail Bridge",
+          "status": "experimental"
+        }
+      ]
+    }
+  }
+}
