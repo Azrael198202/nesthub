@@ -1,8 +1,6 @@
 .
 ├── api
 │   └── public_api
-├── apps
-│   └── mobile_app
 ├── docs
 │   ├── 01_architecture
 │   │   ├── architecture.drawio
@@ -15,74 +13,141 @@
 │   ├── 04_blueprint
 │   ├── 05_deployment
 │   ├── 06_apps
-│   └── 07_api
+│   ├── 07_api
+│   └── 08_ui
+│       └── TVBOX_HANDOVER.md
 ├── examples
 │   ├── blueprints
 │   │   └── local_shell_task.yaml
-│   └── bootstrap
-│       └── bootstrap.yaml
+│   ├── bootstrap
+│   │   └── bootstrap.yaml
+│   └── ui
+│       ├── cortex_unpacked.demo.json
+│       └── dashboard.demo.json
 ├── logs
 ├── MODULES.md
 ├── nethub_runtime
-│   ├── __init__.py
 │   ├── agents
 │   │   ├── base
 │   │   │   └── base_agent.py
 │   │   ├── executor
 │   │   │   └── executor_agent.py
 │   │   └── planner
-│   │       └──  planner_agent.py
+│   │       └── planner_agent.py
 │   ├── app
 │   │   ├── bootstrap.py
-│   │   └── main.py
+│   │   ├── main.py
+│   │   └── __pycache__
+│   │       ├── bootstrap.cpython-312.pyc
+│   │       └── main.cpython-312.pyc
 │   ├── blueprint
 │   │   ├── executor.py
 │   │   ├── loader.py
 │   │   └── manifest.py
 │   ├── capability
 │   │   ├── install_plan.py
+│   │   ├── __pycache__
+│   │   │   └── registry.cpython-312.pyc
 │   │   ├── registry.py
 │   │   └── resolver.py
 │   ├── config
+│   │   ├── __pycache__
+│   │   │   ├── secrets.cpython-312.pyc
+│   │   │   └── settings.cpython-312.pyc
+│   │   ├── secrets.py
 │   │   └── settings.py
 │   ├── core
 │   │   ├── enums.py
-│   │   └── models.py
+│   │   ├── models.py
+│   │   └── __pycache__
+│   │       ├── enums.cpython-312.pyc
+│   │       └── models.cpython-312.pyc
 │   ├── environment
 │   │   ├── installers
 │   │   │   ├── base.py
 │   │   │   ├── ollama_installer.py
 │   │   │   ├── pip_installer.py
+│   │   │   ├── __pycache__
+│   │   │   │   ├── base.cpython-312.pyc
+│   │   │   │   ├── ollama_installer.cpython-312.pyc
+│   │   │   │   ├── pip_installer.cpython-312.pyc
+│   │   │   │   └── tool_installer.cpython-312.pyc
 │   │   │   ├── shell_installer.py
 │   │   │   └── tool_installer.py
-│   │   └── manager.py
+│   │   ├── manager.py
+│   │   └── __pycache__
+│   │       └── manager.cpython-312.pyc
 │   ├── execution
 │   │   ├── dispatcher.py
 │   │   ├── pipeline.py
-│   │   └── task_runner.py 
+│   │   └── task_runner.py
+│   ├── __init__.py
 │   ├── integrations
 │   │   ├── external_api
+│   │   ├── im
 │   │   ├── mail
 │   │   ├── storage
 │   │   └── web
+│   ├── main.py
 │   ├── models
 │   │   ├── ollama_provider.py
 │   │   └── provider.py
 │   ├── platform
 │   │   ├── detector.py
-│   │   └── os_profile.py
+│   │   ├── os_profile.py
+│   │   └── __pycache__
+│   │       ├── detector.cpython-312.pyc
+│   │       └── os_profile.cpython-312.pyc
+│   ├── __pycache__
+│   │   ├── __init__.cpython-312.pyc
+│   │   └── main.cpython-312.pyc
 │   ├── runtime
 │   │   ├── command_runner.py
-│   │   └── policies.py
+│   │   ├── policies.py
+│   │   └── __pycache__
+│   │       └── command_runner.cpython-312.pyc
 │   ├── tools
 │   │   ├── base.py
 │   │   ├── python_tool.py
 │   │   └── shell_tool.py
 │   └── ui
 │       └── tvbox
+│           ├── components
+│           │   ├── i18n.py
+│           │   ├── __init__.py
+│           │   └── __pycache__
+│           │       ├── i18n.cpython-312.pyc
+│           │       └── __init__.cpython-312.pyc
+│           ├── i18n
+│           │   ├── __init__.py
+│           │   ├── locales
+│           │   │   ├── en-US.json
+│           │   │   ├── ja-JP.json
+│           │   │   └── zh-CN.json
+│           │   ├── __pycache__
+│           │   │   ├── __init__.cpython-312.pyc
+│           │   │   └── settings_texts.cpython-312.pyc
+│           │   └── settings_texts.py
+│           ├── main.py
+│           ├── __pycache__
+│           │   └── main.cpython-312.pyc
+│           └── static
+│               ├── assets
+│               │   ├── app.css
+│               │   └── app.js
+│               ├── generated
+│               │   └── vendor
+│               │       └── three
+│               │           ├── GLTFLoader.js
+│               │           ├── three.core.js
+│               │           ├── three.module.js
+│               │           └── utils
+│               │               ├── BufferGeometryUtils.js
+│               │               └── SkeletonUtils.js
+│               └── index.html
 ├── pyproject.toml
 ├── README.md
 ├── requirements.txt
 └── structure.txt
 
-41 directories, 45 files
+63 directories, 88 files
