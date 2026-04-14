@@ -1,13 +1,33 @@
 bridge:
-  token_env: HOMEHUB_EXTERNAL_BRIDGE_TOKEN
-im_bindings:
-  line:
-    enabled: true
-    inbound_message_key: text
-    inbound_user_key: userId
-    inbound_chat_key: groupId
-    outbound_target_key: replyToken
-custom_kv:
-  family_code: A001
-  homehub_mode: production
-  preferred_locale: ja-JP
+  name: homehub-external-bridge
+  mode: single_home
+  token_env: homehubbridge2026k8m4q7v1s9t2
+
+hub:
+  family_id: home-001
+  poll_interval_seconds: 5
+  result_ttl_seconds: 86400
+
+im:
+  provider: line
+  enabled: true
+  mapping:
+    user_id_key: userId
+    chat_id_key: groupId
+    message_text_key: text
+    message_id_key: messageId
+    timestamp_key: timestamp
+  defaults:
+    channel: default
+    language: ja
+  extra:
+    reply_mode: passive
+    allow_push_result: true
+
+kv:
+  home_name: my-homehub
+  timezone: Asia/Tokyo
+  im_label: family-im
+  notes: single family deployment only
+  line_channel_access_token_env: G9TPTDNmVFhgfsdi043mmn8U0CG3HzvNAGWx+ERgovWiBUyByf4Rkdlg89UC1DIzUXfQlMeVBwoYxAMehSLDRjLtFbsTrlPVaAIoYCvaUaLX5Yqvkl6otARyDDEP16xiOzKspghqP7HIJMVp4rwTGQdB04t89/1O/w1cDnyilFU=
+  line_channel_secret_env: 3d5e8d1319d04ac0ed76790593c939d1
