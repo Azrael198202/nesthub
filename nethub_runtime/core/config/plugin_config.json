@@ -1,0 +1,5 @@
+{
+  "intent_analyzer_plugins": [],
+  "task_decomposer_plugins": [],
+  "workflow_planner_plugins": []
+}

@@ -1,0 +1,116 @@
+{
+  "data_ops:data_record": {
+    "blueprint_id": "bp_data_record",
+    "name": "Generic Data Record Blueprint",
+    "domain": "data_ops",
+    "intent": "data_record",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "records",
+      "summary"
+    ],
+    "steps": [
+      "extract_records",
+      "persist_records"
+    ],
+    "metadata": {}
+  },
+  "data_ops:data_query": {
+    "blueprint_id": "bp_data_query",
+    "name": "Generic Data Query Blueprint",
+    "domain": "data_ops",
+    "intent": "data_query",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "aggregation",
+      "summary"
+    ],
+    "steps": [
+      "parse_query",
+      "aggregate_query"
+    ],
+    "metadata": {}
+  },
+  "Generic Data Record Blueprint": {
+    "blueprint_id": "bp_data_record",
+    "name": "Generic Data Record Blueprint",
+    "domain": "data_ops",
+    "intent": "data_record",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "records",
+      "summary"
+    ],
+    "steps": [
+      "extract_records",
+      "persist_records"
+    ],
+    "metadata": {}
+  },
+  "Generic Data Query Blueprint": {
+    "blueprint_id": "bp_data_query",
+    "name": "Generic Data Query Blueprint",
+    "domain": "data_ops",
+    "intent": "data_query",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "aggregation",
+      "summary"
+    ],
+    "steps": [
+      "parse_query",
+      "aggregate_query"
+    ],
+    "metadata": {}
+  },
+  "multimodal_ops:ocr_task": {
+    "blueprint_id": "blueprint_1f3895c12840",
+    "name": "multimodal_ops:ocr_task:generated",
+    "domain": "multimodal_ops",
+    "intent": "ocr_task",
+    "inputs": [
+      "input_text",
+      "context"
+    ],
+    "outputs": [
+      "artifact"
+    ],
+    "steps": [
+      "ocr_extract"
+    ],
+    "metadata": {
+      "generated": true
+    }
+  },
+  "multimodal_ops:ocr_task:generated": {
+    "blueprint_id": "blueprint_1f3895c12840",
+    "name": "multimodal_ops:ocr_task:generated",
+    "domain": "multimodal_ops",
+    "intent": "ocr_task",
+    "inputs": [
+      "input_text",
+      "context"
+    ],
+    "outputs": [
+      "artifact"
+    ],
+    "steps": [
+      "ocr_extract"
+    ],
+    "metadata": {
+      "generated": true
+    }
+  }
+}

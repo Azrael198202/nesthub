@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+
+from nethub_runtime.core.config.settings import PLUGIN_CONFIG_PATH
 from nethub_runtime.core.schemas.task_schema import SubTask, TaskSchema
 from nethub_runtime.core.schemas.workflow_schema import WorkflowSchema, WorkflowStepSchema
+from nethub_runtime.core.services.plugin_loader import load_plugin
 from nethub_runtime.core.services.plugin_base import PluginBase
 from nethub_runtime.core.utils.id_generator import generate_id
 
@@ -38,10 +42,22 @@ class WorkflowPlanner:
     def __init__(self) -> None:
         self.plugins: list[PluginBase] = []
         self.register_plugin(DefaultWorkflowPlannerPlugin())
+        self.load_plugins_from_config()
 
     def register_plugin(self, plugin: PluginBase) -> None:
         self.plugins.append(plugin)
         self.plugins.sort(key=lambda item: getattr(item, "priority", 0), reverse=True)
+
+    def unregister_plugin(self, plugin_type: type[PluginBase]) -> None:
+        self.plugins = [item for item in self.plugins if not isinstance(item, plugin_type)]
+
+    def load_plugins_from_config(self) -> None:
+        if not PLUGIN_CONFIG_PATH.exists():
+            return
+        payload = json.loads(PLUGIN_CONFIG_PATH.read_text(encoding="utf-8"))
+        for plugin_path in payload.get("workflow_planner_plugins", []):
+            plugin = load_plugin(plugin_path)
+            self.register_plugin(plugin)
 
     async def plan(self, task: TaskSchema, subtasks: list[SubTask]) -> WorkflowSchema:
         for plugin in self.plugins:

@@ -43,9 +43,13 @@ class BlueprintResolver:
         key = f"{task.domain}:{task.intent}"
         item = self.registry.get(key)
         if item:
+            if isinstance(item, dict):
+                return [BlueprintSchema(**item)]
             return [item]
         for name in self.registry.list():
             candidate = self.registry.get(name)
+            if isinstance(candidate, dict):
+                candidate = BlueprintSchema(**candidate)
             if isinstance(candidate, BlueprintSchema) and set(candidate.steps).issuperset({s.name for s in workflow.steps}):
                 return [candidate]
         return []

@@ -44,6 +44,11 @@ class TestCoreSceneBudget(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(step["name"], "ocr_extract")
         self.assertEqual(step["capability"]["model_choice"]["model"], "paddleocr")
 
+    async def test_reload_plugins_runtime(self) -> None:
+        result = self.core.reload_plugins()
+        self.assertEqual(result["status"], "reloaded")
+        self.assertGreaterEqual(result["intent_analyzer_plugins"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

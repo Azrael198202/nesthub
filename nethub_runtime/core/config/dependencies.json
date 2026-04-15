@@ -1,0 +1,10 @@
+{
+  "python_packages": [
+    "pydantic",
+    "fastapi"
+  ],
+  "shell_tools": [
+    "bash"
+  ],
+  "auto_install": false
+}

@@ -1,0 +1,22 @@
+{
+  "allowed_output_formats": [
+    "dict",
+    "json",
+    "csv"
+  ],
+  "allowed_tool_names": [
+    "parser",
+    "query_parser",
+    "query_engine",
+    "ocr_engine",
+    "stt_engine",
+    "tts_engine",
+    "image_gen",
+    "video_gen",
+    "file_builder",
+    "web_automation",
+    "summarizer",
+    "session_store",
+    "none"
+  ]
+}

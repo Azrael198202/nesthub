@@ -5,10 +5,11 @@ import re
 from pathlib import Path
 from typing import Any
 
-from nethub_runtime.core.config.settings import INTENT_POLICY_PATH, ensure_core_config_dir
+from nethub_runtime.core.config.settings import INTENT_POLICY_PATH, PLUGIN_CONFIG_PATH, ensure_core_config_dir
 from nethub_runtime.core.schemas.context_schema import CoreContextSchema
 from nethub_runtime.core.schemas.task_schema import TaskSchema
 from nethub_runtime.core.services.intent_policy_manager import IntentPolicyManager
+from nethub_runtime.core.services.plugin_loader import load_plugin
 from nethub_runtime.core.services.plugin_base import PluginBase
 from nethub_runtime.core.utils.id_generator import generate_id
 
@@ -152,10 +153,22 @@ class IntentAnalyzer:
         self.plugins: list[PluginBase] = []
         self.register_plugin(SemanticIntentPlugin())
         self.register_plugin(DefaultIntentPlugin())
+        self.load_plugins_from_config()
 
     def register_plugin(self, plugin: PluginBase) -> None:
         self.plugins.append(plugin)
         self.plugins.sort(key=lambda item: getattr(item, "priority", 0), reverse=True)
+
+    def unregister_plugin(self, plugin_type: type[PluginBase]) -> None:
+        self.plugins = [item for item in self.plugins if not isinstance(item, plugin_type)]
+
+    def load_plugins_from_config(self) -> None:
+        if not PLUGIN_CONFIG_PATH.exists():
+            return
+        payload = json.loads(PLUGIN_CONFIG_PATH.read_text(encoding="utf-8"))
+        for plugin_path in payload.get("intent_analyzer_plugins", []):
+            plugin = load_plugin(plugin_path)
+            self.register_plugin(plugin)
 
     async def analyze(self, text: str, context: CoreContextSchema) -> TaskSchema:
         for plugin in self.plugins:
