@@ -47,12 +47,14 @@ class ExecutionCoordinator:
             "tokenizer": {"preferred": "regex", "fallback": "regex", "min_token_length": 2},
             "semantic_matching": {
                 "method": "embedding_or_token",
-                "embedding_model": "",
+                "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
                 "similarity_threshold": 0.62,
                 "fallback_to_external_threshold": 0.35,
             },
             "normalization": {"text_replace": {}, "synonyms": {}},
-            "entity_aliases": {"actor": {}, "label": {}},
+            "entity_aliases": {"actor": {}},
+            "label_taxonomy": {},
+            "semantic_label_threshold": 0.32,
             "ignored_query_tokens": [],
             "external_semantic_router": {"enabled": False},
         }
@@ -212,11 +214,9 @@ class ExecutionCoordinator:
         return "self"
 
     def _infer_label(self, text: str) -> str:
-        alias = self.semantic_policy.get("entity_aliases", {}).get("label", {})
-        normalized = self._normalize_text(text)
-        for canonical, aliases in alias.items():
-            if any(self._normalize_text(a) in normalized for a in aliases):
-                return canonical
+        semantic_label = self._semantic_label_from_text(text)
+        if semantic_label:
+            return semantic_label
         return "other"
 
     def _parse_query(self, text: str, existing_records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -233,6 +233,9 @@ class ExecutionCoordinator:
         terms = [tok for tok in tokens if tok not in stopwords and tok not in ignored_tokens]
 
         filters = self._infer_alias_filters(text)
+        semantic_label = self._semantic_label_from_text(text)
+        if semantic_label:
+            filters["label"] = semantic_label
         m = re.search(r"([\u4e00-\u9fffA-Za-z0-9]{2,})地区", text)
         if m:
             filters["location_keyword"] = m.group(1)
@@ -252,6 +255,10 @@ class ExecutionCoordinator:
     def _find_terms_from_records(self, query_text: str, existing_records: list[dict[str, Any]]) -> list[str]:
         terms: list[str] = []
         query_tokens = self._tokenize(query_text)
+        ignored_tokens = {
+            self._normalize_text(token)
+            for token in self.semantic_policy.get("ignored_query_tokens", [])
+        }
         norm_query = self._normalize_text(query_text)
         for item in existing_records:
             for field in ("content", "location", "label", "actor"):
@@ -259,9 +266,14 @@ class ExecutionCoordinator:
                 if len(value) < 2:
                     continue
                 if value in norm_query and value not in terms:
+                    if value in ignored_tokens:
+                        continue
                     terms.append(value)
                     continue
                 for token in query_tokens:
+                    normalized_token = self._normalize_text(token)
+                    if normalized_token in ignored_tokens:
+                        continue
                     if token in value and token not in terms:
                         terms.append(token)
         return terms
@@ -440,7 +452,7 @@ class ExecutionCoordinator:
         filtered = list(records)
         time_marker = query.get("time_marker")
         if time_marker and time_marker != "unspecified":
-            filtered = [item for item in filtered if item.get("time") == time_marker or time_marker in str(item.get("time"))]
+            filtered = [item for item in filtered if self._record_matches_time_marker(item, str(time_marker))]
         if "actor" in filters:
             filtered = [item for item in filtered if str(item.get("actor", "")) == str(filters["actor"])]
         if "label" in filters:
@@ -518,11 +530,74 @@ class ExecutionCoordinator:
         aliases = self.semantic_policy.get("entity_aliases", {})
         normalized_query = self._normalize_text(query_text)
         for field, mapping in aliases.items():
+            if field == "label":
+                continue
             for canonical, alias_list in mapping.items():
                 if any(self._normalize_text(alias) in normalized_query for alias in alias_list):
                     filters[field] = canonical
                     break
         return filters
+
+    def _semantic_label_from_text(self, text: str) -> str | None:
+        taxonomy = self.semantic_policy.get("label_taxonomy", {})
+        if not isinstance(taxonomy, dict) or not taxonomy:
+            return None
+
+        normalized_text = self._normalize_text(text)
+        scored_labels: list[tuple[float, str]] = []
+        threshold = float(self.semantic_policy.get("semantic_label_threshold", 0.32))
+        margin_threshold = float(self.semantic_policy.get("semantic_label_margin", 0.08))
+
+        for label, config in taxonomy.items():
+            if not isinstance(config, dict):
+                continue
+            description = str(config.get("description", "")).strip()
+            examples = config.get("examples", [])
+            profile_text = " ".join([description, *[str(item) for item in examples]])
+            if not profile_text.strip():
+                continue
+            score = self._embedding_similarity(normalized_text, self._normalize_text(profile_text))
+            scored_labels.append((score, str(label)))
+
+        if not scored_labels:
+            return None
+
+        scored_labels.sort(reverse=True)
+        best_score, best_label = scored_labels[0]
+        second_score = scored_labels[1][0] if len(scored_labels) > 1 else 0.0
+        if best_score >= threshold and (best_score - second_score) >= margin_threshold:
+            return best_label
+        return None
+
+    def _record_matches_time_marker(self, item: dict[str, Any], time_marker: str) -> bool:
+        normalized_marker = self._normalize_text(time_marker)
+        record_time = self._normalize_text(str(item.get("time", "")))
+
+        if not normalized_marker or normalized_marker == "unspecified":
+            return True
+        if normalized_marker in record_time:
+            return True
+
+        created_at_raw = str(item.get("created_at", "")).strip()
+        created_at = None
+        if created_at_raw:
+            try:
+                created_at = datetime.fromisoformat(created_at_raw.replace("Z", "+00:00"))
+            except Exception:
+                created_at = None
+
+        now = datetime.now(UTC)
+        if normalized_marker in {"今天", "今日"}:
+            if record_time in {"今天", "今日"}:
+                return True
+            return created_at.date() == now.date() if created_at else False
+        if normalized_marker in {"这个月", "本月"}:
+            if record_time in {"今天", "今日", "这个月", "本月", "unspecified"}:
+                return True if record_time != "上周" else False
+            return bool(created_at and created_at.year == now.year and created_at.month == now.month)
+        if normalized_marker in {"上周", "上周末"}:
+            return record_time.startswith("上周")
+        return False
 
     def _token_similarity(self, left: str, right: str) -> float:
         left_tokens = set(self._tokenize(left))

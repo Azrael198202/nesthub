@@ -6,7 +6,7 @@
   },
   "semantic_matching": {
     "method": "embedding_or_token",
-    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "embedding_model": "paraphrase-multilingual-MiniLM-L12-v2",
     "similarity_threshold": 0.62,
     "fallback_to_external_threshold": 0.35
   },
@@ -40,6 +40,47 @@
       ]
     }
   },
+  "semantic_label_threshold": 0.2,
+  "semantic_label_margin": 0.08,
+  "label_taxonomy": {
+    "food_and_drink": {
+      "description": "expense related to dining, meals, beverages, cafes, restaurants, noodles, lunch, dinner, drinks and consumption of food; 与外出就餐、饮品消费、咖啡店、面馆、餐馆、聚餐、早餐午餐晚餐相关的支出",
+      "examples": [
+        "restaurant meal",
+        "coffee beverage",
+        "ramen shop dining",
+        "breakfast lunch dinner snack",
+        "外出吃饭消费",
+        "咖啡茶饮支出",
+        "拉面店就餐",
+        "餐馆堂食或外卖"
+      ]
+    },
+    "shopping": {
+      "description": "expense related to purchasing goods, supermarket items, books, daily necessities, retail shopping and merchandise; 与购买商品、超市采购、日用品、书籍、零售购物相关的支出",
+      "examples": [
+        "supermarket purchase",
+        "buy book",
+        "shopping mall retail",
+        "daily goods groceries",
+        "超市购物",
+        "购买日用品",
+        "商场零售消费"
+      ]
+    },
+    "entertainment": {
+      "description": "expense related to movies, games, leisure, tickets, performances and entertainment activities; 与电影、游戏、门票、演出、休闲娱乐活动相关的支出",
+      "examples": [
+        "movie ticket",
+        "game purchase",
+        "concert leisure",
+        "entertainment activity",
+        "电影票",
+        "演出门票",
+        "休闲娱乐消费"
+      ]
+    }
+  },
   "entity_aliases": {
     "actor": {
       "self": [
@@ -54,24 +95,6 @@
       "朋友": [
         "朋友",
         "同事"
-      ]
-    },
-    "label": {
-      "food_and_drink": [
-        "餐饮",
-        "吃饭",
-        "咖啡",
-        "拉面"
-      ],
-      "shopping": [
-        "购物",
-        "超市",
-        "买东西"
-      ],
-      "entertainment": [
-        "娱乐",
-        "电影",
-        "游戏"
       ]
     }
   },

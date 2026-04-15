@@ -151,6 +151,9 @@ class AICore:
         ctx = self.context_manager.load(context)
         ctx = self.context_manager.enrich(ctx)
         self.logger.info(f"🔄 Handling request trace={ctx.trace_id} session={ctx.session_id}")
+        workflow_payload = None
+        blueprints_payload: list[dict[str, Any]] = []
+        agent_payload = None
         
         try:
             # ========== Step 1: 意图分析 ==========
@@ -178,6 +181,12 @@ class AICore:
                 
                 # 注册 Agent
                 self.agent_registry.register(agent_spec.name, agent_spec)
+                agent_payload = {
+                    "agent_id": agent_spec.agent_id,
+                    "name": agent_spec.name,
+                    "role": agent_spec.role,
+                    "description": agent_spec.description,
+                }
                 
                 execution_result = {
                     "execution_type": "agent",
@@ -191,12 +200,10 @@ class AICore:
                 if use_langraph:
                     # 使用 LangGraph Workflow
                     workflow = SimpleWorkflow(model_router=self.model_router)
-                    workflow_context = ctx.model_dump()
-                    workflow_context["model_router"] = self.model_router
                     workflow_state = await self.workflow_executor.execute_workflow(
                         workflow=workflow,
                         user_input=input_text,
-                        context=workflow_context,
+                        context=ctx.model_dump(),
                         execution_id=ctx.trace_id
                     )
                     
@@ -208,10 +215,12 @@ class AICore:
                     # 回退到传统流程
                     subtasks = await self.task_decomposer.decompose(task)
                     workflow = await self.workflow_planner.plan(task, subtasks)
+                    workflow_payload = workflow
                     blueprints = self.blueprint_resolver.resolve(task, workflow)
                     
                     if not blueprints:
                         blueprints = [self.blueprint_generator.generate(task, workflow)]
+                    blueprints_payload = [item.model_dump() for item in blueprints]
                     
                     for blueprint in blueprints:
                         self.blueprint_registry.register(blueprint.name, blueprint)
@@ -232,9 +241,9 @@ class AICore:
             
             final_result = self.result_integrator.build_response(
                 task=task,
-                workflow=None,
-                blueprints=[],
-                agent=None,
+                workflow=workflow_payload,
+                blueprints=blueprints_payload,
+                agent=agent_payload,
                 execution_result={
                     **execution_result,
                     "vector_store": vector_backend,

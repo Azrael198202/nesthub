@@ -212,7 +212,7 @@ class SimpleWorkflow(BaseWorkflow):
         """节点1：分析意图"""
         LOGGER.info(f"Analyzing intent: {state['user_input'][:50]}...")
 
-        model_router = state["context"].get("model_router")
+        model_router = getattr(self, "model_router", None)
         if model_router:
             prompt = (
                 "请分析用户请求，输出 JSON: "
@@ -253,7 +253,7 @@ class SimpleWorkflow(BaseWorkflow):
         
         LOGGER.info(f"Planning tasks for intent: {state['intent']['type']}")
         
-        model_router = state["context"].get("model_router")
+        model_router = getattr(self, "model_router", None)
         if model_router:
             prompt = (
                 "请基于输入和意图生成执行计划，返回 JSON 数组："
