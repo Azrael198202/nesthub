@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,9 @@ from nethub_runtime.core.config.settings import INTENT_POLICY_PATH, SEMANTIC_POL
 from nethub_runtime.core.memory.session_store import SessionStore
 from nethub_runtime.core.schemas.context_schema import CoreContextSchema
 from nethub_runtime.core.schemas.task_schema import TaskSchema
+
+
+LOGGER = logging.getLogger("nethub_runtime.core.execution_coordinator")
 
 
 class ExecutionCoordinator:
@@ -132,6 +136,10 @@ class ExecutionCoordinator:
         return {"message": "no-op"}
 
     def _extract_records(self, text: str) -> list[dict[str, Any]]:
+        model_records = self._model_parse_records(text)
+        if model_records is not None:
+            return model_records
+
         segments = [segment.strip() for segment in re.split(r"[。；;\n]|还有|并且|and", text) if segment.strip()]
         records: list[dict[str, Any]] = []
         for segment in segments:
@@ -172,7 +180,8 @@ class ExecutionCoordinator:
         return "unspecified"
 
     def _extract_location(self, text: str) -> str | None:
-        for marker in ("在", "去", "于", "at", "in"):
+        markers = self.semantic_policy.get("location_markers", ["在", "去", "于", "at", "in"])
+        for marker in markers:
             if marker in text:
                 candidate = text.split(marker, 1)[-1].strip()
                 return re.split(r"[，,。 ]", candidate)[0] or None
@@ -184,11 +193,14 @@ class ExecutionCoordinator:
         return cleaned or "entry"
 
     def _extract_participants(self, text: str) -> int | None:
-        match = re.search(r"(\d+)\s*人", text)
+        participant_pattern = self.semantic_policy.get("participant_pattern", r"(\d+)\s*人")
+        match = re.search(participant_pattern, text)
         if match:
             return int(match.group(1))
-        if "两个人" in text:
-            return 2
+        participant_aliases = self.semantic_policy.get("participant_aliases", {"两个人": 2})
+        for alias, count in participant_aliases.items():
+            if alias in text:
+                return int(count)
         return None
 
     def _extract_actor(self, text: str) -> str:
@@ -208,6 +220,10 @@ class ExecutionCoordinator:
         return "other"
 
     def _parse_query(self, text: str, existing_records: list[dict[str, Any]]) -> dict[str, Any]:
+        model_query = self._model_parse_query(text, existing_records)
+        if model_query is not None:
+            return model_query
+
         stopwords = set(self.intent_policy.get("stopwords", []))
         ignored_tokens = set(self.semantic_policy.get("ignored_query_tokens", []))
         normalized = text
@@ -263,16 +279,137 @@ class ExecutionCoordinator:
 
     def _extract_group_by(self, text: str) -> list[str]:
         results: list[str] = []
-        marker_map = {
-            "按时间": "time",
-            "按类别": "label",
-            "按地点": "location",
-            "按人员": "actor",
-        }
+        marker_map = self.semantic_policy.get(
+            "group_by_aliases",
+            {
+                "按时间": "time",
+                "按类别": "label",
+                "按地点": "location",
+                "按人员": "actor",
+            },
+        )
         for marker in self.intent_policy.get("group_by_markers", []):
             if marker in text and marker in marker_map:
                 results.append(marker_map[marker])
         return results
+
+    def _model_parse_records(self, text: str) -> list[dict[str, Any]] | None:
+        parser_cfg = self.semantic_policy.get("model_semantic_parser", {})
+        if not parser_cfg.get("enabled", True) or not parser_cfg.get("prefer_model_for_record_extraction", True):
+            return None
+
+        payload = {
+            "instruction": "从 input_text 中抽取消费记录，输出 records 数组。每条记录包含 time/location/content/amount/participants/actor/label/raw_text。",
+            "input_text": text,
+            "schema": {
+                "records": [
+                    {
+                        "time": "string",
+                        "location": "string|null",
+                        "content": "string",
+                        "amount": "number",
+                        "participants": "number|null",
+                        "actor": "string",
+                        "label": "string",
+                        "raw_text": "string",
+                    }
+                ]
+            },
+        }
+        data = self._call_external_semantic_parser(payload)
+        if not data:
+            return None
+
+        raw_records = data.get("records")
+        if not isinstance(raw_records, list):
+            return None
+
+        normalized_records: list[dict[str, Any]] = []
+        for item in raw_records:
+            if not isinstance(item, dict):
+                continue
+            try:
+                amount = int(float(item.get("amount", 0)))
+            except Exception:
+                continue
+            normalized_records.append(
+                {
+                    "time": str(item.get("time") or "unspecified"),
+                    "location": item.get("location"),
+                    "content": str(item.get("content") or "entry"),
+                    "amount": amount,
+                    "participants": item.get("participants"),
+                    "actor": str(item.get("actor") or "self"),
+                    "label": str(item.get("label") or "other"),
+                    "raw_text": str(item.get("raw_text") or text),
+                    "created_at": datetime.now(UTC).isoformat(),
+                }
+            )
+        return normalized_records or None
+
+    def _model_parse_query(self, text: str, existing_records: list[dict[str, Any]]) -> dict[str, Any] | None:
+        parser_cfg = self.semantic_policy.get("model_semantic_parser", {})
+        if not parser_cfg.get("enabled", True) or not parser_cfg.get("prefer_model_for_query_parsing", True):
+            return None
+
+        payload = {
+            "instruction": "请将 query_text 解析为聚合查询，输出 metric/terms/group_by/time_marker/filters/query_text。",
+            "query_text": text,
+            "existing_records": existing_records,
+            "schema": {
+                "metric": "sum",
+                "terms": ["string"],
+                "group_by": ["time|label|location|actor"],
+                "time_marker": "string",
+                "filters": {"actor": "string", "label": "string", "location_keyword": "string"},
+                "query_text": "string",
+            },
+        }
+        data = self._call_external_semantic_parser(payload)
+        if not data:
+            return None
+
+        required = ("metric", "terms", "group_by", "time_marker", "filters", "query_text")
+        if not all(key in data for key in required):
+            return None
+        if not isinstance(data.get("terms"), list) or not isinstance(data.get("group_by"), list):
+            return None
+        if not isinstance(data.get("filters"), dict):
+            return None
+        return {
+            "metric": data.get("metric") or "sum",
+            "terms": [self._normalize_text(str(t)) for t in data.get("terms", []) if str(t).strip()],
+            "group_by": [str(dim) for dim in data.get("group_by", []) if str(dim).strip()],
+            "time_marker": str(data.get("time_marker") or "unspecified"),
+            "filters": {str(k): v for k, v in data.get("filters", {}).items() if v not in (None, "")},
+            "query_text": str(data.get("query_text") or text),
+        }
+
+    def _call_external_semantic_parser(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        router = self.semantic_policy.get("external_semantic_router", {})
+        if not router.get("enabled", False):
+            return None
+
+        endpoint = os.getenv(router.get("generic_endpoint_env", "NETHUB_LLM_ROUTER_ENDPOINT"), "").strip()
+        if not endpoint:
+            return None
+
+        request_body = {
+            "task": "semantic_parse",
+            "provider_priority": router.get("provider_priority", []),
+            "payload": payload,
+        }
+        try:
+            with httpx.Client(timeout=20.0) as client:
+                resp = client.post(endpoint, json=request_body)
+                resp.raise_for_status()
+                data = resp.json()
+                if isinstance(data, dict):
+                    return data
+        except Exception as exc:
+            LOGGER.debug("External semantic parse failed: %s", exc)
+            return None
+        return None
 
     def _aggregate_records(self, records: list[dict[str, Any]], query: dict[str, Any], model_choice: dict[str, Any]) -> dict[str, Any]:
         # 只要涉及归属相关的聚合请求，直接 fallback 到外部模型

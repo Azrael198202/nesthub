@@ -84,6 +84,31 @@
     "是多少",
     "吗"
   ],
+  "location_markers": [
+    "在",
+    "去",
+    "于",
+    "at",
+    "in"
+  ],
+  "participant_pattern": "(\\d+)\\s*人",
+  "participant_aliases": {
+    "两个人": 2,
+    "三个人": 3
+  },
+  "group_by_aliases": {
+    "按时间": "time",
+    "按类别": "label",
+    "按地点": "location",
+    "按人员": "actor",
+    "按人": "actor"
+  },
+  "model_semantic_parser": {
+    "enabled": true,
+    "prefer_model_for_query_parsing": true,
+    "prefer_model_for_record_extraction": true,
+    "strict_schema_validation": true
+  },
   "external_semantic_router": {
     "enabled": true,
     "provider_priority": [

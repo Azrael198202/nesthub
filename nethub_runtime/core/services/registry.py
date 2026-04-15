@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,8 @@ class JsonRegistry(Registry):
         for key, value in self.items.items():
             if hasattr(value, "model_dump"):
                 serializable[key] = value.model_dump()
+            elif is_dataclass(value):
+                serializable[key] = asdict(value)
             else:
                 serializable[key] = value
         self.file_path.parent.mkdir(parents=True, exist_ok=True)

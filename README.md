@@ -51,9 +51,78 @@ pip install -r requirements.txt
 python -m nethub_runtime.main
 ```
 
+## Framework Architecture (v2.0)
+
+This project now includes a complete AI Core framework based on **LangGraph** and **LiteLLM**:
+
+### 📚 Documentation
+
+**Quick Start**: Read [FRAMEWORK_GUIDE.md](./FRAMEWORK_GUIDE.md) for complete documentation index and learning paths.
+
+**Key Documents**:
+
+1. **LiteLLM Model Routing** - `docs/02_router/litellm_routing_design.md`
+   - Unified LLM interface management
+   - Multi-model routing strategies (Ollama / OpenAI / Claude / Gemini)
+   - Dynamic model selection with fallback chains
+   - Configuration hot-reload support
+
+2. **LangGraph Workflow & Agent Framework** - `docs/03_workflow/langgraph_agent_framework.md`
+   - Workflow execution with LangGraph
+   - Blueprint compilation to executable graphs
+   - Agent-based autonomous reasoning (ReAct pattern)
+   - State management and execution control
+
+3. **AI Core Integration Guide** - `docs/03_core/integration_guide.md`
+   - Complete integration of LiteLLM + LangGraph
+   - Startup process documentation (main.py → tvbox/main.py)
+   - Execution flow examples (Workflow vs Agent)
+   - Configuration and best practices
+
+### 🚀 Startup Entries
+
+```bash
+# Standard application startup
+python nethub_runtime/app/main.py
+
+# TVBox local runtime startup
+python nethub_runtime/tvbox/main.py
+```
+
+### 📁 Core Module Structure
+
+```
+nethub_runtime/
+├── app/main.py                     # Application startup entrypoint
+├── models/model_router.py          # LiteLLM-based model routing
+├── core/
+│   ├── main.py                     # AI Core orchestrator
+│   ├── workflows/                  # LangGraph workflow engine
+│   ├── agents/                     # LangGraph agent framework
+│   └── tools/                      # Tool registry and execution
+└── tvbox/main.py                   # TVBox local runtime startup
+```
+
+### 🔄 Execution Flow
+
+```
+User Input
+  ↓
+[AI Core Intent Analysis] (LiteLLM routing)
+  ↓
+[Decision: Workflow or Agent?]
+  ├─ Workflow → Blueprint Compilation → LangGraph Execution
+  └─ Agent → Agent Spec Generation → LangGraph Agent Reasoning Loop
+  ↓
+[Result Integration]
+  ↓
+Output
+```
+
 ## Suggested Next Step
 
-- connect this skeleton to your AI Core planner/router
-- map blueprint generation output to `BlueprintManifest`
-- add real package managers for Linux/Windows/macOS
-- add your TV Box command whitelist and sandbox policy
+- Read [FRAMEWORK_GUIDE.md](./FRAMEWORK_GUIDE.md) for complete documentation
+- Review startup process in `docs/03_core/integration_guide.md`
+- Customize model configuration in `config/model_config.yaml`
+- Add domain-specific blueprints to `examples/blueprints/`
+- Connect to your TV Box environment for local deployment
