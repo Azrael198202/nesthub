@@ -275,12 +275,35 @@ class ExecutionCoordinator:
         return results
 
     def _aggregate_records(self, records: list[dict[str, Any]], query: dict[str, Any], model_choice: dict[str, Any]) -> dict[str, Any]:
+        # 只要涉及归属相关的聚合请求，直接 fallback 到外部模型
+        filters = query.get("filters", {})
+        group_by = query.get("group_by", [])
+        time_marker = query.get("time_marker")
+        # 只要 filters 里有任意归属相关字段且有值，或 group_by 非空，或 time_marker 有值且非 unspecified，则强制 fallback
+        belonging_keys = ["actor", "label", "location_keyword"]
+        has_belonging = False
+        for k in belonging_keys:
+            if k in filters and filters[k]:
+                has_belonging = True
+        if group_by:
+            has_belonging = True
+        if time_marker and time_marker != "unspecified":
+            has_belonging = True
+        if has_belonging:
+            print(f"[归属fallback触发] filters={filters}, group_by={group_by}, time_marker={time_marker}")
+            prompt_query = dict(query)
+            prompt_query["_aggregation_belonging"] = True
+            external = self._external_semantic_aggregate(prompt_query, records, model_choice)
+            if external is not None:
+                print("[归属fallback] 外部模型聚合成功")
+                return external
+            else:
+                print("[归属fallback] 外部模型未返回结果，降级本地")
+        # 否则走本地逻辑
         filtered = list(records)
         time_marker = query.get("time_marker")
         if time_marker and time_marker != "unspecified":
             filtered = [item for item in filtered if item.get("time") == time_marker or time_marker in str(item.get("time"))]
-
-        filters = query.get("filters", {})
         if "actor" in filters:
             filtered = [item for item in filtered if str(item.get("actor", "")) == str(filters["actor"])]
         if "label" in filters:
@@ -288,7 +311,6 @@ class ExecutionCoordinator:
         if "location_keyword" in filters:
             keyword = self._normalize_text(str(filters["location_keyword"]))
             filtered = [item for item in filtered if keyword in self._normalize_text(str(item.get("location", "")))]
-
         terms = query.get("terms", [])
         confidence = 1.0
         if terms:
@@ -304,7 +326,6 @@ class ExecutionCoordinator:
                     external = self._external_semantic_aggregate(query, records, model_choice)
                     if external is not None:
                         return external
-
         total_amount = sum(int(item.get("amount", 0)) for item in filtered)
         grouped: dict[str, dict[str, int]] = {}
         for dim in query.get("group_by", []):
@@ -415,7 +436,7 @@ class ExecutionCoordinator:
         if not endpoint:
             return None
         prompt = {
-            "instruction": "请判断 records 中哪些属于 query 的语义条件并输出 total_amount/count/grouped。",
+            "instruction": "请根据 records 和 query 的归属关系进行聚合，输出 total_amount/count/grouped。归属包括家庭、企业组织、时间、地区等。",
             "query": query,
             "records": records,
             "model_choice": model_choice,
