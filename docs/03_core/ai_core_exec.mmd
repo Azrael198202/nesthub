@@ -1,0 +1,43 @@
+sequenceDiagram
+    participant Interface
+    participant Core
+    participant ContextManager
+    participant IntentAnalyzer
+    participant Planner
+    participant BlueprintResolver
+    participant AgentDesigner
+    participant Router
+    participant Executor
+    participant Integrator
+
+    Interface->>Core: UnifiedContext
+    Core->>ContextManager: load/enrich context
+    ContextManager-->>Core: enriched context
+
+    Core->>IntentAnalyzer: analyze(context)
+    IntentAnalyzer-->>Core: TaskSpec
+
+    Core->>Planner: decompose + plan
+    Planner-->>Core: WorkflowSpec
+
+    Core->>BlueprintResolver: resolve(workflow)
+    BlueprintResolver-->>Core: blueprint bindings / missing
+
+    alt need new blueprint
+        Core->>BlueprintResolver: fallback decision
+        Core->>Core: generate blueprint
+    end
+
+    alt need agent
+        Core->>AgentDesigner: generate(task, workflow)
+        AgentDesigner-->>Core: AgentSpec
+    end
+
+    Core->>Router: route_workflow(workflow)
+    Router-->>Core: ExecutionPlan
+
+    Core->>Executor: execute(plan)
+    Executor-->>Core: ExecutionResult
+
+    Core->>Integrator: build_response(...)
+    Integrator-->>Core: CoreExecutionResult

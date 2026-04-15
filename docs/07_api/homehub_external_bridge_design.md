@@ -372,6 +372,49 @@ GET /api/bridge/hub/pending
 用途：
 
 - 家中的 Hub 使用 token 拉取待处理消息
+- API 返回未处理消息列表
+
+---
+
+## 16. 实际对接要点与常见问题
+
+### 16.1 IM webhook 字段提取规范
+
+以 LINE 为例，webhook payload 结构如下：
+
+```json
+{
+  "events": [
+    {
+      "source": { "userId": "Uxxxx", "groupId": "Gxxxx" },
+      "message": { "id": "123", "text": "hello" },
+      ...
+    }
+  ]
+}
+```
+
+API 必须从 `events[0].source.userId`、`events[0].source.groupId`、`events[0].message.id`、`events[0].message.text` 提取对应字段，不能直接用顶层字段。
+
+### 16.2 主动推送原理
+
+如需异步业务处理后再回复 IM 用户，需用 IM 官方 push API（如 LINE 的 `/v2/bot/message/push`），不能用 replyToken。API 会在 `/hub/result` 阶段自动用 userId 主动推送消息。
+
+### 16.3 调试与日志建议
+
+- `/im/inbound` 路由会详细打印 X-Line-Signature、原始 payload、提取字段、创建消息等日志，便于排查。
+- 如推送失败，优先检查 userId 是否为真实 IM 用户 ID，access token 是否有效。
+
+### 16.4 常见问题排查
+
+1. **消息 claim/result 都 200，但 IM 没收到消息？**
+   - 检查 `/im/inbound` 是否正确提取 userId。
+   - 检查 `/hub/result` 是否有主动推送日志。
+   - 检查 access token 权限。
+2. **replyToken 回复无效？**
+   - 只能在 webhook 首次收到时同步 reply，异步处理需用 push API。
+
+---
 
 ### 11.3 Hub claim 消息
 

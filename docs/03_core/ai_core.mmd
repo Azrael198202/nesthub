@@ -1,0 +1,20 @@
+graph TD
+
+A[Unified Context] --> B[Context Manager]
+B --> C[Intent Analyzer]
+C --> D[Task Decomposer]
+D --> E[Workflow Planner]
+
+E --> F[Blueprint Resolver]
+F -->|Found| G[Capability Router]
+F -->|Not Found| H[Blueprint Generator]
+H --> G
+
+E --> I{Need Agent?}
+I -->|Yes| J[Agent Designer]
+J --> G
+I -->|No| G
+
+G --> K[Execution Coordinator]
+K --> L[Result Integrator]
+L --> M[Core Execution Result]

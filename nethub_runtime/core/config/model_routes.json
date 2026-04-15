@@ -1,0 +1,31 @@
+{
+  "expense_record": {
+    "extract_records": {
+      "model": "rule-parser",
+      "tool": "parser",
+      "service": "nlp"
+    },
+    "persist_records": {
+      "model": "state-store",
+      "tool": "session_store",
+      "service": "memory"
+    }
+  },
+  "expense_query": {
+    "parse_query": {
+      "model": "rule-parser",
+      "tool": "query_parser",
+      "service": "nlp"
+    },
+    "aggregate_query": {
+      "model": "aggregation-engine",
+      "tool": "query_engine",
+      "service": "analytics"
+    }
+  },
+  "default": {
+    "model": "general-llm",
+    "tool": "none",
+    "service": "generic"
+  }
+}
