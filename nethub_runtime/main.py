@@ -1,4 +1,7 @@
+
+from __future__ import annotations
 import importlib.util
+
 def start_line_demo():
     """
     启动 line_demo.py 的 poll_and_reply 协程（以守护线程方式）。
@@ -19,7 +22,6 @@ def start_line_demo():
     t = threading.Thread(target=_run, name="LineDemoThread", daemon=True)
     t.start()
     return t
-from __future__ import annotations
 
 import logging
 import os
