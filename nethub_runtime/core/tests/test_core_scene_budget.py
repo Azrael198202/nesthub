@@ -22,7 +22,7 @@ class TestCoreSceneBudget(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["amount"], 3000)
         self.assertEqual(records[0]["participants"], 2)
-        self.assertEqual(records[0]["category"], "餐饮")
+        self.assertEqual(records[0]["label"], "food_and_drink")
 
     async def test_nl_query_aggregation(self) -> None:
         await self.core.handle("今天买了咖啡500日元，还有买了书1200日元", self.context)
@@ -36,6 +36,13 @@ class TestCoreSceneBudget(unittest.IsolatedAsyncioTestCase):
         result = await self.core.handle("博多地区消费总额是多少？", self.context)
         aggregation = result["execution_result"]["final_output"]["aggregate_query"]["aggregation"]
         self.assertEqual(aggregation["total_amount"], 8000)
+
+    async def test_multimodal_ocr_routing(self) -> None:
+        result = await self.core.handle("请对这张票据做OCR识别", {"session_id": "scene_budget_test", "metadata": {"input_type": "image"}})
+        self.assertEqual(result["task"]["intent"], "ocr_task")
+        step = result["execution_result"]["steps"][0]
+        self.assertEqual(step["name"], "ocr_extract")
+        self.assertEqual(step["capability"]["model_choice"]["model"], "paddleocr")
 
 
 if __name__ == "__main__":

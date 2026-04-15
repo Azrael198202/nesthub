@@ -10,9 +10,11 @@ class AgentDesigner:
     """Generates agent definitions when long-term capability is requested."""
 
     def should_generate(self, task: TaskSchema) -> bool:
-        keywords = ("智能体", "agent", "长期", "复用")
-        text = task.input_text.lower()
-        return any(keyword in text for keyword in keywords)
+        if task.constraints.get("need_agent") is True:
+            return True
+        if "agent_profile" in task.output_requirements:
+            return True
+        return False
 
     def generate(self, task: TaskSchema, workflow: WorkflowSchema) -> AgentSchema:
         return AgentSchema(

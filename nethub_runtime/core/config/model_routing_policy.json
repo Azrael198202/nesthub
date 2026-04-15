@@ -1,0 +1,130 @@
+{
+  "local_models": {
+    "provider": "ollama",
+    "models": [
+      "qwen2.5",
+      "deepseek-coder",
+      "llama3"
+    ],
+    "use_for": [
+      "routing",
+      "local_reasoning",
+      "privacy"
+    ]
+  },
+  "external_models": {
+    "openai": [
+      "gpt-4o",
+      "gpt-4.1"
+    ],
+    "claude": [
+      "claude-3.5-sonnet"
+    ]
+  },
+  "task_mapping": {
+    "routing": [
+      {
+        "provider": "ollama",
+        "model": "qwen2.5"
+      }
+    ],
+    "nlp_parse": [
+      {
+        "provider": "ollama",
+        "model": "qwen2.5"
+      }
+    ],
+    "reasoning": [
+      {
+        "provider": "openai",
+        "model": "gpt-4o"
+      }
+    ],
+    "planning": [
+      {
+        "provider": "openai",
+        "model": "gpt-4o"
+      },
+      {
+        "provider": "claude",
+        "model": "claude-3.5-sonnet"
+      }
+    ],
+    "code": [
+      {
+        "provider": "openai",
+        "model": "gpt-4.1"
+      },
+      {
+        "provider": "ollama",
+        "model": "deepseek-coder"
+      }
+    ],
+    "blueprint": [
+      {
+        "provider": "ollama",
+        "model": "deepseek-coder"
+      }
+    ],
+    "document": [
+      {
+        "provider": "claude",
+        "model": "claude-3.5-sonnet"
+      }
+    ],
+    "web_summary": [
+      {
+        "provider": "openai",
+        "model": "gpt-4o"
+      }
+    ],
+    "ocr": [
+      {
+        "provider": "tool",
+        "model": "paddleocr"
+      }
+    ],
+    "stt": [
+      {
+        "provider": "tool",
+        "model": "whisper"
+      }
+    ],
+    "tts": [
+      {
+        "provider": "tool",
+        "model": "openvoice"
+      }
+    ],
+    "image_generation": [
+      {
+        "provider": "tool",
+        "model": "stable-diffusion"
+      }
+    ],
+    "video_generation": [
+      {
+        "provider": "service",
+        "model": "runway-gen2"
+      }
+    ],
+    "file_generation": [
+      {
+        "provider": "tool",
+        "model": "python-docx"
+      }
+    ],
+    "web_research": [
+      {
+        "provider": "tool",
+        "model": "playwright"
+      }
+    ]
+  },
+  "auto_pull_rule": {
+    "enabled": true,
+    "only_local_provider": "ollama",
+    "verify_checksum": false,
+    "verify_version": true
+  }
+}

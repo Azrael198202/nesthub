@@ -15,24 +15,24 @@ class BlueprintResolver:
 
     def _register_builtin_blueprints(self) -> None:
         self.registry.register(
-            "household_budget:expense_record",
+            "data_ops:data_record",
             BlueprintSchema(
-                blueprint_id="bp_expense_record",
-                name="Household Expense Record Blueprint",
-                domain="household_budget",
-                intent="expense_record",
+                blueprint_id="bp_data_record",
+                name="Generic Data Record Blueprint",
+                domain="data_ops",
+                intent="data_record",
                 inputs=["input_text", "session_state"],
                 outputs=["records", "summary"],
                 steps=["extract_records", "persist_records"],
             ),
         )
         self.registry.register(
-            "household_budget:expense_query",
+            "data_ops:data_query",
             BlueprintSchema(
-                blueprint_id="bp_expense_query",
-                name="Household Expense Query Blueprint",
-                domain="household_budget",
-                intent="expense_query",
+                blueprint_id="bp_data_query",
+                name="Generic Data Query Blueprint",
+                domain="data_ops",
+                intent="data_query",
                 inputs=["input_text", "session_state"],
                 outputs=["aggregation", "summary"],
                 steps=["parse_query", "aggregate_query"],

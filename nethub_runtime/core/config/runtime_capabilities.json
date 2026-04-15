@@ -1,0 +1,144 @@
+{
+  "models": [
+    {
+      "name": "qwen2.5",
+      "kind": "local_ollama",
+      "api": "ollama_local_api",
+      "supports": [
+        "nlp_parse",
+        "routing"
+      ]
+    },
+    {
+      "name": "deepseek-coder",
+      "kind": "local_ollama",
+      "api": "ollama_local_api",
+      "supports": [
+        "blueprint",
+        "code_generation"
+      ]
+    },
+    {
+      "name": "llama3",
+      "kind": "local_ollama",
+      "api": "ollama_local_api",
+      "supports": [
+        "fallback"
+      ]
+    },
+    {
+      "name": "gpt-4o",
+      "kind": "openai",
+      "api": "openai_chat_api",
+      "supports": [
+        "reasoning",
+        "planning",
+        "web_summary"
+      ]
+    },
+    {
+      "name": "gpt-4.1",
+      "kind": "openai",
+      "api": "openai_chat_api",
+      "supports": [
+        "code_generation"
+      ]
+    },
+    {
+      "name": "claude-3.5-sonnet",
+      "kind": "claude",
+      "api": "anthropic_messages_api",
+      "supports": [
+        "document",
+        "long_context"
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "paddleocr",
+      "api": "local_tool_runtime",
+      "supports": [
+        "ocr"
+      ],
+      "enabled": false
+    },
+    {
+      "name": "whisper",
+      "api": "local_tool_runtime",
+      "supports": [
+        "stt"
+      ],
+      "enabled": false
+    },
+    {
+      "name": "openvoice",
+      "api": "local_tool_runtime",
+      "supports": [
+        "tts"
+      ],
+      "enabled": false
+    },
+    {
+      "name": "stable-diffusion",
+      "api": "local_tool_runtime",
+      "supports": [
+        "image_generation"
+      ],
+      "enabled": false
+    },
+    {
+      "name": "playwright",
+      "api": "local_tool_runtime",
+      "supports": [
+        "web_research"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "python-docx",
+      "api": "local_tool_runtime",
+      "supports": [
+        "file_generation"
+      ],
+      "enabled": true
+    }
+  ],
+  "databases": [
+    {
+      "name": "postgresql",
+      "kind": "structured_database",
+      "supports": [
+        "transactional_data",
+        "analytics_query"
+      ],
+      "enabled": false
+    },
+    {
+      "name": "pgvector",
+      "kind": "vector_database",
+      "supports": [
+        "semantic_retrieval"
+      ],
+      "enabled": false
+    },
+    {
+      "name": "weaviate",
+      "kind": "vector_database",
+      "supports": [
+        "semantic_retrieval",
+        "hybrid_search"
+      ],
+      "enabled": false
+    }
+  ],
+  "shell": [
+    {
+      "name": "bash",
+      "available": true,
+      "supports": [
+        "local_commands"
+      ]
+    }
+  ]
+}

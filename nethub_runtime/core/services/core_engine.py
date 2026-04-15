@@ -13,6 +13,7 @@ from nethub_runtime.core.services.registry import Registry
 from nethub_runtime.core.services.result_integrator import ResultIntegrator
 from nethub_runtime.core.services.task_decomposer import TaskDecomposer
 from nethub_runtime.core.services.workflow_planner import WorkflowPlanner
+from nethub_runtime.core.memory.vector_store import VectorStore
 
 
 class AICore:
@@ -28,6 +29,7 @@ class AICore:
         self.capability_router = CapabilityRouter()
         self.execution_coordinator = ExecutionCoordinator(session_store=self.context_manager.session_store)
         self.result_integrator = ResultIntegrator()
+        self.vector_store = VectorStore()
 
     async def handle(self, input_text: str, context: dict[str, Any] | None = None, fmt: str = "dict") -> dict[str, Any] | str:
         ctx = self.context_manager.load(context)
@@ -43,12 +45,13 @@ class AICore:
             agent = self.agent_designer.generate(task, workflow)
         plan = self.capability_router.route_workflow(task, workflow)
         execution_result = self.execution_coordinator.execute(plan, task, ctx)
+        vector_backend = self.vector_store.active_store()
         return self.result_integrator.build_response(
             task=task,
             workflow=workflow,
             blueprints=[item.model_dump() for item in blueprints],
             agent=agent.model_dump() if agent else None,
-            execution_result=execution_result,
+            execution_result={**execution_result, "vector_store": vector_backend},
             context=ctx,
             fmt=fmt,
         )

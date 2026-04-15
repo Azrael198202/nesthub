@@ -1,0 +1,34 @@
+{
+  "active": "memory",
+  "stores": [
+    {
+      "name": "memory",
+      "provider": "in_memory",
+      "enabled": true
+    },
+    {
+      "name": "qdrant",
+      "provider": "qdrant",
+      "enabled": false,
+      "endpoint": ""
+    },
+    {
+      "name": "pgvector",
+      "provider": "postgresql_pgvector",
+      "enabled": false,
+      "dsn": ""
+    },
+    {
+      "name": "chroma",
+      "provider": "chroma",
+      "enabled": false,
+      "path": ""
+    },
+    {
+      "name": "weaviate",
+      "provider": "weaviate",
+      "enabled": false,
+      "endpoint": ""
+    }
+  ]
+}

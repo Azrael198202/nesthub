@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from nethub_runtime.core.config.settings import MODEL_ROUTES_PATH, ensure_core_config_dir
+from nethub_runtime.core.adapters.model_adapter import ModelRouter
+from nethub_runtime.core.config.settings import MODEL_ROUTES_PATH, RUNTIME_CAPABILITIES_PATH, ensure_core_config_dir
 from nethub_runtime.core.schemas.task_schema import TaskSchema
 from nethub_runtime.core.schemas.workflow_schema import WorkflowSchema
 
@@ -12,24 +13,55 @@ from nethub_runtime.core.schemas.workflow_schema import WorkflowSchema
 class CapabilityRouter:
     """Routes workflow steps to models/tools/services via JSON-configurable rules."""
 
-    def __init__(self, route_path: Path | None = None) -> None:
+    def __init__(self, route_path: Path | None = None, capabilities_path: Path | None = None) -> None:
         ensure_core_config_dir()
         self.route_path = route_path or MODEL_ROUTES_PATH
+        self.capabilities_path = capabilities_path or RUNTIME_CAPABILITIES_PATH
         self._route_config: dict[str, Any] = {}
+        self._capabilities: dict[str, Any] = {}
         self._last_mtime: float | None = None
+        self._capabilities_mtime: float | None = None
+        self.model_router = ModelRouter()
         self._load_routes()
+        self._load_capabilities()
+
+    def _task_kind_from_step(self, step_name: str) -> str:
+        mapping = {
+            "extract_records": "routing",
+            "parse_query": "routing",
+            "aggregate_query": "planning",
+            "persist_records": "planning",
+            "ocr_extract": "ocr",
+            "stt_transcribe": "stt",
+            "tts_synthesize": "tts",
+            "image_generate": "image_generation",
+            "video_generate": "video_generation",
+            "file_generate": "file_generation",
+            "web_retrieve": "web_research",
+            "web_summarize": "web_summary",
+            "single_step": "planning",
+        }
+        return mapping.get(step_name, "planning")
 
     def _default_routes(self) -> dict[str, Any]:
         return {
-            "expense_record": {
+            "data_record": {
                 "extract_records": {"model": "rule-parser", "tool": "parser", "service": "nlp"},
                 "persist_records": {"model": "state-store", "tool": "session_store", "service": "memory"},
             },
-            "expense_query": {
+            "data_query": {
                 "parse_query": {"model": "rule-parser", "tool": "query_parser", "service": "nlp"},
                 "aggregate_query": {"model": "aggregation-engine", "tool": "query_engine", "service": "analytics"},
             },
             "default": {"model": "general-llm", "tool": "none", "service": "generic"},
+        }
+
+    def _default_capabilities(self) -> dict[str, Any]:
+        return {
+            "models": [{"name": "local-rule-parser", "kind": "local", "supports": ["intent_analysis", "record_extraction"]}],
+            "databases": [{"name": "session_store", "kind": "in_memory", "supports": ["stateful_records"]}],
+            "shell": [{"name": "bash", "available": True, "supports": ["local_commands"]}],
+            "tools": [{"name": "python_parser", "available": True}],
         }
 
     def _load_routes(self) -> None:
@@ -41,12 +73,25 @@ class CapabilityRouter:
         self._route_config = json.loads(self.route_path.read_text(encoding="utf-8"))
         self._last_mtime = self.route_path.stat().st_mtime
 
+    def _load_capabilities(self) -> None:
+        if not self.capabilities_path.exists():
+            self._capabilities = self._default_capabilities()
+            self.capabilities_path.write_text(json.dumps(self._capabilities, ensure_ascii=False, indent=2), encoding="utf-8")
+            self._capabilities_mtime = self.capabilities_path.stat().st_mtime
+            return
+        self._capabilities = json.loads(self.capabilities_path.read_text(encoding="utf-8"))
+        self._capabilities_mtime = self.capabilities_path.stat().st_mtime
+
     def _maybe_reload(self) -> None:
         if not self.route_path.exists():
             return
         current_mtime = self.route_path.stat().st_mtime
         if self._last_mtime is None or current_mtime > self._last_mtime:
             self._load_routes()
+        if self.capabilities_path.exists():
+            cap_mtime = self.capabilities_path.stat().st_mtime
+            if self._capabilities_mtime is None or cap_mtime > self._capabilities_mtime:
+                self._load_capabilities()
 
     def route_workflow(self, task: TaskSchema, workflow: WorkflowSchema) -> list[dict[str, Any]]:
         self._maybe_reload()
@@ -55,6 +100,8 @@ class CapabilityRouter:
         plan: list[dict[str, Any]] = []
         for step in workflow.steps:
             route = intent_routes.get(step.name, default_route)
+            model_choice = self.model_router.route(self._task_kind_from_step(step.name))
+            availability = self.model_router.ensure_available(model_choice["provider"], model_choice["model"])
             plan.append(
                 {
                     "step_id": step.step_id,
@@ -62,7 +109,8 @@ class CapabilityRouter:
                     "task_type": step.task_type,
                     "depends_on": step.depends_on,
                     "retry": step.retry,
-                    "capability": route,
+                    "capability": {**route, "model_choice": model_choice, "availability": availability},
+                    "runtime_capabilities": self._capabilities,
                 }
             )
         return plan

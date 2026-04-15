@@ -1,5 +1,5 @@
 {
-  "expense_record": {
+  "data_record": {
     "extract_records": {
       "model": "rule-parser",
       "tool": "parser",
@@ -11,7 +11,7 @@
       "service": "memory"
     }
   },
-  "expense_query": {
+  "data_query": {
     "parse_query": {
       "model": "rule-parser",
       "tool": "query_parser",
@@ -21,6 +21,60 @@
       "model": "aggregation-engine",
       "tool": "query_engine",
       "service": "analytics"
+    }
+  },
+  "ocr_task": {
+    "ocr_extract": {
+      "model": "paddleocr",
+      "tool": "ocr_engine",
+      "service": "ocr"
+    }
+  },
+  "stt_task": {
+    "stt_transcribe": {
+      "model": "whisper",
+      "tool": "stt_engine",
+      "service": "speech"
+    }
+  },
+  "tts_task": {
+    "tts_synthesize": {
+      "model": "openvoice",
+      "tool": "tts_engine",
+      "service": "speech"
+    }
+  },
+  "image_generation_task": {
+    "image_generate": {
+      "model": "stable-diffusion",
+      "tool": "image_gen",
+      "service": "media_generation"
+    }
+  },
+  "video_generation_task": {
+    "video_generate": {
+      "model": "runway-gen2",
+      "tool": "video_gen",
+      "service": "media_generation"
+    }
+  },
+  "file_generation_task": {
+    "file_generate": {
+      "model": "python-docx",
+      "tool": "file_builder",
+      "service": "document_generation"
+    }
+  },
+  "web_research_task": {
+    "web_retrieve": {
+      "model": "playwright",
+      "tool": "web_automation",
+      "service": "web_research"
+    },
+    "web_summarize": {
+      "model": "gpt-4o",
+      "tool": "summarizer",
+      "service": "llm_summary"
     }
   },
   "default": {
