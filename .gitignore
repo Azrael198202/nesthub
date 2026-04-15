@@ -21,7 +21,10 @@ venv.bak/
 
 # Environment variables file (do not commit secrets)
 .env
-.env.*
+.env.local
+.env.*.local
+
+
 
 # pyenv
 .python-version

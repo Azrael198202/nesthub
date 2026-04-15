@@ -1,0 +1,103 @@
+{
+  "tokenizer": {
+    "preferred": "jieba",
+    "fallback": "regex",
+    "min_token_length": 2
+  },
+  "semantic_matching": {
+    "method": "embedding_or_token",
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "similarity_threshold": 0.62,
+    "fallback_to_external_threshold": 0.35
+  },
+  "normalization": {
+    "text_replace": {
+      "￥": "元",
+      "円": "日元"
+    },
+    "synonyms": {
+      "self": [
+        "我",
+        "我个人",
+        "本人"
+      ],
+      "food_and_drink": [
+        "餐饮",
+        "吃饭",
+        "咖啡",
+        "拉面"
+      ],
+      "shopping": [
+        "购物",
+        "买",
+        "超市",
+        "书"
+      ],
+      "entertainment": [
+        "娱乐",
+        "电影",
+        "游戏"
+      ]
+    }
+  },
+  "entity_aliases": {
+    "actor": {
+      "self": [
+        "我",
+        "我个人",
+        "本人"
+      ],
+      "家人": [
+        "家人",
+        "家庭"
+      ],
+      "朋友": [
+        "朋友",
+        "同事"
+      ]
+    },
+    "label": {
+      "food_and_drink": [
+        "餐饮",
+        "吃饭",
+        "咖啡",
+        "拉面"
+      ],
+      "shopping": [
+        "购物",
+        "超市",
+        "买东西"
+      ],
+      "entertainment": [
+        "娱乐",
+        "电影",
+        "游戏"
+      ]
+    }
+  },
+  "ignored_query_tokens": [
+    "多少",
+    "一共",
+    "总额",
+    "消费",
+    "花了",
+    "是多少",
+    "吗"
+  ],
+  "external_semantic_router": {
+    "enabled": true,
+    "provider_priority": [
+      "openai",
+      "claude"
+    ],
+    "openai": {
+      "model": "gpt-4o",
+      "api_env": "OPENAI_API_KEY"
+    },
+    "claude": {
+      "model": "claude-3-5-sonnet-latest",
+      "api_env": "ANTHROPIC_API_KEY"
+    },
+    "generic_endpoint_env": "NETHUB_LLM_ROUTER_ENDPOINT"
+  }
+}

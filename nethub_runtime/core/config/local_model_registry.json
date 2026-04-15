@@ -1,3 +1,5 @@
 {
-  "models": []
+  "models": [
+    "qwen2.5"
+  ]
 }

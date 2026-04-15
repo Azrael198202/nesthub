@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from nethub_runtime.core.config.settings import AGENT_REGISTRY_PATH, BLUEPRINT_REGISTRY_PATH, MODEL_REGISTRY_PATH
+from nethub_runtime.core.config.settings import (
+    AGENT_REGISTRY_PATH,
+    BLUEPRINT_REGISTRY_PATH,
+    MODEL_REGISTRY_PATH,
+    load_local_env,
+)
 from nethub_runtime.core.memory.vector_store import VectorStore
 from nethub_runtime.core.services.agent_designer import AgentDesigner
 from nethub_runtime.core.services.blueprint_generator import BlueprintGenerator
@@ -22,6 +27,7 @@ from nethub_runtime.core.utils.logger import get_logger
 
 class AICore:
     def __init__(self) -> None:
+        load_local_env()
         self.logger = get_logger("nethub_runtime.core.engine")
         self.context_manager = ContextManager()
         self.intent_analyzer = IntentAnalyzer()
