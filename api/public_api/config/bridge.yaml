@@ -29,5 +29,5 @@ kv:
   timezone: Asia/Tokyo
   im_label: family-im
   notes: single family deployment only
-  line_channel_access_token_env: G9TPTDNmVFhgfsdi043mmn8U0CG3HzvNAGWx+ERgovWiBUyByf4Rkdlg89UC1DIzUXfQlMeVBwoYxAMehSLDRjLtFbsTrlPVaAIoYCvaUaLX5Yqvkl6otARyDDEP16xiOzKspghqP7HIJMVp4rwTGQdB04t89/1O/w1cDnyilFU=
+  line_channel_access_token_env: LINE_CHANNEL_ACCESS_TOKEN
   line_channel_secret_env: 3d5e8d1319d04ac0ed76790593c939d1
