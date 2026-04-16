@@ -24,6 +24,12 @@ def test_core_engine_handle_workflow_path() -> None:
     assert trace["autonomous_implementation_supported"] is True
     assert trace["capability_gap_detected"] is False
     assert trace["autonomous_implementation_triggered"] is False
+    generated_trace_path = result["execution_result"].get("generated_trace_path")
+    assert generated_trace_path
+    assert Path(generated_trace_path).exists()
+    artifacts = result.get("artifacts", [])
+    assert any(item["artifact_type"] == "trace" for item in artifacts)
+    assert any(item["artifact_type"] == "trace" for item in result.get("artifact_index", {}).get("trace", []))
 
 
 def test_core_engine_reports_capability_gap_when_blueprint_is_generated() -> None:
@@ -49,3 +55,11 @@ def test_core_engine_reports_capability_gap_when_blueprint_is_generated() -> Non
     generated_path = result["blueprints"][0]["metadata"].get("generated_artifact_path")
     assert generated_path
     assert Path(generated_path).exists()
+    generated_trace_path = result["execution_result"].get("generated_trace_path")
+    assert generated_trace_path
+    assert Path(generated_trace_path).exists()
+    artifacts = result.get("artifacts", [])
+    assert any(item["artifact_type"] == "blueprint" for item in artifacts)
+    assert any(item["artifact_type"] == "trace" for item in artifacts)
+    assert any(item["artifact_type"] == "blueprint" for item in result.get("artifact_index", {}).get("blueprint", []))
+    assert any(item["artifact_type"] == "trace" for item in result.get("artifact_index", {}).get("trace", []))

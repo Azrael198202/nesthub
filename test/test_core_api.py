@@ -1,4 +1,6 @@
 from fastapi.testclient import TestClient
+from pathlib import Path
+
 from nethub_runtime.core.main import app
 
 client = TestClient(app)
@@ -17,6 +19,12 @@ def test_core_handle_budget():
     trace = data["execution_result"]["autonomous_implementation_trace"]
     assert trace["autonomous_implementation_supported"] is True
     assert trace["capability_gap_detected"] is False
+    generated_trace_path = data["execution_result"].get("generated_trace_path")
+    assert generated_trace_path
+    assert Path(generated_trace_path).exists()
+    artifacts = data.get("artifacts", [])
+    assert any(item["artifact_type"] == "trace" for item in artifacts)
+    assert any(item["artifact_type"] == "trace" for item in data.get("artifact_index", {}).get("trace", []))
 
 if __name__ == "__main__":
     test_core_handle_budget()

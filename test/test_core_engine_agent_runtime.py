@@ -76,3 +76,11 @@ def test_core_engine_handle_agent_path() -> None:
     generated_path = result["agent"].get("generated_artifact_path")
     assert generated_path
     assert Path(generated_path).exists()
+    generated_trace_path = result["execution_result"].get("generated_trace_path")
+    assert generated_trace_path
+    assert Path(generated_trace_path).exists()
+    artifacts = result.get("artifacts", [])
+    assert any(item["artifact_type"] == "agent" for item in artifacts)
+    assert any(item["artifact_type"] == "trace" for item in artifacts)
+    assert any(item["artifact_type"] == "agent" for item in result.get("artifact_index", {}).get("agent", []))
+    assert any(item["artifact_type"] == "trace" for item in result.get("artifact_index", {}).get("trace", []))

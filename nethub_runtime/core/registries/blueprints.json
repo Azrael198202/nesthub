@@ -114,7 +114,7 @@
     }
   },
   "data_ops:data_record:generated": {
-    "blueprint_id": "blueprint_96c3a3d3d952",
+    "blueprint_id": "blueprint_3efb546ff79b",
     "name": "data_ops:data_record:generated",
     "domain": "data_ops",
     "intent": "data_record",
@@ -130,7 +130,8 @@
       "persist_records"
     ],
     "metadata": {
-      "generated": true
+      "generated": true,
+      "generated_artifact_path": "/home/lw-ai/Documents/nesthub/nethub_runtime/generated/blueprints/blueprint_3efb546ff79b.json"
     }
   }
 }

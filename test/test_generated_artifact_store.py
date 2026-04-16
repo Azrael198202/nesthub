@@ -21,3 +21,12 @@ def test_generated_artifact_store_deletes_artifact() -> None:
     deleted = store.delete("agent", "agent_test_case")
 
     assert deleted["deleted"] is True
+
+
+def test_generated_artifact_store_persists_trace_artifact() -> None:
+    store = GeneratedArtifactStore()
+    path = store.persist("trace", "trace_test_case", {"status": "completed", "trace_id": "trace_test_case"})
+
+    assert path.exists()
+    items = store.list_artifacts()
+    assert any(item["artifactId"] == "trace_test_case" for item in items["trace"])

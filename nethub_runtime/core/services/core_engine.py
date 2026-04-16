@@ -128,6 +128,30 @@ class AICore:
             "supports": capability.get("supports", []),
         }
 
+    def _persist_runtime_trace(
+        self,
+        *,
+        trace_id: str,
+        status: str,
+        input_text: str,
+        task: dict[str, Any] | None = None,
+        execution_result: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> str:
+        trace_path = self.generated_artifact_store.persist(
+            "trace",
+            trace_id,
+            {
+                "trace_id": trace_id,
+                "status": status,
+                "input_text": input_text,
+                "task": task or {},
+                "execution_result": execution_result or {},
+                "error": error,
+            },
+        )
+        return str(trace_path)
+
 
     def reload_plugins(self) -> dict[str, Any]:
         """Reload plugin-enabled services from config without restarting process."""
@@ -316,12 +340,43 @@ class AICore:
                 context=ctx,
                 fmt=fmt,
             )
+
+            trace_artifact_path = self._persist_runtime_trace(
+                trace_id=ctx.trace_id,
+                status="completed",
+                input_text=input_text,
+                task=task.model_dump(),
+                execution_result=final_result.get("execution_result", {}),
+            )
+            if isinstance(final_result, dict):
+                final_result.setdefault("execution_result", {})["generated_trace_path"] = trace_artifact_path
+                final_result.setdefault("artifacts", []).append(
+                    {
+                        "artifact_type": "trace",
+                        "artifact_id": ctx.trace_id,
+                        "path": trace_artifact_path,
+                        "name": Path(trace_artifact_path).name,
+                        "source": "runtime_execution_trace",
+                        "metadata": {
+                            "execution_type": final_result.get("execution_result", {}).get("execution_type", ""),
+                        },
+                    }
+                )
+                final_result["artifact_index"] = self.result_integrator.build_artifact_index(
+                    final_result.get("artifacts", [])
+                )
             
             self.logger.info(f"✅ Request completed trace={ctx.trace_id}")
             
             return final_result
             
         except Exception as exc:
+            self._persist_runtime_trace(
+                trace_id=ctx.trace_id,
+                status="failed",
+                input_text=input_text,
+                error=str(exc),
+            )
             self.logger.error(f"❌ Core handle failed trace={ctx.trace_id} error={exc}")
             raise
 
