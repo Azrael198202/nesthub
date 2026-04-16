@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 
 APP_NAME = "nethub_runtime"
+PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+GENERATED_ROOT = PACKAGE_ROOT / "generated"
 
 
 def app_home() -> Path:
@@ -24,4 +26,18 @@ def ensure_app_dirs() -> dict[str, Path]:
     }
     for p in paths.values():
         p.mkdir(parents=True, exist_ok=True)
+    return paths
+
+
+def ensure_generated_dirs() -> dict[str, Path]:
+    paths = {
+        "root": GENERATED_ROOT,
+        "code": GENERATED_ROOT / "code",
+        "blueprints": GENERATED_ROOT / "blueprints",
+        "agents": GENERATED_ROOT / "agents",
+        "features": GENERATED_ROOT / "features",
+        "traces": GENERATED_ROOT / "traces",
+    }
+    for path in paths.values():
+        path.mkdir(parents=True, exist_ok=True)
     return paths

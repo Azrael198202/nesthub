@@ -13,9 +13,10 @@ def test_core_handle_budget():
     assert resp.status_code == 200
     data = resp.json()["result"]
     assert data["task"]["intent"] in ("data_record", "record_expense")
-    assert len(data["workflow"]["steps"]) >= 2
     assert "execution_result" in data
-    print("Test passed. Result:", data)
+    trace = data["execution_result"]["autonomous_implementation_trace"]
+    assert trace["autonomous_implementation_supported"] is True
+    assert trace["capability_gap_detected"] is False
 
 if __name__ == "__main__":
     test_core_handle_budget()

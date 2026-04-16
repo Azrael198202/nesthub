@@ -51,7 +51,7 @@ def start_tvbox_ui() -> subprocess.Popen[str]:
     # Run the child Python interpreter in unbuffered mode so prints/logs from
     # the child process are emitted immediately and visible in the parent
     # process' output (important when running under IDE debuggers).
-    cmd = [sys.executable, "-u", "-m", "nethub_runtime.ui.tvbox.main"]
+    cmd = [sys.executable, "-u", "-m", "nethub_runtime.tvbox.main"]
     LOGGER.info("Starting TV Box UI: %s", " ".join(cmd))
     env = os.environ.copy()
     # Ensure unbuffered at environment level as well (redundant but helpful).

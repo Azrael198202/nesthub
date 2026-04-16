@@ -102,6 +102,30 @@ class AICore:
         )
         self.logger.info("✓ Agent Builder initialized")
 
+    def _autonomous_implementation_capability(self) -> dict[str, Any]:
+        capability = self.capability_router._capabilities.get("autonomous_implementation", {})
+        return capability if isinstance(capability, dict) else {}
+
+    def _build_autonomous_trace(
+        self,
+        *,
+        capability_gap_detected: bool,
+        trigger_reason: str | None = None,
+        generated_artifact: str | None = None,
+    ) -> dict[str, Any]:
+        capability = self._autonomous_implementation_capability()
+        enabled = bool(capability.get("enabled", False))
+        triggered = bool(capability_gap_detected and enabled and generated_artifact)
+        return {
+            "capability_gap_detected": capability_gap_detected,
+            "autonomous_implementation_supported": enabled,
+            "autonomous_implementation_triggered": triggered,
+            "generated_patch_registered": bool(generated_artifact),
+            "generated_artifact_type": generated_artifact,
+            "trigger_reason": trigger_reason,
+            "supports": capability.get("supports", []),
+        }
+
 
     def reload_plugins(self) -> dict[str, Any]:
         """Reload plugin-enabled services from config without restarting process."""
@@ -157,6 +181,7 @@ class AICore:
         workflow_payload = None
         blueprints_payload: list[dict[str, Any]] = []
         agent_payload = None
+        autonomous_trace = self._build_autonomous_trace(capability_gap_detected=False)
         
         try:
             # ========== Step 1: 意图分析 ==========
@@ -194,6 +219,7 @@ class AICore:
                 execution_result = {
                     "execution_type": "agent",
                     "agent_result": agent_result,
+                    "autonomous_implementation_trace": autonomous_trace,
                 }
                 
             else:
@@ -213,6 +239,7 @@ class AICore:
                     execution_result = {
                         "execution_type": "workflow",
                         "workflow_state": workflow_state,
+                        "autonomous_implementation_trace": autonomous_trace,
                     }
                 else:
                     # 回退到传统流程
@@ -220,9 +247,16 @@ class AICore:
                     workflow = await self.workflow_planner.plan(task, subtasks)
                     workflow_payload = workflow
                     blueprints = self.blueprint_resolver.resolve(task, workflow)
-                    
+
                     if not blueprints:
+                        autonomous_trace = self._build_autonomous_trace(
+                            capability_gap_detected=True,
+                            trigger_reason="no_reusable_blueprint_resolved",
+                            generated_artifact="blueprint",
+                        )
                         blueprints = [self.blueprint_generator.generate(task, workflow)]
+                    else:
+                        autonomous_trace = self._build_autonomous_trace(capability_gap_detected=False)
                     blueprints_payload = [item.model_dump() for item in blueprints]
                     
                     for blueprint in blueprints:
@@ -238,6 +272,7 @@ class AICore:
                         self.model_registry.register(f"{provider}:{model}", model_choice)
                     
                     execution_result = self.execution_coordinator.execute(plan, task, ctx)
+                    execution_result["autonomous_implementation_trace"] = autonomous_trace
             
             # ========== Step 3: 结果整合 ==========
             vector_backend = self.vector_store.active_store()

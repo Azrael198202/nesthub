@@ -46,9 +46,23 @@ examples/blueprints/  sample blueprint manifests
 ```bash
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
+
+# Install NestHub runtime dependencies
 pip install -r requirements.txt
 
 python -m nethub_runtime.main
+```
+
+## Public API Quick Start
+
+`api/public_api` uses a smaller dependency set and should not install the full runtime stack.
+
+```bash
+python -m venv .venv-public-api
+source .venv-public-api/bin/activate   # Windows: .venv-public-api\Scripts\activate
+pip install -r api/public_api/requirements.txt
+
+python -m api.public_api.main
 ```
 
 ## Framework Architecture (v2.0)

@@ -112,5 +112,25 @@
     "metadata": {
       "generated": true
     }
+  },
+  "data_ops:data_record:generated": {
+    "blueprint_id": "blueprint_96c3a3d3d952",
+    "name": "data_ops:data_record:generated",
+    "domain": "data_ops",
+    "intent": "data_record",
+    "inputs": [
+      "input_text",
+      "context"
+    ],
+    "outputs": [
+      "records"
+    ],
+    "steps": [
+      "extract_records",
+      "persist_records"
+    ],
+    "metadata": {
+      "generated": true
+    }
   }
 }

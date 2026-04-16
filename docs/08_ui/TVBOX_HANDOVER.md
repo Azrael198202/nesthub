@@ -3,12 +3,12 @@
 最后更新：2026-04-14
 
 ## 1. 目标与当前状态
-- 目标：`nethub_runtime/ui/tvbox` 提供一个可本地运行的 TV Dashboard（FastAPI + 原生前端）。
+- 目标：`nethub_runtime/tvbox` 提供一个可本地运行的 TV Dashboard（FastAPI + 原生前端）。
 - 当前状态：可运行、可切换多语言（zh/en/ja）、支持 demo 数据驱动；但前端仍存在大量硬编码多语言文案未迁移，属于“半迁移状态”。
 
 ## 2. 目录结构与职责
 ```text
-nethub_runtime/ui/tvbox/
+nethub_runtime/tvbox/
 ├── main.py                         # FastAPI 入口 + demo API
 ├── components/
 │   └── i18n.py                     # i18n JSON 扫描、locale 归一化、接口 payload 构建
@@ -32,7 +32,7 @@ nethub_runtime/ui/tvbox/
 
 ## 3. 运行与数据流
 ### 3.1 启动入口
-- 文件：`nethub_runtime/ui/tvbox/main.py`
+- 文件：`nethub_runtime/tvbox/main.py`
 - `main()` 中使用 `uvicorn.run(..., port=7788)` 启动。
 
 ### 3.2 前后端主流程
@@ -107,7 +107,7 @@ nethub_runtime/ui/tvbox/
 
 ## 7. 后续 AI 接手建议（按任务入口）
 ### 7.1 想改语言文案
-- 改 `nethub_runtime/ui/tvbox/i18n/locales/*.json`
+- 改 `nethub_runtime/tvbox/i18n/locales/*.json`
 - 检查 `app.js` 是否仍硬编码该文案。
 
 ### 7.2 想新增语言
@@ -120,7 +120,7 @@ nethub_runtime/ui/tvbox/
 - 或改 `main.py` 中 `dashboard_fallback`
 
 ### 7.4 想改接口行为
-- 改 `nethub_runtime/ui/tvbox/main.py`
+- 改 `nethub_runtime/tvbox/main.py`
 - 保持 `app.js` 的 payload 字段兼容（尤其 `dashboard` 和 `voice/chat`）
 
 ## 8. 验证清单（每次改完建议执行）
