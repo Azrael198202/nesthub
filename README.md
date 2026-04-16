@@ -65,6 +65,25 @@ pip install -r api/public_api/requirements.txt
 python -m api.public_api.main
 ```
 
+## Railway Deployment For Public API
+
+If you deploy the public bridge on Railway, do not rely on Railway's default Python dependency detection, because it will pick the root `requirements.txt`.
+
+This repository now includes a root-level `nixpacks.toml` that forces Railway to:
+
+```bash
+pip install -r api/public_api/requirements.txt
+uvicorn api.public_api.app:app --host 0.0.0.0 --port $PORT
+```
+
+Recommended Railway settings:
+
+1. Keep the service root at the repository root if you want to use the checked-in `nixpacks.toml` directly.
+2. Ensure the Start Command is not overridden in the Railway dashboard.
+3. If you prefer configuring in the Railway UI instead of using `nixpacks.toml`, set:
+  - Build Command: `pip install -r api/public_api/requirements.txt`
+  - Start Command: `uvicorn api.public_api.app:app --host 0.0.0.0 --port $PORT`
+
 ## Framework Architecture (v2.0)
 
 This project now includes a complete AI Core framework based on **LangGraph** and **LiteLLM**:

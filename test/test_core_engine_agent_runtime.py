@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from nethub_runtime.core.schemas.task_schema import TaskSchema
 from nethub_runtime.core.services.core_engine import AICore
@@ -72,3 +73,6 @@ def test_core_engine_handle_agent_path() -> None:
     assert isinstance(result, dict)
     assert result["execution_result"]["execution_type"] == "agent"
     assert result["execution_result"]["agent_result"]["success"] is True
+    generated_path = result["agent"].get("generated_artifact_path")
+    assert generated_path
+    assert Path(generated_path).exists()

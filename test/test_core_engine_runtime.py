@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from nethub_runtime.core.services.core_engine import AICore
 
@@ -45,3 +46,6 @@ def test_core_engine_reports_capability_gap_when_blueprint_is_generated() -> Non
     assert trace["generated_patch_registered"] is True
     assert trace["generated_artifact_type"] == "blueprint"
     assert trace["trigger_reason"] == "no_reusable_blueprint_resolved"
+    generated_path = result["blueprints"][0]["metadata"].get("generated_artifact_path")
+    assert generated_path
+    assert Path(generated_path).exists()

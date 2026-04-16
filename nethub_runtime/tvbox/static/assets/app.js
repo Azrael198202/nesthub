@@ -17,6 +17,7 @@ let activeSettingsSection = "language";
 let latestDashboard = null;
 let latestCortexUnpacked = null;
 let currentLocale = "en-US";
+let generatedArtifactsRuntime = { items: {}, isLoading: false, error: "" };
 let mediaRecorder = null;
 let mediaChunks = [];
 let isRecording = false;
@@ -242,8 +243,76 @@ function settingsSectionCatalog() {
     "ai-models": {
       label: t("settings.sections.ai-models.label"),
       summary: t("settings.sections.ai-models.summary")
+    },
+    artifacts: {
+      label: "Generated Artifacts",
+      summary: "Browse runtime generated blueprints, agents, and features"
     }
   };
+}
+
+async function loadGeneratedArtifacts() {
+  generatedArtifactsRuntime.isLoading = true;
+  generatedArtifactsRuntime.error = "";
+  renderSettings(latestDashboard);
+  try {
+    const response = await fetch("/api/generated-artifacts");
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "Failed to load generated artifacts.");
+    }
+    generatedArtifactsRuntime.items = payload.items || {};
+  } catch (error) {
+    generatedArtifactsRuntime.error = String(error.message || error);
+  } finally {
+    generatedArtifactsRuntime.isLoading = false;
+    renderSettings(latestDashboard);
+  }
+}
+
+async function deleteGeneratedArtifact(category, artifactId) {
+  try {
+    const response = await fetch("/api/generated-artifacts/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category, artifactId })
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "Failed to delete generated artifact.");
+    }
+    await loadGeneratedArtifacts();
+  } catch (error) {
+    generatedArtifactsRuntime.error = String(error.message || error);
+    renderSettings(latestDashboard);
+  }
+}
+
+function renderGeneratedArtifactGroups() {
+  const groups = generatedArtifactsRuntime.items || {};
+  const order = ["blueprint", "agent", "feature", "trace", "code"];
+  return order.map((category) => {
+    const items = Array.isArray(groups[category]) ? groups[category] : [];
+    const rows = items.length
+      ? items.map((item) => `
+        <article class="settings-card">
+          <strong>${escapeHtml(item.name || item.artifactId || "-")}</strong>
+          <p>${escapeHtml(item.path || "")}</p>
+          <p>size: ${escapeHtml(String(item.size || 0))}</p>
+          <pre class="cortex-json-view">${escapeHtml(item.contentPreview || "")}</pre>
+          <div class="studio-actions">
+            <button class="test-action remote-target is-secondary" type="button" data-generated-delete="${escapeHtml(category)}:${escapeHtml(item.artifactId || "")}">Delete</button>
+          </div>
+        </article>
+      `).join("")
+      : `<div class="settings-card"><p>No ${escapeHtml(category)} artifacts.</p></div>`;
+    return `
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>${escapeHtml(category)}</h3></div>
+        ${rows}
+      </div>
+    `;
+  }).join("");
 }
 
 function localizeCatalogText(entry) {
@@ -2596,6 +2665,9 @@ function buildConceptText(kind) {
 
 function activateSettingsSection(sectionId, focusButton = false) {
   activeSettingsSection = settingsSectionCatalog()[sectionId] ? sectionId : "language";
+  if (activeSettingsSection === "artifacts" && !generatedArtifactsRuntime.isLoading) {
+    loadGeneratedArtifacts().catch(() => {});
+  }
   if (latestDashboard) {
     renderSettings(latestDashboard);
   }
@@ -2904,6 +2976,35 @@ function renderSettingsDetail(data) {
       syncAvatarSettingsFromDom();
       await persistAssistantAvatar(avatar.mode || "custom", avatarSettingsState.customModelUrl || avatar.customModelUrl);
     };
+    return;
+  }
+
+  if (activeSettingsSection === "artifacts") {
+    detail.innerHTML = `
+      ${overview}
+      <div class="settings-section-header">
+        <div>
+          <p class="eyebrow">Generated Artifacts</p>
+          <h3>Generated Artifacts</h3>
+        </div>
+        <span class="pill">runtime/generated</span>
+      </div>
+      <p class="settings-section-copy">Browse and delete blueprints, agents, and features generated at runtime without touching core source files.</p>
+      <div class="studio-actions">
+        <button id="generated-artifacts-refresh" class="test-action remote-target" type="button">Refresh</button>
+      </div>
+      ${generatedArtifactsRuntime.isLoading ? `<div class="settings-card"><p>Loading generated artifacts...</p></div>` : ""}
+      ${generatedArtifactsRuntime.error ? `<div class="settings-card"><p>${escapeHtml(generatedArtifactsRuntime.error)}</p></div>` : ""}
+      ${renderGeneratedArtifactGroups()}
+    `;
+    const refreshButton = document.getElementById("generated-artifacts-refresh");
+    if (refreshButton) refreshButton.onclick = () => loadGeneratedArtifacts();
+    detail.querySelectorAll("[data-generated-delete]").forEach((button) => {
+      button.onclick = async () => {
+        const [category, artifactId] = String(button.dataset.generatedDelete || "").split(":");
+        if (category && artifactId) await deleteGeneratedArtifact(category, artifactId);
+      };
+    });
     return;
   }
 

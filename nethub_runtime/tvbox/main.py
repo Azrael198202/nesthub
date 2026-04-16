@@ -38,6 +38,7 @@ def _create_app() -> Any:
         get_supported_languages,
         normalize_locale,
     )
+    from nethub_runtime.generated.store import GeneratedArtifactStore
 
     app = FastAPI()
 
@@ -104,6 +105,7 @@ def _create_app() -> Any:
 
     dashboard_state = _load_json(demo_dir / "dashboard.demo.json", dashboard_fallback)
     cortex_template = _load_json(demo_dir / "cortex_unpacked.demo.json", cortex_fallback)
+    artifact_store = GeneratedArtifactStore()
 
     def _dashboard_snapshot() -> dict[str, Any]:
         snapshot = copy.deepcopy(dashboard_state)
@@ -117,6 +119,7 @@ def _create_app() -> Any:
         snapshot["languageSettings"]["current"] = current
         snapshot.setdefault("voiceProfile", {})
         snapshot["voiceProfile"]["locale"] = current
+        snapshot["generatedArtifacts"] = artifact_store.list_artifacts()
         return snapshot
 
     @app.get("/")
@@ -186,6 +189,10 @@ def _create_app() -> Any:
             "items": copy.deepcopy(dashboard_state.get("customAgents", [])),
             "recentActions": copy.deepcopy(dashboard_state.get("customAgentRecentActions", [])),
         }
+
+    @app.get("/api/generated-artifacts")
+    def api_generated_artifacts():
+        return {"ok": True, "items": artifact_store.list_artifacts()}
 
     @app.post("/api/cortex/unpacked")
     async def api_cortex_unpacked(request: Request):
@@ -318,19 +325,16 @@ def _create_app() -> Any:
 
     @app.post("/api/custom-agents/generate-feature")
     async def api_custom_agents_generate_feature():
-        from nethub_runtime.config.settings import ensure_generated_dirs
-
-        generated_paths = ensure_generated_dirs()
         feature_id = "feature_auto_demo"
-        feature_path = generated_paths["features"] / f"{feature_id}.py"
-        if not feature_path.exists():
-            feature_path.write_text(
-                "from __future__ import annotations\n\n"
-                "def run(payload: dict | None = None) -> dict:\n"
-                "    payload = payload or {}\n"
-                "    return {\"ok\": True, \"feature_id\": \"feature_auto_demo\", \"payload\": payload}\n",
-                encoding="utf-8",
-            )
+        feature_path = artifact_store.persist(
+            "feature",
+            feature_id,
+            "from __future__ import annotations\n\n"
+            "def run(payload: dict | None = None) -> dict:\n"
+            "    payload = payload or {}\n"
+            "    return {\"ok\": True, \"feature_id\": \"feature_auto_demo\", \"payload\": payload}\n",
+            extension=".py",
+        )
         return {"ok": True, "featurePath": str(feature_path), "featureId": feature_id}
 
     @app.post("/api/custom-agents/delete")
@@ -339,19 +343,23 @@ def _create_app() -> Any:
 
     @app.post("/api/custom-agents/delete-feature")
     async def api_custom_agents_delete_feature(request: Request):
-        from nethub_runtime.config.settings import ensure_generated_dirs
-
         body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
         feature_id = str(body.get("featureId", "")).strip()
         if not feature_id:
             return {"ok": True, "deleted": False}
 
         normalized_feature_id = re.sub(r"[^a-zA-Z0-9_-]", "_", feature_id)
-        feature_path = ensure_generated_dirs()["features"] / f"{normalized_feature_id}.py"
-        if feature_path.exists():
-            feature_path.unlink()
-            return {"ok": True, "deleted": True, "featurePath": str(feature_path)}
-        return {"ok": True, "deleted": False, "featurePath": str(feature_path)}
+        deleted = artifact_store.delete("feature", normalized_feature_id)
+        return {"ok": True, "deleted": deleted["deleted"], "featurePath": deleted["path"]}
+
+    @app.post("/api/generated-artifacts/delete")
+    async def api_generated_artifacts_delete(request: Request):
+        body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        category = str(body.get("category", "")).strip()
+        artifact_id = str(body.get("artifactId", "")).strip()
+        if category not in GeneratedArtifactStore.CATEGORY_TO_DIR or not artifact_id:
+            return JSONResponse(status_code=400, content={"ok": False, "error": "invalid category or artifactId"})
+        return artifact_store.delete(category, artifact_id)
 
     return app
 

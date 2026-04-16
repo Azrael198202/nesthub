@@ -29,6 +29,7 @@ from nethub_runtime.core.workflows.executor import WorkflowExecutor
 from nethub_runtime.core.workflows.base_workflow import SimpleWorkflow
 from nethub_runtime.core.agents.agent_builder import AgentBuilder
 from nethub_runtime.core.tools.registry import ToolRegistry
+from nethub_runtime.generated.store import GeneratedArtifactStore
 
 
 class AICore:
@@ -89,6 +90,7 @@ class AICore:
         # ========== 新增：工具注册表 ==========
         self.tool_registry = ToolRegistry()
         self.logger.info("✓ Tool Registry initialized")
+        self.generated_artifact_store = GeneratedArtifactStore()
         
         # ========== 新增：LangGraph 工作流执行器 ==========
         # 参考: docs/03_workflow/langgraph_agent_framework.md
@@ -203,6 +205,16 @@ class AICore:
                 
                 # 构建 Agent
                 agent = await self.agent_builder.build_agent(agent_spec)
+                generated_agent_path = self.generated_artifact_store.persist(
+                    "agent",
+                    agent_spec.agent_id,
+                    {
+                        **agent_spec.__dict__,
+                        "source": "runtime_agent_generation",
+                        "task": task.model_dump(),
+                        "context": {"trace_id": ctx.trace_id, "session_id": ctx.session_id},
+                    },
+                )
                 
                 # 运行 Agent 推理循环
                 agent_result = await agent.think_and_act(input_text, ctx.model_dump())
@@ -214,6 +226,7 @@ class AICore:
                     "name": agent_spec.name,
                     "role": agent_spec.role,
                     "description": agent_spec.description,
+                    "generated_artifact_path": str(generated_agent_path),
                 }
                 
                 execution_result = {
@@ -255,6 +268,19 @@ class AICore:
                             generated_artifact="blueprint",
                         )
                         blueprints = [self.blueprint_generator.generate(task, workflow)]
+                        for blueprint in blueprints:
+                            generated_path = self.generated_artifact_store.persist(
+                                "blueprint",
+                                blueprint.blueprint_id,
+                                {
+                                    **blueprint.model_dump(),
+                                    "source": "runtime_blueprint_generation",
+                                    "task": task.model_dump(),
+                                    "workflow": workflow.model_dump(),
+                                    "context": {"trace_id": ctx.trace_id, "session_id": ctx.session_id},
+                                },
+                            )
+                            blueprint.metadata["generated_artifact_path"] = str(generated_path)
                     else:
                         autonomous_trace = self._build_autonomous_trace(capability_gap_detected=False)
                     blueprints_payload = [item.model_dump() for item in blueprints]
