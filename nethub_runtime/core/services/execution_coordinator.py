@@ -291,7 +291,7 @@ class ExecutionCoordinator:
 
         filters = self._infer_alias_filters(text)
         semantic_label = self._semantic_label_from_text(text)
-        if semantic_label:
+        if semantic_label and self._query_has_explicit_label_signal(text, semantic_label):
             filters["label"] = semantic_label
         for pattern in self._require_semantic_value("location_keyword_patterns", list):
             matched = re.search(pattern, text)
@@ -312,6 +312,19 @@ class ExecutionCoordinator:
         }
         self._learn_semantic_candidates(text, stage="query_parsing")
         return query
+
+    def _query_has_explicit_label_signal(self, text: str, label: str) -> bool:
+        normalized_text = self._normalize_text(text)
+        synonym_map = self.semantic_policy.get("normalization", {}).get("synonyms", {})
+        taxonomy = self.semantic_policy.get("label_taxonomy", {})
+        label_config = taxonomy.get(label, {}) if isinstance(taxonomy, dict) else {}
+        examples = label_config.get("examples", []) if isinstance(label_config, dict) else []
+        lexical_hints = {
+            self._normalize_text(str(item))
+            for item in [*synonym_map.get(label, []), *examples]
+            if len(self._normalize_text(str(item))) >= 2
+        }
+        return any(hint in normalized_text for hint in lexical_hints)
 
     def _find_terms_from_records(self, query_text: str, existing_records: list[dict[str, Any]]) -> list[str]:
         terms: list[str] = []

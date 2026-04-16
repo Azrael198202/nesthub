@@ -12,7 +12,8 @@ if str(ROOT_DIR) not in sys.path:
 from nethub_runtime.core.main import app
 
 client = TestClient(app)
-OUTPUT_DIR = ROOT_DIR / "test"
+OUTPUT_DIR = ROOT_DIR / "test/reports"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # 只测试有问题的两个问答
 input_text = "吃饭花了3000日元，两个人，在博多一兰拉面。今天买了咖啡500日元，还有买了书1200日元。上周末和家人去超市买东西一共花了8000日元。"
