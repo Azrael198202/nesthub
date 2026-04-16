@@ -95,6 +95,32 @@ def test_location_query_does_not_pick_up_spurious_label_filter(tmp_path: Path) -
     assert query["filters"] == {"location_keyword": "博多"}
 
 
+def test_schedule_records_are_extracted_without_amounts(tmp_path: Path) -> None:
+    coordinator = _build_coordinator(tmp_path)
+
+    records = coordinator._extract_records("爸爸4月21号去大阪。妈妈4月20号PTA开会。")
+
+    assert len(records) == 2
+    assert records[0]["record_type"] == "schedule"
+    assert records[0]["actor"] == "爸爸"
+    assert records[0]["time"] == "2026-04-21"
+    assert "大阪" in str(records[0]["location"])
+    assert records[1]["record_type"] == "schedule"
+    assert records[1]["actor"] == "妈妈"
+    assert records[1]["time"] == "2026-04-20"
+
+
+def test_schedule_query_uses_list_metric_when_records_exist(tmp_path: Path) -> None:
+    coordinator = _build_coordinator(tmp_path)
+    existing_records = coordinator._extract_records("爸爸4月21号去大阪。妈妈4月20号PTA开会。")
+
+    query = coordinator._parse_query("4月21号爸爸有什么安排？", existing_records=existing_records)
+
+    assert query["metric"] == "list"
+    assert query["time_marker"] == "2026-04-21"
+    assert "爸爸" in query["terms"]
+
+
 def test_extract_records_assigns_new_category_labels(tmp_path: Path) -> None:
     coordinator = _build_coordinator(tmp_path)
 

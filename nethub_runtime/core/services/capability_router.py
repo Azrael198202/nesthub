@@ -62,6 +62,18 @@ class CapabilityRouter:
             "databases": [{"name": "session_store", "kind": "in_memory", "supports": ["stateful_records"]}],
             "shell": [{"name": "bash", "available": True, "supports": ["local_commands"]}],
             "tools": [{"name": "python_parser", "available": True}],
+            "autonomous_implementation": {
+                "enabled": True,
+                "supports": ["capability_gap_resolution", "blueprint_completion", "code_patch_generation", "test_backfill"],
+                "code_generation_models": ["local-rule-parser"],
+                "required_tools": ["bash"],
+                "safety_rules": {
+                    "respect_read_only_main_policy": True,
+                    "require_tests_for_new_logic": True,
+                    "prefer_patch_over_replace": True,
+                    "allow_runtime_generated_code": True,
+                },
+            },
         }
 
     def _load_routes(self) -> None:

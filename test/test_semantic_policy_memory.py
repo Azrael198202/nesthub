@@ -152,3 +152,73 @@ def test_semantic_policy_inspection_rejects_invalid_status_filter(tmp_path) -> N
 
     with pytest.raises(ValueError, match="unsupported semantic memory status filter"):
         store.inspect_memory(status="invalid")
+
+
+def test_semantic_policy_runtime_overlay_supports_record_type_and_query_metric_rules(tmp_path) -> None:
+    policy_path = tmp_path / "semantic_policy.json"
+    db_path = tmp_path / "semantic_policy_memory.sqlite3"
+    _write_policy(
+        policy_path,
+        {
+            "record_type_rules": {"expense": {"default": True, "default_label": "other"}},
+            "query_metric_rules": {},
+        },
+    )
+    store = SemanticPolicyStore(policy_path=policy_path, db_path=db_path)
+
+    store.record_candidate(
+        "record_type_rules",
+        {"schedule": {"required_any": ["meeting"], "require_time": True, "default_amount": 0, "default_label": "schedule"}},
+        confidence=0.9,
+        source="test",
+        evidence="meeting tomorrow",
+    )
+    store.record_candidate(
+        "record_type_rules",
+        {"schedule": {"required_any": ["meeting"], "require_time": True, "default_amount": 0, "default_label": "schedule"}},
+        confidence=0.95,
+        source="test",
+        evidence="meeting next week",
+    )
+    store.record_candidate(
+        "query_metric_rules",
+        {"list": {"required_any": ["what plan"], "requires_record_type": "schedule"}},
+        confidence=0.9,
+        source="test",
+        evidence="what plan tomorrow",
+    )
+    store.record_candidate(
+        "query_metric_rules",
+        {"list": {"required_any": ["what plan"], "requires_record_type": "schedule"}},
+        confidence=0.95,
+        source="test",
+        evidence="what plan next week",
+    )
+
+    runtime_policy = store.load_runtime_policy()
+    assert "schedule" in runtime_policy["record_type_rules"]
+    assert runtime_policy["record_type_rules"]["schedule"]["default_label"] == "schedule"
+    assert "list" in runtime_policy["query_metric_rules"]
+    assert runtime_policy["query_metric_rules"]["list"]["requires_record_type"] == "schedule"
+
+
+def test_learning_candidate_flattening_handles_nested_rule_values(tmp_path) -> None:
+    policy_path = tmp_path / "semantic_policy.json"
+    _write_policy(
+        policy_path,
+        {
+            "record_type_rules": {"expense": {"default": True, "default_label": "other"}},
+            "query_metric_rules": {},
+        },
+    )
+    coordinator = ExecutionCoordinator(semantic_policy_path=policy_path)
+
+    flattened = coordinator._flatten_learning_candidate_values(
+        {"schedule": {"required_any": ["安排", "会议"], "requires_record_type": "schedule"}}
+    )
+
+    assert "schedule" in flattened
+    assert "required_any" in flattened
+    assert "安排" in flattened
+    assert "会议" in flattened
+    assert "requires_record_type" in flattened

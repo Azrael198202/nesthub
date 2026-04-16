@@ -229,6 +229,52 @@
     "是多少",
     "吗"
   ],
+  "record_type_rules": {
+    "expense": {
+      "default": true,
+      "default_label": "other"
+    },
+    "schedule": {
+      "required_any": [
+        "安排",
+        "开会",
+        "远足",
+        "出差",
+        "上课",
+        "去",
+        "行程",
+        "会议",
+        "计划"
+      ],
+      "reject_any": [
+        "花了",
+        "消费",
+        "买了",
+        "支出",
+        "费用",
+        "元",
+        "日元",
+        "円",
+        "￥",
+        "$"
+      ],
+      "require_time": true,
+      "default_amount": 0,
+      "default_label": "schedule"
+    }
+  },
+  "query_metric_rules": {
+    "list": {
+      "required_any": [
+        "安排",
+        "日程",
+        "行程",
+        "计划",
+        "有什么"
+      ],
+      "requires_record_type": "schedule"
+    }
+  },
   "segment_split_patterns": [
     "[。；;\\n]",
     "还有",
@@ -327,7 +373,9 @@
         "location_keyword_patterns",
         "participant_aliases",
         "group_by_aliases",
-        "entity_aliases.actor"
+        "entity_aliases.actor",
+        "record_type_rules",
+        "query_metric_rules"
       ],
       "min_candidate_text_length": 2,
       "blocked_terms": [

@@ -32,6 +32,7 @@ graph TD
         E1[LiteLLM Model Router]
         E2[Tool Registry]
         E3[Memory Manager]
+        E4[Autonomous Implementation<br/>Codegen + Patch]
     end
     
     subgraph "Output"
@@ -56,6 +57,9 @@ graph TD
     E2 -.-> D2
     E3 -.-> D1
     E3 -.-> D2
+    E4 -.-> C3
+    E4 -.-> D1
+    E4 -.-> D2
 ```
 
 ---
@@ -102,6 +106,12 @@ sequenceDiagram
         LiteLLM-->>LG_Agent: thought + action
         LG_Agent->>Integrator: push_result()
     end
+
+    opt capability gap detected
+        AICore->>LiteLLM: design patch / blueprint completion
+        AICore->>AICore: generate code + tests + config delta
+        AICore->>Integrator: register reusable capability
+    end
     
     Integrator-->>User: Final Result
 ```
@@ -109,6 +119,18 @@ sequenceDiagram
 ---
 
 ## 3. 目录结构与文件对应
+
+### 3.1 缺失能力补齐原则
+
+AI Core 不只是消费既有能力，也允许在运行时判断“当前系统缺少实现，但可以通过代码生成补齐”。
+
+推荐约束：
+
+- 必须先尝试复用已有 Blueprint、Tool、Feature
+- 仅在能力缺口明确时进入 codegen / patch 模式
+- 新逻辑需要附带测试或回归验证
+- 主配置保持只读，自动生成内容优先进入候选区、注册表或新文件
+- 新实现完成后，应可被 BlueprintResolver / Registry 复用
 
 ```
 nethub_runtime/

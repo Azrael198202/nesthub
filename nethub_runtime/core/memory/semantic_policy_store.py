@@ -22,6 +22,8 @@ class SemanticPolicyStore:
         "participant_aliases": "dict",
         "group_by_aliases": "dict",
         "entity_aliases.actor": "dict_list",
+        "record_type_rules": "dict",
+        "query_metric_rules": "dict",
     }
 
     def __init__(self, policy_path: Path, db_path: Path | None = None) -> None:

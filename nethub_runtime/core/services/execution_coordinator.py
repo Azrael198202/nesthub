@@ -4,7 +4,7 @@ import json
 import os
 import re
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -199,22 +199,41 @@ class ExecutionCoordinator:
         segments = [segment.strip() for segment in re.split(split_regex, text) if segment.strip()]
         records: list[dict[str, Any]] = []
         for segment in segments:
-            amount = self._extract_amount(segment)
-            if amount is None:
+            record_type = self._infer_record_type(segment)
+            if record_type != "expense":
+                type_rule = self.semantic_policy.get("record_type_rules", {}).get(record_type, {})
+                records.append(
+                    {
+                        "record_type": record_type,
+                        "time": self._extract_time(segment),
+                        "location": self._extract_location(segment),
+                        "content": self._extract_content(segment),
+                        "amount": int(type_rule.get("default_amount", 0)),
+                        "participants": self._extract_participants(segment),
+                        "actor": self._extract_actor(segment),
+                        "label": str(type_rule.get("default_label", record_type)),
+                        "raw_text": segment,
+                        "created_at": datetime.now(UTC).isoformat(),
+                    }
+                )
                 continue
-            records.append(
-                {
-                    "time": self._extract_time(segment),
-                    "location": self._extract_location(segment),
-                    "content": self._extract_content(segment),
-                    "amount": amount,
-                    "participants": self._extract_participants(segment),
-                    "actor": self._extract_actor(segment),
-                    "label": self._infer_label(segment),
-                    "raw_text": segment,
-                    "created_at": datetime.now(UTC).isoformat(),
-                }
-            )
+            amount = self._extract_amount(segment)
+            if amount is not None:
+                records.append(
+                    {
+                        "record_type": "expense",
+                        "time": self._extract_time(segment),
+                        "location": self._extract_location(segment),
+                        "content": self._extract_content(segment),
+                        "amount": amount,
+                        "participants": self._extract_participants(segment),
+                        "actor": self._extract_actor(segment),
+                        "label": self._infer_label(segment),
+                        "raw_text": segment,
+                        "created_at": datetime.now(UTC).isoformat(),
+                    }
+                )
+                continue
         self._learn_semantic_candidates(text, stage="record_extraction")
         return records
 
@@ -231,6 +250,12 @@ class ExecutionCoordinator:
         return None
 
     def _extract_time(self, text: str) -> str:
+        explicit_date = self._extract_explicit_date(text)
+        if explicit_date:
+            return explicit_date
+        relative_week_date = self._extract_relative_week_date(text)
+        if relative_week_date:
+            return relative_week_date
         for marker in self.intent_policy.get("time_markers", []):
             if marker in text:
                 return marker
@@ -263,12 +288,70 @@ class ExecutionCoordinator:
         return None
 
     def _extract_actor(self, text: str) -> str:
+        named_actor = self._extract_named_actor(text)
+        if named_actor:
+            return named_actor
         alias = self.semantic_policy.get("entity_aliases", {}).get("actor", {})
         normalized = self._normalize_text(text)
         for canonical, aliases in alias.items():
             if any(self._normalize_text(a) in normalized for a in aliases):
                 return canonical
         return "self"
+
+    def _extract_named_actor(self, text: str) -> str | None:
+        match = re.match(r"^([\u4e00-\u9fffA-Za-z]{2,4})(?=今天|昨天|本周|下周|\d{1,2}月\d{1,2}号|去|开会|远足|安排)", text.strip())
+        if match:
+            return match.group(1)
+        return None
+
+    def _extract_explicit_date(self, text: str) -> str | None:
+        match = re.search(r"(\d{1,2})月(\d{1,2})号", text)
+        if not match:
+            return None
+        now = datetime.now(UTC)
+        month = int(match.group(1))
+        day = int(match.group(2))
+        return f"{now.year:04d}-{month:02d}-{day:02d}"
+
+    def _extract_relative_week_date(self, text: str) -> str | None:
+        match = re.search(r"本周([一二三四五六日天])", text)
+        if not match:
+            return None
+        weekday_map = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
+        target_weekday = weekday_map[match.group(1)]
+        now = datetime.now(UTC)
+        monday = now - timedelta(days=now.weekday())
+        target = monday + timedelta(days=target_weekday)
+        return target.date().isoformat()
+
+    def _infer_record_type(self, text: str) -> str:
+        record_type_rules = self.semantic_policy.get("record_type_rules", {})
+        if not isinstance(record_type_rules, dict):
+            return "expense"
+
+        default_type = "expense"
+        for record_type, rule in record_type_rules.items():
+            if isinstance(rule, dict) and rule.get("default"):
+                default_type = str(record_type)
+                break
+
+        for record_type, rule in record_type_rules.items():
+            if record_type == default_type or not isinstance(rule, dict):
+                continue
+            if self._rule_matches_text(text, rule):
+                return str(record_type)
+        return default_type
+
+    def _rule_matches_text(self, text: str, rule: dict[str, Any]) -> bool:
+        if rule.get("require_time") and self._extract_time(text) == "unspecified":
+            return False
+        required_any = [str(item) for item in rule.get("required_any", []) if str(item).strip()]
+        reject_any = [str(item) for item in rule.get("reject_any", []) if str(item).strip()]
+        if required_any and not any(marker in text for marker in required_any):
+            return False
+        if reject_any and any(marker in text for marker in reject_any):
+            return False
+        return True
 
     def _infer_label(self, text: str) -> str:
         semantic_label = self._semantic_label_from_text(text)
@@ -303,7 +386,7 @@ class ExecutionCoordinator:
         dynamic_terms = record_matched_terms or self._extract_dynamic_terms(terms, existing_records)
         group_by = self._extract_group_by(text)
         query = {
-            "metric": "sum",
+            "metric": self._infer_query_metric(text, existing_records),
             "terms": dynamic_terms,
             "group_by": group_by,
             "time_marker": self._extract_time(text),
@@ -312,6 +395,19 @@ class ExecutionCoordinator:
         }
         self._learn_semantic_candidates(text, stage="query_parsing")
         return query
+
+    def _infer_query_metric(self, text: str, existing_records: list[dict[str, Any]]) -> str:
+        metric_rules = self.semantic_policy.get("query_metric_rules", {})
+        if isinstance(metric_rules, dict):
+            for metric, rule in metric_rules.items():
+                if not isinstance(rule, dict):
+                    continue
+                required_type = rule.get("requires_record_type")
+                if required_type and not any(item.get("record_type") == required_type for item in existing_records):
+                    continue
+                if self._rule_matches_text(text, rule):
+                    return str(metric)
+        return "sum"
 
     def _query_has_explicit_label_signal(self, text: str, label: str) -> bool:
         normalized_text = self._normalize_text(text)
@@ -493,6 +589,7 @@ class ExecutionCoordinator:
         filters = query.get("filters", {})
         group_by = query.get("group_by", [])
         time_marker = query.get("time_marker")
+        metric = str(query.get("metric", "sum"))
         belonging_keys = ["actor", "label", "location_keyword"]
         has_belonging = False
         for k in belonging_keys:
@@ -542,13 +639,26 @@ class ExecutionCoordinator:
             for item in filtered:
                 key = str(item.get(dim, "unknown"))
                 grouped[dim][key] = grouped[dim].get(key, 0) + int(item.get("amount", 0))
-        return {
+        response = {
             "total_amount": total_amount,
             "count": len(filtered),
             "grouped": grouped,
             "semantic_mode": "local",
             "semantic_confidence": round(confidence, 4),
         }
+        if metric == "list":
+            response["matched_records"] = [
+                {
+                    "record_type": item.get("record_type", "expense"),
+                    "actor": item.get("actor"),
+                    "time": item.get("time"),
+                    "location": item.get("location"),
+                    "content": item.get("content"),
+                    "label": item.get("label"),
+                }
+                for item in filtered
+            ]
+        return response
 
     def _strict_term_filter(self, records: list[dict[str, Any]], terms: list[str]) -> list[dict[str, Any]]:
         normalized_terms = [self._normalize_text(term) for term in terms if self._normalize_text(term)]
@@ -764,6 +874,8 @@ class ExecutionCoordinator:
                 "entity_aliases": self.semantic_policy.get("entity_aliases", {}),
                 "ignored_query_tokens": self.semantic_policy.get("ignored_query_tokens", []),
                 "time_markers": self.intent_policy.get("time_markers", []),
+                "record_type_rules": self.semantic_policy.get("record_type_rules", {}),
+                "query_metric_rules": self.semantic_policy.get("query_metric_rules", {}),
             },
             "schema": {
                 "candidates": [
@@ -837,41 +949,53 @@ class ExecutionCoordinator:
         return True
 
     def _flatten_learning_candidate_values(self, value: Any) -> list[str]:
-        if isinstance(value, str):
-            return [value]
-        if isinstance(value, list):
-            return [str(item) for item in value if str(item).strip()]
-        if isinstance(value, dict):
-            flattened: list[str] = []
-            for key, nested_value in value.items():
-                if str(key).strip():
-                    flattened.append(str(key))
-                if isinstance(nested_value, list):
-                    flattened.extend(str(item) for item in nested_value if str(item).strip())
-                elif nested_value not in (None, ""):
-                    flattened.append(str(nested_value))
-            return flattened
-        return []
+        flattened: list[str] = []
+
+        def _collect(item: Any) -> None:
+            if isinstance(item, str):
+                if item.strip():
+                    flattened.append(item)
+                return
+            if isinstance(item, list):
+                for nested in item:
+                    _collect(nested)
+                return
+            if isinstance(item, dict):
+                for key, nested_value in item.items():
+                    if str(key).strip():
+                        flattened.append(str(key))
+                    _collect(nested_value)
+                return
+            if item not in (None, ""):
+                flattened.append(str(item))
+
+        _collect(value)
+        return flattened
 
     def _existing_learning_values(self, policy_key: str) -> set[str]:
         existing: set[str] = set()
+
+        def _collect(item: Any) -> None:
+            if isinstance(item, str):
+                existing.add(self._normalize_text(item))
+                return
+            if isinstance(item, list):
+                for nested in item:
+                    _collect(nested)
+                return
+            if isinstance(item, dict):
+                for key, nested_value in item.items():
+                    existing.add(self._normalize_text(str(key)))
+                    _collect(nested_value)
+                return
+            if item not in (None, ""):
+                existing.add(self._normalize_text(str(item)))
+
         if policy_key == "entity_aliases.actor":
             actor_aliases = self.semantic_policy.get("entity_aliases", {}).get("actor", {})
-            for canonical, aliases in actor_aliases.items():
-                existing.add(self._normalize_text(str(canonical)))
-                existing.update(self._normalize_text(str(alias)) for alias in aliases)
+            _collect(actor_aliases)
             return existing
 
         current_value = self.semantic_policy.get(policy_key)
-        if isinstance(current_value, list):
-            existing.update(self._normalize_text(str(item)) for item in current_value)
-        elif isinstance(current_value, dict):
-            for key, nested_value in current_value.items():
-                existing.add(self._normalize_text(str(key)))
-                if isinstance(nested_value, list):
-                    existing.update(self._normalize_text(str(item)) for item in nested_value)
-                elif nested_value not in (None, ""):
-                    existing.add(self._normalize_text(str(nested_value)))
-        elif current_value not in (None, ""):
-            existing.add(self._normalize_text(str(current_value)))
+        _collect(current_value)
         return existing
