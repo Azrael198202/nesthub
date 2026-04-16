@@ -29,6 +29,32 @@ class DataOpsTaskDecomposerPlugin:
         return [SubTask(subtask_id=generate_id("subtask"), name="single_step", goal="Execute generic data operation.")]
 
 
+class AgentManagementTaskDecomposerPlugin:
+    priority = 95
+
+    def match(self, task: TaskSchema) -> bool:
+        return task.domain in {"agent_management", "knowledge_ops"}
+
+    def run(self, task: TaskSchema) -> list[SubTask]:
+        if task.intent in {"create_information_agent", "refine_information_agent", "finalize_information_agent", "capture_agent_knowledge"}:
+            return [
+                SubTask(
+                    subtask_id=generate_id("subtask"),
+                    name="manage_information_agent",
+                    goal="Create an information agent, collect required knowledge fields, and persist structured knowledge.",
+                )
+            ]
+        if task.intent == "query_agent_knowledge":
+            return [
+                SubTask(
+                    subtask_id=generate_id("subtask"),
+                    name="query_information_knowledge",
+                    goal="Query previously stored knowledge from the configured information agent.",
+                )
+            ]
+        return [SubTask(subtask_id=generate_id("subtask"), name="single_step", goal="Handle generic agent management request.")]
+
+
 class MultimodalTaskDecomposerPlugin:
     priority = 90
 
@@ -68,6 +94,7 @@ class TaskDecomposer:
     def __init__(self) -> None:
         self.plugins: list[PluginBase] = []
         self.register_plugin(DataOpsTaskDecomposerPlugin())
+        self.register_plugin(AgentManagementTaskDecomposerPlugin())
         self.register_plugin(MultimodalTaskDecomposerPlugin())
         self.register_plugin(DefaultTaskDecomposerPlugin())
         self.load_plugins_from_config()

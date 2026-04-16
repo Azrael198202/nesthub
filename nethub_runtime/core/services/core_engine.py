@@ -71,7 +71,10 @@ class AICore:
         self.blueprint_generator = BlueprintGenerator(registry=self.blueprint_registry)
         self.agent_designer = AgentDesigner()
         self.capability_router = CapabilityRouter()
-        self.execution_coordinator = ExecutionCoordinator(session_store=self.context_manager.session_store)
+        self.execution_coordinator = ExecutionCoordinator(
+            session_store=self.context_manager.session_store,
+            vector_store=self.vector_store,
+        )
         self.result_integrator = ResultIntegrator()
         
         # ========== 新增：LiteLLM 模型路由 ==========
@@ -207,14 +210,56 @@ class AICore:
         workflow_payload = None
         blueprints_payload: list[dict[str, Any]] = []
         agent_payload = None
+        execution_plan: list[dict[str, Any]] = []
         autonomous_trace = self._build_autonomous_trace(capability_gap_detected=False)
         
         try:
             # ========== Step 1: 意图分析 ==========
             task = await self.intent_analyzer.analyze(input_text, ctx)
             self.logger.info(f"  Intent: {task.intent}, Domain: {task.domain}")
+
+            # ========== Step 2: 统一生成工作流与节点能力计划 ==========
+            subtasks = await self.task_decomposer.decompose(task)
+            workflow = await self.workflow_planner.plan(task, subtasks)
+            workflow_payload = workflow
+
+            blueprints = self.blueprint_resolver.resolve(task, workflow)
+            if not blueprints:
+                autonomous_trace = self._build_autonomous_trace(
+                    capability_gap_detected=True,
+                    trigger_reason="no_reusable_blueprint_resolved",
+                    generated_artifact="blueprint",
+                )
+                blueprints = [self.blueprint_generator.generate(task, workflow)]
+                for blueprint in blueprints:
+                    generated_path = self.generated_artifact_store.persist(
+                        "blueprint",
+                        blueprint.blueprint_id,
+                        {
+                            **blueprint.model_dump(),
+                            "source": "runtime_blueprint_generation",
+                            "task": task.model_dump(),
+                            "workflow": workflow.model_dump(),
+                            "context": {"trace_id": ctx.trace_id, "session_id": ctx.session_id},
+                        },
+                    )
+                    blueprint.metadata["generated_artifact_path"] = str(generated_path)
+            else:
+                autonomous_trace = self._build_autonomous_trace(capability_gap_detected=False)
+            blueprints_payload = [item.model_dump() for item in blueprints]
+
+            for blueprint in blueprints:
+                self.blueprint_registry.register(blueprint.name, blueprint)
+
+            execution_plan = self.capability_router.route_workflow(task, workflow)
+            self.security_guard.validate_plan(execution_plan)
+            for step in execution_plan:
+                model_choice = (step.get("capability") or {}).get("model_choice", {})
+                provider = model_choice.get("provider", "unknown")
+                model = model_choice.get("model", "unknown")
+                self.model_registry.register(f"{provider}:{model}", model_choice)
             
-            # ========== Step 2: 决策 - Agent 还是 Workflow? ==========
+            # ========== Step 3: 决策 - Agent 还是 Workflow? ==========
             need_agent = task.constraints.get("need_agent", False)
             
             if need_agent and use_langraph:
@@ -224,7 +269,7 @@ class AICore:
                 # 生成 Agent 规范
                 agent_spec = await self.agent_builder.generate_agent_spec(
                     task=task.model_dump(),
-                    workflow=None
+                    workflow=workflow.model_dump()
                 )
                 
                 # 构建 Agent
@@ -255,6 +300,7 @@ class AICore:
                 
                 execution_result = {
                     "execution_type": "agent",
+                    "execution_plan": execution_plan,
                     "agent_result": agent_result,
                     "autonomous_implementation_trace": autonomous_trace,
                 }
@@ -262,67 +308,19 @@ class AICore:
             else:
                 # ========== Path B: 使用 Workflow（任务编排） ==========
                 self.logger.info("📌 Using Workflow (task orchestration)")
-                
-                if use_langraph:
-                    # 使用 LangGraph Workflow
-                    workflow = SimpleWorkflow(model_router=self.model_router)
-                    workflow_state = await self.workflow_executor.execute_workflow(
-                        workflow=workflow,
-                        user_input=input_text,
-                        context=ctx.model_dump(),
-                        execution_id=ctx.trace_id
-                    )
-                    
-                    execution_result = {
-                        "execution_type": "workflow",
-                        "workflow_state": workflow_state,
-                        "autonomous_implementation_trace": autonomous_trace,
+                execution_result = self.execution_coordinator.execute(execution_plan, task, ctx)
+                execution_result["execution_type"] = "workflow"
+                execution_result["execution_plan"] = execution_plan
+                execution_result["autonomous_implementation_trace"] = autonomous_trace
+                configured_agent_output = execution_result.get("final_output", {}).get("manage_information_agent", {}).get("agent")
+                if configured_agent_output:
+                    agent_payload = {
+                        "agent_id": configured_agent_output.get("agent_id", "information_agent"),
+                        "name": configured_agent_output.get("name", "information_agent"),
+                        "role": configured_agent_output.get("role", "信息管理智能体"),
+                        "description": configured_agent_output.get("description", configured_agent_output.get("role", "信息管理智能体")),
+                        "status": configured_agent_output.get("status", "active"),
                     }
-                else:
-                    # 回退到传统流程
-                    subtasks = await self.task_decomposer.decompose(task)
-                    workflow = await self.workflow_planner.plan(task, subtasks)
-                    workflow_payload = workflow
-                    blueprints = self.blueprint_resolver.resolve(task, workflow)
-
-                    if not blueprints:
-                        autonomous_trace = self._build_autonomous_trace(
-                            capability_gap_detected=True,
-                            trigger_reason="no_reusable_blueprint_resolved",
-                            generated_artifact="blueprint",
-                        )
-                        blueprints = [self.blueprint_generator.generate(task, workflow)]
-                        for blueprint in blueprints:
-                            generated_path = self.generated_artifact_store.persist(
-                                "blueprint",
-                                blueprint.blueprint_id,
-                                {
-                                    **blueprint.model_dump(),
-                                    "source": "runtime_blueprint_generation",
-                                    "task": task.model_dump(),
-                                    "workflow": workflow.model_dump(),
-                                    "context": {"trace_id": ctx.trace_id, "session_id": ctx.session_id},
-                                },
-                            )
-                            blueprint.metadata["generated_artifact_path"] = str(generated_path)
-                    else:
-                        autonomous_trace = self._build_autonomous_trace(capability_gap_detected=False)
-                    blueprints_payload = [item.model_dump() for item in blueprints]
-                    
-                    for blueprint in blueprints:
-                        self.blueprint_registry.register(blueprint.name, blueprint)
-                    
-                    plan = self.capability_router.route_workflow(task, workflow)
-                    self.security_guard.validate_plan(plan)
-                    
-                    for step in plan:
-                        model_choice = (step.get("capability") or {}).get("model_choice", {})
-                        provider = model_choice.get("provider", "unknown")
-                        model = model_choice.get("model", "unknown")
-                        self.model_registry.register(f"{provider}:{model}", model_choice)
-                    
-                    execution_result = self.execution_coordinator.execute(plan, task, ctx)
-                    execution_result["autonomous_implementation_trace"] = autonomous_trace
             
             # ========== Step 3: 结果整合 ==========
             vector_backend = self.vector_store.active_store()

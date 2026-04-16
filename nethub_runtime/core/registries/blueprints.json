@@ -1,22 +1,24 @@
 {
   "data_ops:data_record": {
-    "blueprint_id": "bp_data_record",
-    "name": "Generic Data Record Blueprint",
+    "blueprint_id": "blueprint_043390721e07",
+    "name": "data_ops:data_record:generated",
     "domain": "data_ops",
     "intent": "data_record",
     "inputs": [
       "input_text",
-      "session_state"
+      "context"
     ],
     "outputs": [
-      "records",
-      "summary"
+      "records"
     ],
     "steps": [
       "extract_records",
       "persist_records"
     ],
-    "metadata": {}
+    "metadata": {
+      "generated": true,
+      "generated_artifact_path": "/home/lw-ai/Documents/nesthub/nethub_runtime/generated/blueprints/blueprint_043390721e07.json"
+    }
   },
   "data_ops:data_query": {
     "blueprint_id": "bp_data_query",
@@ -72,6 +74,425 @@
     "steps": [
       "parse_query",
       "aggregate_query"
+    ],
+    "metadata": {}
+  },
+  "general:general_task": {
+    "blueprint_id": "blueprint_8375e77a2e93",
+    "name": "general:general_task:generated",
+    "domain": "general",
+    "intent": "general_task",
+    "inputs": [
+      "input_text",
+      "context"
+    ],
+    "outputs": [
+      "text"
+    ],
+    "steps": [
+      "single_step"
+    ],
+    "metadata": {
+      "generated": true,
+      "generated_artifact_path": "/home/lw-ai/Documents/nesthub/nethub_runtime/generated/blueprints/blueprint_8375e77a2e93.json"
+    }
+  },
+  "general:general_task:generated": {
+    "blueprint_id": "blueprint_8375e77a2e93",
+    "name": "general:general_task:generated",
+    "domain": "general",
+    "intent": "general_task",
+    "inputs": [
+      "input_text",
+      "context"
+    ],
+    "outputs": [
+      "text"
+    ],
+    "steps": [
+      "single_step"
+    ],
+    "metadata": {
+      "generated": true,
+      "generated_artifact_path": "/home/lw-ai/Documents/nesthub/nethub_runtime/generated/blueprints/blueprint_8375e77a2e93.json"
+    }
+  },
+  "family_management:create_family_member_agent": {
+    "blueprint_id": "bp_family_member_agent_create",
+    "name": "Family Member Agent Creation Blueprint",
+    "domain": "family_management",
+    "intent": "create_family_member_agent",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "agent",
+      "dialog"
+    ],
+    "steps": [
+      "manage_family_member_agent"
+    ],
+    "metadata": {}
+  },
+  "family_management:refine_family_member_agent": {
+    "blueprint_id": "bp_family_member_agent_refine",
+    "name": "Family Member Agent Setup Blueprint",
+    "domain": "family_management",
+    "intent": "refine_family_member_agent",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "agent",
+      "dialog"
+    ],
+    "steps": [
+      "manage_family_member_agent"
+    ],
+    "metadata": {}
+  },
+  "family_management:finalize_family_member_agent": {
+    "blueprint_id": "bp_family_member_agent_finalize",
+    "name": "Family Member Agent Finalization Blueprint",
+    "domain": "family_management",
+    "intent": "finalize_family_member_agent",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "agent",
+      "dialog"
+    ],
+    "steps": [
+      "manage_family_member_agent"
+    ],
+    "metadata": {}
+  },
+  "family_management:add_family_member_profile": {
+    "blueprint_id": "bp_family_member_profile_collect",
+    "name": "Family Member Profile Collection Blueprint",
+    "domain": "family_management",
+    "intent": "add_family_member_profile",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "member_profile",
+      "dialog"
+    ],
+    "steps": [
+      "manage_family_member_agent"
+    ],
+    "metadata": {}
+  },
+  "family_management:query_family_member_profile": {
+    "blueprint_id": "bp_family_member_profile_query",
+    "name": "Family Member Profile Query Blueprint",
+    "domain": "family_management",
+    "intent": "query_family_member_profile",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "answer"
+    ],
+    "steps": [
+      "query_family_member_agent"
+    ],
+    "metadata": {}
+  },
+  "Family Member Agent Creation Blueprint": {
+    "blueprint_id": "bp_family_member_agent_create",
+    "name": "Family Member Agent Creation Blueprint",
+    "domain": "family_management",
+    "intent": "create_family_member_agent",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "agent",
+      "dialog"
+    ],
+    "steps": [
+      "manage_family_member_agent"
+    ],
+    "metadata": {}
+  },
+  "Family Member Agent Setup Blueprint": {
+    "blueprint_id": "bp_family_member_agent_refine",
+    "name": "Family Member Agent Setup Blueprint",
+    "domain": "family_management",
+    "intent": "refine_family_member_agent",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "agent",
+      "dialog"
+    ],
+    "steps": [
+      "manage_family_member_agent"
+    ],
+    "metadata": {}
+  },
+  "Family Member Agent Finalization Blueprint": {
+    "blueprint_id": "bp_family_member_agent_finalize",
+    "name": "Family Member Agent Finalization Blueprint",
+    "domain": "family_management",
+    "intent": "finalize_family_member_agent",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "agent",
+      "dialog"
+    ],
+    "steps": [
+      "manage_family_member_agent"
+    ],
+    "metadata": {}
+  },
+  "Family Member Profile Query Blueprint": {
+    "blueprint_id": "bp_family_member_profile_query",
+    "name": "Family Member Profile Query Blueprint",
+    "domain": "family_management",
+    "intent": "query_family_member_profile",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "answer"
+    ],
+    "steps": [
+      "query_family_member_agent"
+    ],
+    "metadata": {}
+  },
+  "Family Member Profile Collection Blueprint": {
+    "blueprint_id": "bp_family_member_profile_collect",
+    "name": "Family Member Profile Collection Blueprint",
+    "domain": "family_management",
+    "intent": "add_family_member_profile",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "member_profile",
+      "dialog"
+    ],
+    "steps": [
+      "manage_family_member_agent"
+    ],
+    "metadata": {}
+  },
+  "data_ops:data_record:generated": {
+    "blueprint_id": "blueprint_043390721e07",
+    "name": "data_ops:data_record:generated",
+    "domain": "data_ops",
+    "intent": "data_record",
+    "inputs": [
+      "input_text",
+      "context"
+    ],
+    "outputs": [
+      "records"
+    ],
+    "steps": [
+      "extract_records",
+      "persist_records"
+    ],
+    "metadata": {
+      "generated": true,
+      "generated_artifact_path": "/home/lw-ai/Documents/nesthub/nethub_runtime/generated/blueprints/blueprint_043390721e07.json"
+    }
+  },
+  "agent_management:create_information_agent": {
+    "blueprint_id": "bp_information_agent_create",
+    "name": "Information Agent Creation Blueprint",
+    "domain": "agent_management",
+    "intent": "create_information_agent",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "agent",
+      "dialog"
+    ],
+    "steps": [
+      "manage_information_agent"
+    ],
+    "metadata": {}
+  },
+  "agent_management:refine_information_agent": {
+    "blueprint_id": "bp_information_agent_refine",
+    "name": "Information Agent Setup Blueprint",
+    "domain": "agent_management",
+    "intent": "refine_information_agent",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "agent",
+      "dialog"
+    ],
+    "steps": [
+      "manage_information_agent"
+    ],
+    "metadata": {}
+  },
+  "agent_management:finalize_information_agent": {
+    "blueprint_id": "bp_information_agent_finalize",
+    "name": "Information Agent Finalization Blueprint",
+    "domain": "agent_management",
+    "intent": "finalize_information_agent",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "agent",
+      "dialog"
+    ],
+    "steps": [
+      "manage_information_agent"
+    ],
+    "metadata": {}
+  },
+  "agent_management:capture_agent_knowledge": {
+    "blueprint_id": "bp_information_agent_capture_knowledge",
+    "name": "Information Agent Knowledge Capture Blueprint",
+    "domain": "agent_management",
+    "intent": "capture_agent_knowledge",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "knowledge",
+      "dialog"
+    ],
+    "steps": [
+      "manage_information_agent"
+    ],
+    "metadata": {}
+  },
+  "knowledge_ops:query_agent_knowledge": {
+    "blueprint_id": "bp_information_agent_query_knowledge",
+    "name": "Information Agent Knowledge Query Blueprint",
+    "domain": "knowledge_ops",
+    "intent": "query_agent_knowledge",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "answer",
+      "knowledge_hits"
+    ],
+    "steps": [
+      "query_information_knowledge"
+    ],
+    "metadata": {}
+  },
+  "Information Agent Creation Blueprint": {
+    "blueprint_id": "bp_information_agent_create",
+    "name": "Information Agent Creation Blueprint",
+    "domain": "agent_management",
+    "intent": "create_information_agent",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "agent",
+      "dialog"
+    ],
+    "steps": [
+      "manage_information_agent"
+    ],
+    "metadata": {}
+  },
+  "Information Agent Setup Blueprint": {
+    "blueprint_id": "bp_information_agent_refine",
+    "name": "Information Agent Setup Blueprint",
+    "domain": "agent_management",
+    "intent": "refine_information_agent",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "agent",
+      "dialog"
+    ],
+    "steps": [
+      "manage_information_agent"
+    ],
+    "metadata": {}
+  },
+  "Information Agent Finalization Blueprint": {
+    "blueprint_id": "bp_information_agent_finalize",
+    "name": "Information Agent Finalization Blueprint",
+    "domain": "agent_management",
+    "intent": "finalize_information_agent",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "agent",
+      "dialog"
+    ],
+    "steps": [
+      "manage_information_agent"
+    ],
+    "metadata": {}
+  },
+  "Information Agent Knowledge Capture Blueprint": {
+    "blueprint_id": "bp_information_agent_capture_knowledge",
+    "name": "Information Agent Knowledge Capture Blueprint",
+    "domain": "agent_management",
+    "intent": "capture_agent_knowledge",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "knowledge",
+      "dialog"
+    ],
+    "steps": [
+      "manage_information_agent"
+    ],
+    "metadata": {}
+  },
+  "Information Agent Knowledge Query Blueprint": {
+    "blueprint_id": "bp_information_agent_query_knowledge",
+    "name": "Information Agent Knowledge Query Blueprint",
+    "domain": "knowledge_ops",
+    "intent": "query_agent_knowledge",
+    "inputs": [
+      "input_text",
+      "session_state"
+    ],
+    "outputs": [
+      "answer",
+      "knowledge_hits"
+    ],
+    "steps": [
+      "query_information_knowledge"
     ],
     "metadata": {}
   }

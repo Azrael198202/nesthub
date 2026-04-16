@@ -75,6 +75,38 @@ class SemanticIntentPlugin:
             return ("web_research_task", "multimodal_ops")
         return None
 
+    def _infer_agent_management_intent(self, text: str, context: CoreContextSchema) -> tuple[str, str, list[str], dict[str, Any]] | None:
+        state = context.session_state or {}
+        configured_agent = state.get("configured_agent") or {}
+        setup = state.get("agent_setup") or {}
+        collection = state.get("knowledge_collection") or {}
+        lowered = text.lower()
+        query_markers = self.policy.get("query_markers", [])
+
+        if collection.get("active"):
+            return ("capture_agent_knowledge", "agent_management", ["knowledge", "dialog"], {"need_agent": False})
+
+        if setup.get("active"):
+            if "完成创建" in text or "完成智能体" in text:
+                return ("finalize_information_agent", "agent_management", ["agent", "dialog"], {"need_agent": False})
+            return ("refine_information_agent", "agent_management", ["agent", "dialog"], {"need_agent": False})
+
+        if configured_agent.get("status") == "active" and any(keyword in text for keyword in ("添加", "记录", "保存", "录入")):
+            return ("capture_agent_knowledge", "agent_management", ["knowledge", "dialog"], {"need_agent": False})
+
+        if configured_agent.get("status") == "active" and (
+            self._contains_any(text, query_markers)
+            or "?" in text
+            or "？" in text
+            or any(keyword in text for keyword in ("手机号", "电话", "邮箱", "line", "公司", "联系电话"))
+        ):
+            return ("query_agent_knowledge", "knowledge_ops", ["answer", "knowledge_hits"], {"need_agent": False})
+
+        if "智能体" in text and self._contains_any(text, self.policy.get("agent_markers", [])):
+            return ("create_information_agent", "agent_management", ["agent", "dialog"], {"need_agent": True})
+
+        return None
+
     def run(self, text: str, _context: CoreContextSchema) -> dict[str, Any]:
         dynamic_policy = self.policy_manager.synthesize(text, persist=False)
         analysis_meta = dynamic_policy.get("_analysis_meta", {})
@@ -99,6 +131,17 @@ class SemanticIntentPlugin:
                 "output_requirements": ["artifact"],
                 "constraints": {"need_agent": False},
                 "analysis": {"model_routing": analysis_meta, "multimodal": True},
+            }
+
+        agent_intent = self._infer_agent_management_intent(text, _context)
+        if agent_intent:
+            intent, domain, outputs, constraints = agent_intent
+            return {
+                "intent": intent,
+                "domain": domain,
+                "output_requirements": outputs,
+                "constraints": constraints,
+                "analysis": {"model_routing": analysis_meta, "agent_management": True},
             }
 
         has_numeric = self._has_numeric_value(text)

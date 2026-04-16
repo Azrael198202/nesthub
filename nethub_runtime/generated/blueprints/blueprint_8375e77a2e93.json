@@ -1,0 +1,69 @@
+{
+  "blueprint_id": "blueprint_8375e77a2e93",
+  "name": "general:general_task:generated",
+  "domain": "general",
+  "intent": "general_task",
+  "inputs": [
+    "input_text",
+    "context"
+  ],
+  "outputs": [
+    "text"
+  ],
+  "steps": [
+    "single_step"
+  ],
+  "metadata": {
+    "generated": true
+  },
+  "source": "runtime_blueprint_generation",
+  "task": {
+    "task_id": "task_82d045057a0e",
+    "intent": "general_task",
+    "input_text": "帮我创建家庭成员的智能体",
+    "domain": "general",
+    "constraints": {
+      "need_agent": true
+    },
+    "output_requirements": [
+      "text"
+    ],
+    "metadata": {
+      "trace_id": "trace_3c1f05487067",
+      "session_id": "default",
+      "analysis": {
+        "has_numeric_value": false,
+        "is_query": false,
+        "is_record": false,
+        "model_routing": {
+          "provider": "ollama",
+          "model": "qwen2.5",
+          "api": "ollama_local_api",
+          "model_available": true,
+          "auto_pulled": false
+        }
+      }
+    }
+  },
+  "workflow": {
+    "workflow_id": "workflow_e4073efd33cd",
+    "task_id": "task_82d045057a0e",
+    "mode": "normal",
+    "steps": [
+      {
+        "step_id": "step_a89d51965bd7",
+        "name": "single_step",
+        "task_type": "general_task",
+        "depends_on": [],
+        "retry": 1,
+        "metadata": {
+          "goal": "Handle generic request."
+        }
+      }
+    ]
+  },
+  "context": {
+    "trace_id": "trace_3c1f05487067",
+    "session_id": "default"
+  }
+}

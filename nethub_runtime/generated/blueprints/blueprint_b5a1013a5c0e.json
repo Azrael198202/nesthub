@@ -1,0 +1,103 @@
+{
+  "blueprint_id": "blueprint_b5a1013a5c0e",
+  "name": "data_ops:data_record:generated",
+  "domain": "data_ops",
+  "intent": "data_record",
+  "inputs": [
+    "input_text",
+    "context"
+  ],
+  "outputs": [
+    "records"
+  ],
+  "steps": [
+    "extract_records",
+    "persist_records"
+  ],
+  "metadata": {
+    "generated": true
+  },
+  "source": "runtime_blueprint_generation",
+  "task": {
+    "task_id": "task_53b2330ea188",
+    "intent": "data_record",
+    "input_text": "记录一下今天中午吃饭花了50元",
+    "domain": "data_ops",
+    "constraints": {
+      "need_agent": false
+    },
+    "output_requirements": [
+      "records"
+    ],
+    "metadata": {
+      "trace_id": "trace_d8bbab45381e",
+      "session_id": "default",
+      "analysis": {
+        "has_numeric_value": true,
+        "is_query": false,
+        "is_record": true,
+        "model_routing": {
+          "provider": "ollama",
+          "model": "qwen2.5",
+          "api": "ollama_local_api",
+          "model_available": true,
+          "auto_pulled": false
+        }
+      }
+    }
+  },
+  "workflow": {
+    "workflow_id": "workflow_f3a8f5536d7c",
+    "task_id": "task_53b2330ea188",
+    "mode": "normal",
+    "steps": [
+      {
+        "step_id": "step_eb04839f47a1",
+        "name": "extract_records",
+        "task_type": "data_record",
+        "executor_type": "tool",
+        "inputs": [
+          "input_text"
+        ],
+        "outputs": [
+          "records",
+          "count"
+        ],
+        "depends_on": [],
+        "retry": 1,
+        "metadata": {
+          "goal": "Extract structured records from natural language.",
+          "selection_basis": "task_decomposition",
+          "subtask_name": "extract_records"
+        }
+      },
+      {
+        "step_id": "step_388cc4e2e2b4",
+        "name": "persist_records",
+        "task_type": "data_record",
+        "executor_type": "tool",
+        "inputs": [
+          "records",
+          "session_state"
+        ],
+        "outputs": [
+          "saved",
+          "total_records"
+        ],
+        "depends_on": [
+          "step_eb04839f47a1"
+        ],
+        "retry": 1,
+        "metadata": {
+          "goal": "Persist normalized records.",
+          "selection_basis": "task_decomposition",
+          "subtask_name": "persist_records"
+        }
+      }
+    ]
+  },
+  "context": {
+    "trace_id": "trace_d8bbab45381e",
+    "session_id": "default"
+  }
+}

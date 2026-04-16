@@ -31,6 +31,8 @@ class CapabilityRouter:
             "parse_query": "routing",
             "aggregate_query": "planning",
             "persist_records": "planning",
+            "manage_information_agent": "planning",
+            "query_information_knowledge": "planning",
             "ocr_extract": "ocr",
             "stt_transcribe": "stt",
             "tts_synthesize": "tts",
@@ -43,6 +45,41 @@ class CapabilityRouter:
         }
         return mapping.get(step_name, "planning")
 
+    def _executor_type_for_step(self, step_name: str, route: dict[str, Any]) -> str:
+        tool_name = str(route.get("tool", "") or "")
+        service_name = str(route.get("service", "") or "")
+        if step_name == "manage_information_agent":
+            return "agent"
+        if step_name == "query_information_knowledge" or tool_name == "vector_store":
+            return "knowledge_retrieval"
+        if tool_name not in {"", "none"}:
+            return "tool"
+        if service_name in {"generic", "knowledge_memory"}:
+            return "llm"
+        return "llm"
+
+    def _selection_rationale(
+        self,
+        *,
+        task: TaskSchema,
+        step: dict[str, Any],
+        route: dict[str, Any],
+        model_choice: dict[str, Any],
+        executor_type: str,
+    ) -> dict[str, Any]:
+        return {
+            "intent": task.intent,
+            "domain": task.domain,
+            "step_name": step["name"],
+            "step_task_type": step["task_type"],
+            "executor_type": executor_type,
+            "task_kind": self._task_kind_from_step(step["name"]),
+            "selected_model": model_choice,
+            "selected_tool": route.get("tool", "none"),
+            "selected_service": route.get("service", "generic"),
+            "reason": f"Route task '{task.intent}' step '{step['name']}' to {executor_type} based on configured intent-step capability mapping.",
+        }
+
     def _default_routes(self) -> dict[str, Any]:
         return {
             "data_record": {
@@ -52,6 +89,21 @@ class CapabilityRouter:
             "data_query": {
                 "parse_query": {"model": "rule-parser", "tool": "query_parser", "service": "nlp"},
                 "aggregate_query": {"model": "aggregation-engine", "tool": "query_engine", "service": "analytics"},
+            },
+            "create_information_agent": {
+                "manage_information_agent": {"model": "general-llm", "tool": "session_store", "service": "knowledge_memory"},
+            },
+            "refine_information_agent": {
+                "manage_information_agent": {"model": "general-llm", "tool": "session_store", "service": "knowledge_memory"},
+            },
+            "finalize_information_agent": {
+                "manage_information_agent": {"model": "general-llm", "tool": "session_store", "service": "knowledge_memory"},
+            },
+            "capture_agent_knowledge": {
+                "manage_information_agent": {"model": "general-llm", "tool": "session_store", "service": "knowledge_memory"},
+            },
+            "query_agent_knowledge": {
+                "query_information_knowledge": {"model": "general-llm", "tool": "vector_store", "service": "knowledge_memory"},
             },
             "default": {"model": "general-llm", "tool": "none", "service": "generic"},
         }
@@ -114,14 +166,27 @@ class CapabilityRouter:
             route = intent_routes.get(step.name, default_route)
             model_choice = self.model_router.route(self._task_kind_from_step(step.name))
             availability = self.model_router.ensure_available(model_choice["provider"], model_choice["model"])
+            executor_type = self._executor_type_for_step(step.name, route)
+            selector = self._selection_rationale(
+                task=task,
+                step=step.model_dump(),
+                route=route,
+                model_choice=model_choice,
+                executor_type=executor_type,
+            )
             plan.append(
                 {
                     "step_id": step.step_id,
                     "name": step.name,
                     "task_type": step.task_type,
+                    "executor_type": executor_type,
+                    "inputs": step.inputs,
+                    "outputs": step.outputs,
                     "depends_on": step.depends_on,
                     "retry": step.retry,
                     "capability": {**route, "model_choice": model_choice, "availability": availability},
+                    "selector": selector,
+                    "workflow_step_metadata": step.metadata,
                     "runtime_capabilities": self._capabilities,
                 }
             )

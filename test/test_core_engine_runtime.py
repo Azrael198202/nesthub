@@ -8,6 +8,10 @@ from nethub_runtime.core.services.core_engine import AICore
 
 def test_core_engine_handle_workflow_path() -> None:
     core = AICore(model_config_path="nethub_runtime/config/model_config.yaml")
+    assert "tool" in core.execution_coordinator._executor_handlers
+    assert "agent" in core.execution_coordinator._executor_handlers
+    assert "extract_records" in core.execution_coordinator._step_handlers["tool"]
+    assert "manage_information_agent" in core.execution_coordinator._step_handlers["agent"]
 
     result = asyncio.run(
         core.handle(
@@ -20,6 +24,19 @@ def test_core_engine_handle_workflow_path() -> None:
 
     assert isinstance(result, dict)
     assert "execution_result" in result
+    assert result["workflow"]
+    assert result["workflow"]["steps"]
+    assert result["execution_result"]["execution_plan"]
+    assert result["workflow"]["steps"][0]["executor_type"]
+    assert result["workflow"]["steps"][0]["inputs"]
+    assert result["workflow"]["steps"][0]["outputs"]
+    assert result["execution_result"]["execution_plan"][0]["executor_type"]
+    assert result["execution_result"]["execution_plan"][0]["inputs"]
+    assert result["execution_result"]["execution_plan"][0]["outputs"]
+    assert result["execution_result"]["execution_plan"][0]["capability"]["model_choice"]
+    assert result["execution_result"]["execution_plan"][0]["selector"]["reason"]
+    assert result["execution_result"]["steps"][0]["inputs"]
+    assert result["execution_result"]["steps"][0]["outputs"]
     trace = result["execution_result"]["autonomous_implementation_trace"]
     assert trace["autonomous_implementation_supported"] is True
     assert trace["capability_gap_detected"] is False
@@ -47,6 +64,11 @@ def test_core_engine_reports_capability_gap_when_blueprint_is_generated() -> Non
     )
 
     trace = result["execution_result"]["autonomous_implementation_trace"]
+    assert result["workflow"]
+    assert result["execution_result"]["execution_plan"]
+    assert result["execution_result"]["execution_plan"][0]["selector"]["executor_type"]
+    assert result["workflow"]["steps"][0]["inputs"]
+    assert result["workflow"]["steps"][0]["outputs"]
     assert trace["capability_gap_detected"] is True
     assert trace["autonomous_implementation_supported"] is True
     assert trace["generated_patch_registered"] is True

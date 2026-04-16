@@ -1,0 +1,82 @@
+{
+  "blueprint_id": "blueprint_6c0c46b09a99",
+  "name": "data_ops:data_record:generated",
+  "domain": "data_ops",
+  "intent": "data_record",
+  "inputs": [
+    "input_text",
+    "context"
+  ],
+  "outputs": [
+    "records"
+  ],
+  "steps": [
+    "extract_records",
+    "persist_records"
+  ],
+  "metadata": {
+    "generated": true
+  },
+  "source": "runtime_blueprint_generation",
+  "task": {
+    "task_id": "task_b6521454c723",
+    "intent": "data_record",
+    "input_text": "记录一下今天中午吃饭花了50元",
+    "domain": "data_ops",
+    "constraints": {
+      "need_agent": false
+    },
+    "output_requirements": [
+      "records"
+    ],
+    "metadata": {
+      "trace_id": "trace_be93e5a1c2e5",
+      "session_id": "default",
+      "analysis": {
+        "has_numeric_value": true,
+        "is_query": false,
+        "is_record": true,
+        "model_routing": {
+          "provider": "ollama",
+          "model": "qwen2.5",
+          "api": "ollama_local_api",
+          "model_available": true,
+          "auto_pulled": false
+        }
+      }
+    }
+  },
+  "workflow": {
+    "workflow_id": "workflow_084cb9026bda",
+    "task_id": "task_b6521454c723",
+    "mode": "normal",
+    "steps": [
+      {
+        "step_id": "step_ca81be51e1de",
+        "name": "extract_records",
+        "task_type": "data_record",
+        "depends_on": [],
+        "retry": 1,
+        "metadata": {
+          "goal": "Extract structured records from natural language."
+        }
+      },
+      {
+        "step_id": "step_76dd90909c3d",
+        "name": "persist_records",
+        "task_type": "data_record",
+        "depends_on": [
+          "step_ca81be51e1de"
+        ],
+        "retry": 1,
+        "metadata": {
+          "goal": "Persist normalized records."
+        }
+      }
+    ]
+  },
+  "context": {
+    "trace_id": "trace_be93e5a1c2e5",
+    "session_id": "default"
+  }
+}

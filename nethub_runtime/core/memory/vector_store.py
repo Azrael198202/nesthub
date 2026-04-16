@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,10 @@ class VectorStore:
         if not self.policy_path.exists():
             default = {
                 "active": "memory",
-                "stores": [{"name": "memory", "provider": "in_memory", "enabled": True}],
+                "stores": [
+                    {"name": "memory", "provider": "in_memory", "enabled": True},
+                    {"name": "pgvector", "provider": "pgvector", "enabled": False},
+                ],
             }
             self.policy_path.write_text(json.dumps(default, ensure_ascii=False, indent=2), encoding="utf-8")
             return default
@@ -37,5 +41,41 @@ class VectorStore:
     def add(self, item: dict[str, Any]) -> None:
         self._items.append(item)
 
-    def search(self, _query: str, top_k: int = 5) -> list[dict[str, Any]]:
-        return self._items[:top_k]
+    def _tokenize(self, text: str) -> set[str]:
+        tokens = re.findall(r"[\w\u4e00-\u9fff]{2,}", text.lower())
+        return {token for token in tokens if token}
+
+    def add_knowledge(
+        self,
+        *,
+        namespace: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+        item_id: str | None = None,
+    ) -> dict[str, Any]:
+        record = {
+            "id": item_id or f"{namespace}_{len(self._items) + 1}",
+            "namespace": namespace,
+            "content": content,
+            "metadata": metadata or {},
+            "tokens": sorted(self._tokenize(content)),
+            "backend": self.active_store(),
+        }
+        self._items.append(record)
+        return record
+
+    def search(self, query: str, top_k: int = 5, namespace: str | None = None) -> list[dict[str, Any]]:
+        query_tokens = self._tokenize(query)
+        scored: list[tuple[int, dict[str, Any]]] = []
+        for item in self._items:
+            if namespace and item.get("namespace") != namespace:
+                continue
+            item_tokens = set(item.get("tokens") or [])
+            score = len(query_tokens & item_tokens)
+            if not query_tokens:
+                score = 1
+            elif score == 0 and query.lower() not in str(item.get("content", "")).lower():
+                continue
+            scored.append((score, item))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return [item for _, item in scored[:top_k]]

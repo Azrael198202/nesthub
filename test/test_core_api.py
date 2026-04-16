@@ -16,6 +16,18 @@ def test_core_handle_budget():
     data = resp.json()["result"]
     assert data["task"]["intent"] in ("data_record", "record_expense")
     assert "execution_result" in data
+    assert data["workflow"]
+    assert data["workflow"]["steps"]
+    assert data["workflow"]["steps"][0]["executor_type"]
+    assert data["workflow"]["steps"][0]["inputs"]
+    assert data["workflow"]["steps"][0]["outputs"]
+    assert data["execution_result"]["execution_plan"]
+    assert data["execution_result"]["execution_plan"][0]["executor_type"]
+    assert data["execution_result"]["execution_plan"][0]["inputs"]
+    assert data["execution_result"]["execution_plan"][0]["outputs"]
+    assert data["execution_result"]["execution_plan"][0]["selector"]["reason"]
+    assert data["execution_result"]["steps"][0]["inputs"]
+    assert data["execution_result"]["steps"][0]["outputs"]
     trace = data["execution_result"]["autonomous_implementation_trace"]
     assert trace["autonomous_implementation_supported"] is True
     assert trace["capability_gap_detected"] is False

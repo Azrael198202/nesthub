@@ -13,6 +13,37 @@ from nethub_runtime.core.utils.id_generator import generate_id
 class DefaultWorkflowPlannerPlugin:
     priority = 10
 
+    def _infer_executor_type(self, step_name: str) -> str:
+        if step_name in {"manage_information_agent"}:
+            return "agent"
+        if step_name in {"query_information_knowledge"}:
+            return "knowledge_retrieval"
+        if step_name in {"extract_records", "parse_query", "aggregate_query", "persist_records"}:
+            return "tool"
+        if step_name in {"ocr_extract", "stt_transcribe", "tts_synthesize", "image_generate", "video_generate", "file_generate", "web_retrieve", "web_summarize"}:
+            return "tool"
+        return "llm"
+
+    def _infer_io_contract(self, step_name: str) -> tuple[list[str], list[str]]:
+        contracts = {
+            "extract_records": (["input_text"], ["records", "count"]),
+            "persist_records": (["records", "session_state"], ["saved", "total_records"]),
+            "parse_query": (["input_text", "session_state"], ["query"]),
+            "aggregate_query": (["query", "session_state"], ["aggregation"]),
+            "manage_information_agent": (["input_text", "session_state"], ["message", "dialog_state", "agent", "knowledge"]),
+            "query_information_knowledge": (["input_text", "session_state", "knowledge_store"], ["message", "answer", "knowledge_hits"]),
+            "ocr_extract": (["input_text"], ["artifact_type", "status", "message"]),
+            "stt_transcribe": (["input_text"], ["artifact_type", "status", "message"]),
+            "tts_synthesize": (["input_text"], ["artifact_type", "status", "message"]),
+            "image_generate": (["input_text"], ["artifact_type", "status"]),
+            "video_generate": (["input_text"], ["artifact_type", "status"]),
+            "file_generate": (["input_text"], ["artifact_type", "status"]),
+            "web_retrieve": (["input_text"], ["artifact_type", "status"]),
+            "web_summarize": (["web_content"], ["artifact_type", "status"]),
+            "single_step": (["input_text"], ["message"]),
+        }
+        return contracts.get(step_name, (["input_text"], ["message"]))
+
     def match(self, _task: TaskSchema, _subtasks: list[SubTask]) -> bool:
         return True
 
@@ -22,14 +53,22 @@ class DefaultWorkflowPlannerPlugin:
         for item in subtasks:
             step_id = generate_id("step")
             depends_on = [prev_step_id] if prev_step_id else []
+            inputs, outputs = self._infer_io_contract(item.name)
             steps.append(
                 WorkflowStepSchema(
                     step_id=step_id,
                     name=item.name,
                     task_type=task.intent,
+                    executor_type=self._infer_executor_type(item.name),
+                    inputs=inputs,
+                    outputs=outputs,
                     depends_on=depends_on,
                     retry=1,
-                    metadata={"goal": item.goal},
+                    metadata={
+                        "goal": item.goal,
+                        "selection_basis": "task_decomposition",
+                        "subtask_name": item.name,
+                    },
                 )
             )
             prev_step_id = step_id
