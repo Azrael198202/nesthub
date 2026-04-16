@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Semantic Memory Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">NestHub Example</p>
+        <h1>Semantic Memory Dashboard</h1>
+        <p class="lead">
+          查看 semantic memory 中的候选区、激活区、回滚记录和版本快照。
+        </p>
+      </section>
+
+      <section class="panel controls-panel">
+        <div class="controls-grid">
+          <label>
+            <span>API Base URL</span>
+            <input id="baseUrl" type="text" value="http://127.0.0.1:8000" />
+          </label>
+          <label>
+            <span>Policy Key</span>
+            <input id="policyKey" type="text" placeholder="location_markers" />
+          </label>
+          <label>
+            <span>Status</span>
+            <select id="status">
+              <option value="">All</option>
+              <option value="candidate">candidate</option>
+              <option value="active">active</option>
+              <option value="rolled_back">rolled_back</option>
+            </select>
+          </label>
+        </div>
+        <div class="controls-actions">
+          <button id="refreshBtn" type="button">Refresh</button>
+          <button id="resetBtn" type="button" class="secondary">Reset Filters</button>
+        </div>
+        <p id="requestUrl" class="request-url"></p>
+      </section>
+
+      <section class="metrics-grid">
+        <article class="panel metric-card">
+          <span class="metric-label">Candidate</span>
+          <strong id="candidateCount">-</strong>
+        </article>
+        <article class="panel metric-card">
+          <span class="metric-label">Active</span>
+          <strong id="activeCount">-</strong>
+        </article>
+        <article class="panel metric-card">
+          <span class="metric-label">Rolled Back</span>
+          <strong id="rolledBackCount">-</strong>
+        </article>
+      </section>
+
+      <section class="grid-two">
+        <article class="panel">
+          <div class="section-header">
+            <h2>Latest Rollback</h2>
+          </div>
+          <div id="rollbackCard" class="empty-state">暂无回滚记录。</div>
+        </article>
+        <article class="panel">
+          <div class="section-header">
+            <h2>Recent Versions</h2>
+          </div>
+          <div id="versionList" class="stack-list empty-state">暂无版本快照。</div>
+        </article>
+      </section>
+
+      <section class="panel rules-panel">
+        <div class="section-header">
+          <h2>Learning Rules</h2>
+        </div>
+        <div id="learningRules" class="rules-grid empty-state">等待加载规则。</div>
+      </section>
+
+      <section class="panel">
+        <div class="section-header">
+          <h2>Candidates</h2>
+          <span id="resultMeta" class="result-meta"></span>
+        </div>
+        <div id="candidateList" class="stack-list empty-state">等待加载数据。</div>
+      </section>
+
+      <section class="panel raw-panel">
+        <div class="section-header">
+          <h2>Raw JSON</h2>
+        </div>
+        <pre id="rawJson">{}</pre>
+      </section>
+    </main>
+
+    <template id="candidateTemplate">
+      <article class="candidate-item">
+        <div class="candidate-topline">
+          <span class="chip policy-key"></span>
+          <span class="chip status"></span>
+        </div>
+        <div class="candidate-meta"></div>
+        <pre class="candidate-value"></pre>
+        <p class="candidate-evidence"></p>
+      </article>
+    </template>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

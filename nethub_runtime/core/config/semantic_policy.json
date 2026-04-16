@@ -37,6 +37,54 @@
         "娱乐",
         "电影",
         "游戏"
+      ],
+      "transportation": [
+        "交通",
+        "打车",
+        "地铁",
+        "公交",
+        "高铁",
+        "加油",
+        "停车"
+      ],
+      "housing": [
+        "房租",
+        "租房",
+        "房贷",
+        "物业",
+        "住宿"
+      ],
+      "utilities": [
+        "水电",
+        "电费",
+        "水费",
+        "燃气",
+        "网费",
+        "话费"
+      ],
+      "healthcare": [
+        "医疗",
+        "医院",
+        "药店",
+        "看病",
+        "体检",
+        "买药"
+      ],
+      "education": [
+        "教育",
+        "学费",
+        "培训",
+        "课程",
+        "考试",
+        "辅导"
+      ],
+      "travel": [
+        "旅行",
+        "旅游",
+        "酒店",
+        "机票",
+        "景点",
+        "度假"
       ]
     }
   },
@@ -79,6 +127,80 @@
         "演出门票",
         "休闲娱乐消费"
       ]
+    },
+    "transportation": {
+      "description": "expense related to transportation, taxi, subway, bus, train tickets, fuel, parking and commuting; 与打车、地铁、公交、高铁、火车票、加油、停车、通勤相关的支出",
+      "examples": [
+        "taxi fare",
+        "subway ticket",
+        "gas station fuel",
+        "parking fee",
+        "打车费用",
+        "地铁通勤支出",
+        "加油站油费",
+        "停车场费用"
+      ]
+    },
+    "housing": {
+      "description": "expense related to rent, mortgage, property management, accommodation and housing costs; 与房租、房贷、物业费、住宿、住房成本相关的支出",
+      "examples": [
+        "monthly rent",
+        "mortgage payment",
+        "property management fee",
+        "apartment accommodation",
+        "房租支出",
+        "物业管理费",
+        "住宿费用"
+      ]
+    },
+    "utilities": {
+      "description": "expense related to electricity, water, gas, internet, mobile phone bills and household utilities; 与电费、水费、燃气费、网费、话费等家庭公共事业相关的支出",
+      "examples": [
+        "electricity bill",
+        "water bill",
+        "gas bill",
+        "internet subscription",
+        "电费账单",
+        "水费支出",
+        "家庭网费",
+        "手机话费"
+      ]
+    },
+    "healthcare": {
+      "description": "expense related to hospitals, clinics, medicine, checkups, treatment and healthcare services; 与医院、门诊、买药、体检、治疗、医疗服务相关的支出",
+      "examples": [
+        "hospital visit",
+        "medicine purchase",
+        "health checkup",
+        "clinic treatment",
+        "医院挂号费用",
+        "药店买药",
+        "体检支出"
+      ]
+    },
+    "education": {
+      "description": "expense related to tuition, training courses, books for study, exams and education services; 与学费、培训课程、考试报名、学习资料、教育服务相关的支出",
+      "examples": [
+        "tuition fee",
+        "training course payment",
+        "exam registration",
+        "study materials",
+        "培训班学费",
+        "考试报名费",
+        "课程费用"
+      ]
+    },
+    "travel": {
+      "description": "expense related to travel, hotels, flights, scenic spots, vacations and tourism services; 与旅游、酒店、机票、景点门票、度假出行相关的支出",
+      "examples": [
+        "hotel booking",
+        "flight ticket",
+        "vacation travel",
+        "scenic spot ticket",
+        "酒店住宿",
+        "机票费用",
+        "旅行度假支出"
+      ]
     }
   },
   "entity_aliases": {
@@ -107,6 +229,12 @@
     "是多少",
     "吗"
   ],
+  "segment_split_patterns": [
+    "[。；;\\n]",
+    "还有",
+    "并且",
+    "\\band\\b"
+  ],
   "location_markers": [
     "在",
     "去",
@@ -114,11 +242,18 @@
     "at",
     "in"
   ],
+  "location_keyword_patterns": [
+    "([\\u4e00-\\u9fffA-Za-z0-9]{2,})地区"
+  ],
   "participant_pattern": "(\\d+)\\s*人",
   "participant_aliases": {
     "两个人": 2,
     "三个人": 3
   },
+  "content_cleanup_patterns": [
+    "\\d+(?:\\.\\d+)?\\s*(日元|円|yen|usd|rmb|元|块|美元|￥|\\$)?"
+  ],
+  "content_strip_chars": " ，,.。",
   "group_by_aliases": {
     "按时间": "time",
     "按类别": "label",
@@ -131,6 +266,92 @@
     "prefer_model_for_query_parsing": true,
     "prefer_model_for_record_extraction": true,
     "strict_schema_validation": true
+  },
+  "time_marker_rules": {
+    "today": {
+      "aliases": [
+        "今天",
+        "今日"
+      ],
+      "match_mode": "same_day",
+      "record_aliases": [
+        "今天",
+        "今日"
+      ]
+    },
+    "current_month": {
+      "aliases": [
+        "这个月",
+        "本月"
+      ],
+      "match_mode": "same_month",
+      "record_aliases": [
+        "今天",
+        "今日",
+        "这个月",
+        "本月",
+        "unspecified"
+      ]
+    },
+    "previous_week": {
+      "aliases": [
+        "上周",
+        "上周末"
+      ],
+      "match_mode": "prefix",
+      "prefixes": [
+        "上周"
+      ]
+    }
+  },
+  "policy_memory": {
+    "enabled": true,
+    "backend": "sqlite",
+    "read_only_main_policy": true,
+    "auto_candidate_zone": true,
+    "auto_activate": {
+      "enabled": true,
+      "min_hits": 2,
+      "min_confidence": 0.75
+    },
+    "learning": {
+      "enabled": true,
+      "extractor": "model",
+      "max_updates_per_text": 8,
+      "default_confidence": 0.82,
+      "allowed_policy_keys": [
+        "location_markers",
+        "ignored_query_tokens",
+        "time_markers",
+        "segment_split_patterns",
+        "location_keyword_patterns",
+        "participant_aliases",
+        "group_by_aliases",
+        "entity_aliases.actor"
+      ],
+      "min_candidate_text_length": 2,
+      "blocked_terms": [
+        "多少",
+        "一共",
+        "总额",
+        "统计",
+        "查询",
+        "花了",
+        "消费",
+        "今天",
+        "这个月",
+        "上周",
+        "类别",
+        "地点",
+        "人员"
+      ],
+      "reject_existing_conflicts": true
+    },
+    "self_heal": {
+      "enabled": true,
+      "max_failures": 2,
+      "rollback_batch_size": 3
+    }
   },
   "external_semantic_router": {
     "enabled": true,

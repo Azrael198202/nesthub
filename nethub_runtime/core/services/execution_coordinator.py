@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 
 from nethub_runtime.core.config.settings import INTENT_POLICY_PATH, SEMANTIC_POLICY_PATH
+from nethub_runtime.core.memory.semantic_policy_store import SemanticPolicyStore
 from nethub_runtime.core.memory.session_store import SessionStore
 from nethub_runtime.core.schemas.context_schema import CoreContextSchema
 from nethub_runtime.core.schemas.task_schema import TaskSchema
@@ -31,6 +32,7 @@ class ExecutionCoordinator:
         self.session_store = session_store or SessionStore()
         self.intent_policy_path = intent_policy_path or INTENT_POLICY_PATH
         self.semantic_policy_path = semantic_policy_path or SEMANTIC_POLICY_PATH
+        self.semantic_policy_store = SemanticPolicyStore(policy_path=self.semantic_policy_path)
         self.intent_policy = self._load_intent_policy()
         self.semantic_policy = self._load_semantic_policy()
         self._embedding_model = self._init_embedding_model()
@@ -41,9 +43,9 @@ class ExecutionCoordinator:
         return {"time_markers": [], "stopwords": [], "group_by_markers": [], "numeric_value_patterns": []}
 
     def _load_semantic_policy(self) -> dict[str, Any]:
-        if self.semantic_policy_path.exists():
-            return json.loads(self.semantic_policy_path.read_text(encoding="utf-8"))
-        return {
+        policy = self.semantic_policy_store.load_runtime_policy()
+        if not policy:
+            policy = {
             "tokenizer": {"preferred": "regex", "fallback": "regex", "min_token_length": 2},
             "semantic_matching": {
                 "method": "embedding_or_token",
@@ -56,8 +58,58 @@ class ExecutionCoordinator:
             "label_taxonomy": {},
             "semantic_label_threshold": 0.32,
             "ignored_query_tokens": [],
+            "policy_memory": {"enabled": False},
             "external_semantic_router": {"enabled": False},
         }
+        try:
+            self._validate_semantic_policy(policy)
+            return policy
+        except ValueError as exc:
+            rolled_back = self.semantic_policy_store.record_runtime_failure(reason=str(exc))
+            if rolled_back:
+                refreshed = self.semantic_policy_store.load_runtime_policy()
+                self._validate_semantic_policy(refreshed)
+                return refreshed
+            raise
+
+    def _validate_semantic_policy(self, policy: dict[str, Any]) -> None:
+        required_top_level = (
+            "location_markers",
+            "participant_pattern",
+            "participant_aliases",
+            "group_by_aliases",
+            "location_keyword_patterns",
+            "segment_split_patterns",
+            "content_cleanup_patterns",
+            "time_marker_rules",
+        )
+        missing = [key for key in required_top_level if key not in policy]
+        if missing:
+            raise ValueError(f"semantic policy missing required keys: {', '.join(missing)}")
+        if not isinstance(policy.get("location_markers"), list) or not policy["location_markers"]:
+            raise ValueError("semantic policy location_markers must be a non-empty list")
+        if not isinstance(policy.get("participant_aliases"), dict):
+            raise ValueError("semantic policy participant_aliases must be a dict")
+        if not isinstance(policy.get("group_by_aliases"), dict) or not policy["group_by_aliases"]:
+            raise ValueError("semantic policy group_by_aliases must be a non-empty dict")
+        if not isinstance(policy.get("location_keyword_patterns"), list):
+            raise ValueError("semantic policy location_keyword_patterns must be a list")
+        if not isinstance(policy.get("segment_split_patterns"), list) or not policy["segment_split_patterns"]:
+            raise ValueError("semantic policy segment_split_patterns must be a non-empty list")
+        if not isinstance(policy.get("content_cleanup_patterns"), list):
+            raise ValueError("semantic policy content_cleanup_patterns must be a list")
+        if not isinstance(policy.get("time_marker_rules"), dict) or not policy["time_marker_rules"]:
+            raise ValueError("semantic policy time_marker_rules must be a non-empty dict")
+
+    def _refresh_semantic_policy(self) -> None:
+        self.semantic_policy = self.semantic_policy_store.load_runtime_policy()
+        self._validate_semantic_policy(self.semantic_policy)
+
+    def _require_semantic_value(self, key: str, expected_type: type[Any]) -> Any:
+        value = self.semantic_policy.get(key)
+        if not isinstance(value, expected_type):
+            raise ValueError(f"semantic policy key '{key}' must be {expected_type.__name__}")
+        return value
 
     def _init_embedding_model(self) -> Any | None:
         model_name = self.semantic_policy.get("semantic_matching", {}).get("embedding_model")
@@ -142,7 +194,9 @@ class ExecutionCoordinator:
         if model_records is not None:
             return model_records
 
-        segments = [segment.strip() for segment in re.split(r"[。；;\n]|还有|并且|and", text) if segment.strip()]
+        split_patterns = self._require_semantic_value("segment_split_patterns", list)
+        split_regex = "|".join(f"(?:{pattern})" for pattern in split_patterns)
+        segments = [segment.strip() for segment in re.split(split_regex, text) if segment.strip()]
         records: list[dict[str, Any]] = []
         for segment in segments:
             amount = self._extract_amount(segment)
@@ -161,6 +215,7 @@ class ExecutionCoordinator:
                     "created_at": datetime.now(UTC).isoformat(),
                 }
             )
+        self._learn_semantic_candidates(text, stage="record_extraction")
         return records
 
     def _extract_amount(self, text: str) -> int | None:
@@ -182,7 +237,7 @@ class ExecutionCoordinator:
         return "unspecified"
 
     def _extract_location(self, text: str) -> str | None:
-        markers = self.semantic_policy.get("location_markers", ["在", "去", "于", "at", "in"])
+        markers = self._require_semantic_value("location_markers", list)
         for marker in markers:
             if marker in text:
                 candidate = text.split(marker, 1)[-1].strip()
@@ -190,16 +245,18 @@ class ExecutionCoordinator:
         return None
 
     def _extract_content(self, text: str) -> str:
-        cleaned = re.sub(r"\d+(?:\.\d+)?\s*(日元|円|yen|usd|rmb|元|块|美元|￥|\$)?", "", text, flags=re.IGNORECASE)
-        cleaned = cleaned.strip(" ，,.。")
+        cleaned = text
+        for pattern in self._require_semantic_value("content_cleanup_patterns", list):
+            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
+        cleaned = cleaned.strip(str(self.semantic_policy.get("content_strip_chars", " ")))
         return cleaned or "entry"
 
     def _extract_participants(self, text: str) -> int | None:
-        participant_pattern = self.semantic_policy.get("participant_pattern", r"(\d+)\s*人")
+        participant_pattern = self._require_semantic_value("participant_pattern", str)
         match = re.search(participant_pattern, text)
         if match:
             return int(match.group(1))
-        participant_aliases = self.semantic_policy.get("participant_aliases", {"两个人": 2})
+        participant_aliases = self._require_semantic_value("participant_aliases", dict)
         for alias, count in participant_aliases.items():
             if alias in text:
                 return int(count)
@@ -236,14 +293,16 @@ class ExecutionCoordinator:
         semantic_label = self._semantic_label_from_text(text)
         if semantic_label:
             filters["label"] = semantic_label
-        m = re.search(r"([\u4e00-\u9fffA-Za-z0-9]{2,})地区", text)
-        if m:
-            filters["location_keyword"] = m.group(1)
+        for pattern in self._require_semantic_value("location_keyword_patterns", list):
+            matched = re.search(pattern, text)
+            if matched:
+                filters["location_keyword"] = matched.group(1)
+                break
 
         record_matched_terms = self._find_terms_from_records(text, existing_records)
         dynamic_terms = record_matched_terms or self._extract_dynamic_terms(terms, existing_records)
         group_by = self._extract_group_by(text)
-        return {
+        query = {
             "metric": "sum",
             "terms": dynamic_terms,
             "group_by": group_by,
@@ -251,6 +310,8 @@ class ExecutionCoordinator:
             "filters": filters,
             "query_text": text,
         }
+        self._learn_semantic_candidates(text, stage="query_parsing")
+        return query
 
     def _find_terms_from_records(self, query_text: str, existing_records: list[dict[str, Any]]) -> list[str]:
         terms: list[str] = []
@@ -291,15 +352,7 @@ class ExecutionCoordinator:
 
     def _extract_group_by(self, text: str) -> list[str]:
         results: list[str] = []
-        marker_map = self.semantic_policy.get(
-            "group_by_aliases",
-            {
-                "按时间": "time",
-                "按类别": "label",
-                "按地点": "location",
-                "按人员": "actor",
-            },
-        )
+        marker_map = self._require_semantic_value("group_by_aliases", dict)
         for marker in self.intent_policy.get("group_by_markers", []):
             if marker in text and marker in marker_map:
                 results.append(marker_map[marker])
@@ -311,7 +364,7 @@ class ExecutionCoordinator:
             return None
 
         payload = {
-            "instruction": "从 input_text 中抽取消费记录，输出 records 数组。每条记录包含 time/location/content/amount/participants/actor/label/raw_text。",
+            "instruction": "Extract structured records from input_text and return a records array with time, location, content, amount, participants, actor, label, and raw_text.",
             "input_text": text,
             "schema": {
                 "records": [
@@ -365,7 +418,7 @@ class ExecutionCoordinator:
             return None
 
         payload = {
-            "instruction": "请将 query_text 解析为聚合查询，输出 metric/terms/group_by/time_marker/filters/query_text。",
+            "instruction": "Parse query_text into an aggregate query and return metric, terms, group_by, time_marker, filters, and query_text.",
             "query_text": text,
             "existing_records": existing_records,
             "schema": {
@@ -424,11 +477,9 @@ class ExecutionCoordinator:
         return None
 
     def _aggregate_records(self, records: list[dict[str, Any]], query: dict[str, Any], model_choice: dict[str, Any]) -> dict[str, Any]:
-        # 只要涉及归属相关的聚合请求，直接 fallback 到外部模型
         filters = query.get("filters", {})
         group_by = query.get("group_by", [])
         time_marker = query.get("time_marker")
-        # 只要 filters 里有任意归属相关字段且有值，或 group_by 非空，或 time_marker 有值且非 unspecified，则强制 fallback
         belonging_keys = ["actor", "label", "location_keyword"]
         has_belonging = False
         for k in belonging_keys:
@@ -439,16 +490,12 @@ class ExecutionCoordinator:
         if time_marker and time_marker != "unspecified":
             has_belonging = True
         if has_belonging:
-            print(f"[归属fallback触发] filters={filters}, group_by={group_by}, time_marker={time_marker}")
+            LOGGER.debug("Semantic aggregate fallback triggered: filters=%s group_by=%s time_marker=%s", filters, group_by, time_marker)
             prompt_query = dict(query)
             prompt_query["_aggregation_belonging"] = True
             external = self._external_semantic_aggregate(prompt_query, records, model_choice)
             if external is not None:
-                print("[归属fallback] 外部模型聚合成功")
                 return external
-            else:
-                print("[归属fallback] 外部模型未返回结果，降级本地")
-        # 否则走本地逻辑
         filtered = list(records)
         time_marker = query.get("time_marker")
         if time_marker and time_marker != "unspecified":
@@ -547,16 +594,32 @@ class ExecutionCoordinator:
         scored_labels: list[tuple[float, str]] = []
         threshold = float(self.semantic_policy.get("semantic_label_threshold", 0.32))
         margin_threshold = float(self.semantic_policy.get("semantic_label_margin", 0.08))
+        synonym_map = self.semantic_policy.get("normalization", {}).get("synonyms", {})
 
         for label, config in taxonomy.items():
             if not isinstance(config, dict):
                 continue
             description = str(config.get("description", "")).strip()
             examples = config.get("examples", [])
-            profile_text = " ".join([description, *[str(item) for item in examples]])
+            synonyms = synonym_map.get(str(label), [])
+            profile_text = " ".join([description, *[str(item) for item in examples], *[str(item) for item in synonyms]])
             if not profile_text.strip():
                 continue
             score = self._embedding_similarity(normalized_text, self._normalize_text(profile_text))
+            lexical_hints = {
+                self._normalize_text(str(item))
+                for item in [*examples, *synonyms]
+                if len(self._normalize_text(str(item))) >= 2
+            }
+            synonym_hints = {
+                self._normalize_text(str(item))
+                for item in synonyms
+                if len(self._normalize_text(str(item))) >= 2
+            }
+            synonym_hits = sum(1 for hint in synonym_hints if hint and hint in normalized_text)
+            lexical_hits = sum(1 for hint in lexical_hints if hint and hint in normalized_text)
+            if lexical_hits or synonym_hits:
+                score = min(1.0, score + min(0.5, 0.28 * synonym_hits + 0.08 * max(0, lexical_hits - synonym_hits)))
             scored_labels.append((score, str(label)))
 
         if not scored_labels:
@@ -587,16 +650,22 @@ class ExecutionCoordinator:
                 created_at = None
 
         now = datetime.now(UTC)
-        if normalized_marker in {"今天", "今日"}:
-            if record_time in {"今天", "今日"}:
+        for rule in self._require_semantic_value("time_marker_rules", dict).values():
+            aliases = {self._normalize_text(alias) for alias in rule.get("aliases", [])}
+            if normalized_marker not in aliases:
+                continue
+            record_aliases = {self._normalize_text(alias) for alias in rule.get("record_aliases", [])}
+            if record_time in record_aliases:
                 return True
-            return created_at.date() == now.date() if created_at else False
-        if normalized_marker in {"这个月", "本月"}:
-            if record_time in {"今天", "今日", "这个月", "本月", "unspecified"}:
-                return True if record_time != "上周" else False
-            return bool(created_at and created_at.year == now.year and created_at.month == now.month)
-        if normalized_marker in {"上周", "上周末"}:
-            return record_time.startswith("上周")
+            match_mode = str(rule.get("match_mode", "exact"))
+            if match_mode == "same_day":
+                return created_at.date() == now.date() if created_at else False
+            if match_mode == "same_month":
+                return bool(created_at and created_at.year == now.year and created_at.month == now.month)
+            if match_mode == "prefix":
+                prefixes = [self._normalize_text(prefix) for prefix in rule.get("prefixes", [])]
+                return any(record_time.startswith(prefix) for prefix in prefixes)
+            return record_time == normalized_marker
         return False
 
     def _token_similarity(self, left: str, right: str) -> float:
@@ -648,7 +717,7 @@ class ExecutionCoordinator:
         if not endpoint:
             return None
         prompt = {
-            "instruction": "请根据 records 和 query 的归属关系进行聚合，输出 total_amount/count/grouped。归属包括家庭、企业组织、时间、地区等。",
+            "instruction": "Aggregate records according to query relationships and return total_amount, count, and grouped.",
             "query": query,
             "records": records,
             "model_choice": model_choice,
@@ -664,3 +733,132 @@ class ExecutionCoordinator:
         except Exception:
             return None
         return None
+
+    def _learn_semantic_candidates(self, text: str, *, stage: str) -> None:
+        policy_memory = self.semantic_policy.get("policy_memory", {})
+        learning_cfg = policy_memory.get("learning", {})
+        if not policy_memory.get("enabled", False) or not learning_cfg.get("enabled", False):
+            return
+
+        payload = {
+            "instruction": "Analyze input_text and propose semantic policy candidate deltas for the current runtime. Return only additions for supported keys and skip anything already present.",
+            "stage": stage,
+            "input_text": text,
+            "runtime_policy": {
+                "location_markers": self.semantic_policy.get("location_markers", []),
+                "participant_aliases": self.semantic_policy.get("participant_aliases", {}),
+                "group_by_aliases": self.semantic_policy.get("group_by_aliases", {}),
+                "entity_aliases": self.semantic_policy.get("entity_aliases", {}),
+                "ignored_query_tokens": self.semantic_policy.get("ignored_query_tokens", []),
+                "time_markers": self.intent_policy.get("time_markers", []),
+            },
+            "schema": {
+                "candidates": [
+                    {
+                        "policy_key": "string",
+                        "value": "json",
+                        "confidence": "number",
+                    }
+                ]
+            },
+        }
+        data = self._call_external_semantic_parser(payload)
+        if not isinstance(data, dict):
+            return
+
+        candidates = data.get("candidates", [])
+        if not isinstance(candidates, list):
+            return
+
+        max_updates = int(learning_cfg.get("max_updates_per_text", 8))
+        default_confidence = float(learning_cfg.get("default_confidence", 0.82))
+        applied = 0
+        for item in candidates:
+            if applied >= max_updates or not isinstance(item, dict):
+                break
+            policy_key = str(item.get("policy_key") or "").strip()
+            value = item.get("value")
+            confidence = float(item.get("confidence", default_confidence))
+            if not policy_key:
+                continue
+            if not self._should_accept_learning_candidate(policy_key, value, learning_cfg):
+                continue
+            self.semantic_policy_store.record_candidate(
+                policy_key,
+                value,
+                confidence=confidence,
+                source=stage,
+                evidence=text,
+                metadata={"stage": stage},
+            )
+            applied += 1
+
+        if applied:
+            try:
+                self._refresh_semantic_policy()
+            except ValueError as exc:
+                self.semantic_policy_store.record_runtime_failure(reason=str(exc))
+                self._refresh_semantic_policy()
+
+    def _should_accept_learning_candidate(self, policy_key: str, value: Any, learning_cfg: dict[str, Any]) -> bool:
+        allowed_keys = set(learning_cfg.get("allowed_policy_keys", []))
+        if allowed_keys and policy_key not in allowed_keys:
+            return False
+
+        flattened_values = self._flatten_learning_candidate_values(value)
+        min_length = int(learning_cfg.get("min_candidate_text_length", 2))
+        blocked_terms = {self._normalize_text(term) for term in learning_cfg.get("blocked_terms", [])}
+        reject_existing_conflicts = bool(learning_cfg.get("reject_existing_conflicts", True))
+        existing_values = self._existing_learning_values(policy_key) if reject_existing_conflicts else set()
+
+        if not flattened_values:
+            return False
+        for item in flattened_values:
+            normalized_item = self._normalize_text(item)
+            if len(normalized_item) < min_length:
+                return False
+            if normalized_item in blocked_terms:
+                return False
+            if reject_existing_conflicts and normalized_item in existing_values:
+                return False
+        return True
+
+    def _flatten_learning_candidate_values(self, value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            return [str(item) for item in value if str(item).strip()]
+        if isinstance(value, dict):
+            flattened: list[str] = []
+            for key, nested_value in value.items():
+                if str(key).strip():
+                    flattened.append(str(key))
+                if isinstance(nested_value, list):
+                    flattened.extend(str(item) for item in nested_value if str(item).strip())
+                elif nested_value not in (None, ""):
+                    flattened.append(str(nested_value))
+            return flattened
+        return []
+
+    def _existing_learning_values(self, policy_key: str) -> set[str]:
+        existing: set[str] = set()
+        if policy_key == "entity_aliases.actor":
+            actor_aliases = self.semantic_policy.get("entity_aliases", {}).get("actor", {})
+            for canonical, aliases in actor_aliases.items():
+                existing.add(self._normalize_text(str(canonical)))
+                existing.update(self._normalize_text(str(alias)) for alias in aliases)
+            return existing
+
+        current_value = self.semantic_policy.get(policy_key)
+        if isinstance(current_value, list):
+            existing.update(self._normalize_text(str(item)) for item in current_value)
+        elif isinstance(current_value, dict):
+            for key, nested_value in current_value.items():
+                existing.add(self._normalize_text(str(key)))
+                if isinstance(nested_value, list):
+                    existing.update(self._normalize_text(str(item)) for item in nested_value)
+                elif nested_value not in (None, ""):
+                    existing.add(self._normalize_text(str(nested_value)))
+        elif current_value not in (None, ""):
+            existing.add(self._normalize_text(str(current_value)))
+        return existing

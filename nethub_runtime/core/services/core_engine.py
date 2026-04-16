@@ -116,6 +116,9 @@ class AICore:
             "workflow_planner_plugins": len(self.workflow_planner.plugins),
         }
 
+    def inspect_semantic_memory(self, *, policy_key: str | None = None, status: str | None = None) -> dict[str, Any]:
+        return self.execution_coordinator.semantic_policy_store.inspect_memory(policy_key=policy_key, status=status)
+
     async def handle(
         self,
         input_text: str,
