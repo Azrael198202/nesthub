@@ -48,11 +48,18 @@ async def im_inbound(request: Request, x_line_signature: str = Header(None)):
             msg = request.app.state.bridge_service.create_message(
                 "line", external_user_id, external_chat_id, external_message_id, text, event
             )
-            result = await request.app.state.bridge_service.process_message(msg)
+            if request.app.state.bridge_service.should_process_inline():
+                result = await request.app.state.bridge_service.process_message(msg)
+                status = request.app.state.bridge_service.get_message(msg.bridge_message_id).status
+                reply = result.get("reply", "")
+            else:
+                result = {}
+                status = "pending"
+                reply = ""
             results.append({
                 "bridge_message_id": msg.bridge_message_id,
-                "status": request.app.state.bridge_service.get_message(msg.bridge_message_id).status,
-                "reply": result.get("reply", ""),
+                "status": status,
+                "reply": reply,
             })
         if results:
             return {"ok": True, "processed": len(results), "results": results}

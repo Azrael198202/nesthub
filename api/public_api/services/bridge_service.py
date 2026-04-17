@@ -50,8 +50,17 @@ class BridgeService:
             await self._deliver_line_response(claimed, result)
         return result
 
+    def should_process_inline(self) -> bool:
+        handle_url = os.getenv("NESTHUB_CORE_HANDLE_URL", "").strip()
+        inline_flag = os.getenv("NESTHUB_PUBLIC_API_PROCESS_INLINE", "").strip().lower()
+        if inline_flag in {"1", "true", "yes", "on"}:
+            return True
+        return bool(handle_url)
+
     async def _invoke_nesthub(self, msg: BridgeMessage) -> dict[str, Any]:
-        handle_url = os.getenv("NESTHUB_CORE_HANDLE_URL", "http://127.0.0.1:8000/core/handle").strip()
+        handle_url = os.getenv("NESTHUB_CORE_HANDLE_URL", "").strip()
+        if not handle_url:
+            return {"reply": "NestHub core handle url is not configured."}
         payload = {
             "input_text": msg.text,
             "context": {

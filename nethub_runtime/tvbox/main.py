@@ -11,6 +11,7 @@ import copy
 import json
 import re
 from datetime import UTC, datetime
+import asyncio
 from typing import Any
 
 
@@ -18,6 +19,25 @@ def _create_core_engine() -> Any:
     from nethub_runtime.core.services.core_engine import AICore
 
     return AICore()
+
+
+def _load_bridge_config() -> tuple[str, str, int]:
+    from pathlib import Path
+
+    import yaml
+
+    config_path = Path(__file__).resolve().parents[1] / "config" / "bridge_external.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+    bridge_api = str(config.get("bridge_api") or "").strip()
+    bridge_token = str(config.get("bridge_token") or "").strip()
+    if not bridge_token:
+        token_env = str(config.get("bridge_token_env") or "").strip()
+        if token_env:
+            import os
+
+            bridge_token = os.getenv(token_env, "").strip()
+    poll_interval = int(config.get("poll_interval_seconds") or 5)
+    return bridge_api, bridge_token, poll_interval
 
 
 def _create_app() -> Any:
@@ -114,6 +134,8 @@ def _create_app() -> Any:
     cortex_template = _load_json(demo_dir / "cortex_unpacked.demo.json", cortex_fallback)
     artifact_store = GeneratedArtifactStore()
     core_engine = _create_core_engine()
+    bridge_api, bridge_token, bridge_poll_interval = _load_bridge_config()
+    bridge_worker: dict[str, asyncio.Task[Any] | None] = {"task": None}
 
     def _now_time() -> str:
         return datetime.now(UTC).astimezone().strftime("%H:%M")
@@ -241,6 +263,86 @@ def _create_app() -> Any:
         )
         dashboard_state["timelineEvents"] = dashboard_state["timelineEvents"][-30:]
         return {"reply": reply, "artifacts": artifacts}
+
+    async def _process_bridge_message(message: dict[str, Any]) -> None:
+        if not isinstance(message, dict):
+            return
+        bridge_message_id = str(message.get("bridge_message_id") or "").strip()
+        text = str(message.get("text") or "").strip()
+        if not bridge_message_id or not text:
+            return
+
+        import httpx
+
+        headers = {"Authorization": f"Bearer {bridge_token}"}
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            claim_resp = await client.post(
+                f"{bridge_api}/hub/claim",
+                json={"bridge_message_id": bridge_message_id},
+                headers=headers,
+            )
+            if claim_resp.status_code >= 400:
+                return
+
+            result = await core_engine.handle(
+                text,
+                {
+                    "metadata": {
+                        "source": "line_bridge",
+                        "bridge_message_id": bridge_message_id,
+                        "external_user_id": message.get("external_user_id"),
+                        "external_chat_id": message.get("external_chat_id"),
+                        "external_message_id": message.get("external_message_id"),
+                    }
+                },
+                fmt="dict",
+                use_langraph=True,
+            )
+            runtime_response = _record_runtime_result(text, result if isinstance(result, dict) else {})
+            await client.post(
+                f"{bridge_api}/hub/result",
+                json={"bridge_message_id": bridge_message_id, "result": {"reply": runtime_response["reply"], "artifacts": runtime_response["artifacts"]}},
+                headers=headers,
+            )
+
+    async def _bridge_poll_loop() -> None:
+        if not bridge_api or not bridge_token:
+            return
+        import httpx
+
+        headers = {"Authorization": f"Bearer {bridge_token}"}
+        while True:
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(f"{bridge_api}/hub/pending", headers=headers)
+                    response.raise_for_status()
+                    pending = response.json()
+                for item in pending:
+                    try:
+                        await _process_bridge_message(item)
+                    except Exception:
+                        continue
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+            await asyncio.sleep(bridge_poll_interval)
+
+    @app.on_event("startup")
+    async def startup_bridge_worker() -> None:
+        if bridge_api and bridge_token and bridge_worker["task"] is None:
+            bridge_worker["task"] = asyncio.create_task(_bridge_poll_loop())
+
+    @app.on_event("shutdown")
+    async def shutdown_bridge_worker() -> None:
+        task = bridge_worker.get("task")
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            bridge_worker["task"] = None
 
     def _dashboard_snapshot() -> dict[str, Any]:
         snapshot = copy.deepcopy(dashboard_state)
