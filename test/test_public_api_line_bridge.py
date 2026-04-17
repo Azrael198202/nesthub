@@ -28,7 +28,7 @@ def _line_payload(text: str = "你好，NestHub") -> dict:
 def test_line_webhook_is_processed_through_public_api(monkeypatch) -> None:
     delivered: list[dict] = []
 
-    async def fake_invoke(msg):
+    async def fake_invoke(msg, *, base_url=None):
         return {"reply": f"NestHub handled: {msg.text}", "artifacts": []}
 
     async def fake_deliver(msg, result):
@@ -91,7 +91,7 @@ def test_line_webhook_accepts_valid_signature(monkeypatch) -> None:
     secret = "secret-456"
     monkeypatch.setenv("LINE_CHANNEL_SECRET", secret)
 
-    async def fake_invoke(msg):
+    async def fake_invoke(msg, *, base_url=None):
         return {"reply": "ok", "artifacts": []}
 
     async def fake_deliver(msg, result):
@@ -208,3 +208,28 @@ def test_inline_invoke_stages_file_read_content_as_download(monkeypatch) -> None
     assert result["downloads"]
     assert result["downloads"][0]["file_name"] == "hello_world_button.html"
     assert result["downloads"][0]["download_url"].startswith("https://public.example/api/temp-files/")
+
+
+def test_line_webhook_inline_uses_request_base_url_for_downloads(monkeypatch) -> None:
+    delivered: list[dict] = []
+    monkeypatch.delenv("NESTHUB_PUBLIC_API_BASE_URL", raising=False)
+    monkeypatch.setenv("NESTHUB_PUBLIC_API_PROCESS_INLINE", "true")
+
+    async def fake_invoke(msg, *, base_url=None):
+        return {
+            "reply": "ignored",
+            "downloads": [{"file_name": "hello.html", "download_url": f"{base_url}/api/temp-files/abc/hello.html"}],
+        }
+
+    async def fake_deliver(msg, result):
+        delivered.append(result)
+
+    monkeypatch.setattr(app.state.bridge_service, "_invoke_nesthub", fake_invoke)
+    monkeypatch.setattr(app.state.bridge_service, "_deliver_line_response", fake_deliver)
+
+    client = TestClient(app)
+    response = client.post("/api/bridge/im/inbound", json=_line_payload("把文件发给我"), headers={"host": "railway.example"})
+
+    assert response.status_code == 200
+    assert delivered
+    assert delivered[0]["downloads"][0]["download_url"] == "http://railway.example/api/temp-files/abc/hello.html"

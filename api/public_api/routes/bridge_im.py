@@ -3,12 +3,20 @@ import base64
 import hashlib
 import hmac
 import logging
+import os
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
 
 router = APIRouter()
 logger = logging.getLogger("api.public_api.routes.bridge_im")
+
+
+def _public_base_url(request: Request) -> str:
+    configured = os.getenv("NESTHUB_PUBLIC_API_BASE_URL", "").strip().rstrip("/")
+    if configured:
+        return configured
+    return str(request.base_url).rstrip("/")
 
 def _verify_line_signature(body: bytes, signature: str | None) -> bool:
     import os
@@ -49,7 +57,7 @@ async def im_inbound(request: Request, x_line_signature: str = Header(None)):
                 "line", external_user_id, external_chat_id, external_message_id, text, event
             )
             if request.app.state.bridge_service.should_process_inline():
-                result = await request.app.state.bridge_service.process_message(msg)
+                result = await request.app.state.bridge_service.process_message(msg, base_url=_public_base_url(request))
                 status = request.app.state.bridge_service.get_message(msg.bridge_message_id).status
                 reply = result.get("reply", "")
             else:

@@ -40,7 +40,7 @@ class BridgeService:
     def get_message(self, bridge_message_id: str):
         return self.store.get_message(bridge_message_id)
 
-    async def process_message(self, msg: BridgeMessage) -> dict[str, Any]:
+    async def process_message(self, msg: BridgeMessage, *, base_url: str | None = None) -> dict[str, Any]:
         claimed = self.store.claim_message(msg.bridge_message_id)
         if claimed is None:
             existing = self.store.get_message(msg.bridge_message_id)
@@ -48,7 +48,7 @@ class BridgeService:
                 return existing.result
             return {"reply": "Message is no longer pending."}
 
-        result = await self._invoke_nesthub(claimed)
+        result = await self._invoke_nesthub(claimed, base_url=base_url)
         self.store.complete_message(claimed.bridge_message_id, result)
         if claimed.source_im == "line":
             await self._deliver_line_response(claimed, result)
@@ -61,7 +61,7 @@ class BridgeService:
             return True
         return bool(handle_url)
 
-    async def _invoke_nesthub(self, msg: BridgeMessage) -> dict[str, Any]:
+    async def _invoke_nesthub(self, msg: BridgeMessage, *, base_url: str | None = None) -> dict[str, Any]:
         handle_url = os.getenv("NESTHUB_CORE_HANDLE_URL", "").strip()
         if not handle_url:
             return {"reply": "NestHub core handle url is not configured."}
@@ -91,7 +91,7 @@ class BridgeService:
         if not isinstance(result, dict):
             return {"reply": "NestHub returned an invalid response."}
 
-        downloads = self.stage_result_downloads(result)
+        downloads = self.stage_result_downloads(result, base_url=base_url)
         reply = self._extract_reply_text(result)
         return {
             "reply": reply,
