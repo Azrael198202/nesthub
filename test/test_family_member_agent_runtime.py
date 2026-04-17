@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
 
 from nethub_runtime.core.main import app
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def isolate_generated_artifacts(tmp_path, monkeypatch) -> None:
+    generated_root = tmp_path / "generated_artifacts"
+    generated_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("NETHUB_GENERATED_ROOT", str(generated_root))
 
 
 def test_family_member_agent_creation_and_member_collection_flow() -> None:
@@ -110,6 +120,9 @@ def test_family_member_agent_creation_and_member_collection_flow() -> None:
     assert member_payload["phone"] == "1234567890"
     assert member_payload["email"] == "abc@gmail.com"
     assert "ABC株式会社" in member_payload["extra_notes"]
+    trace_path = Path(finish_result["execution_result"]["generated_trace_path"])
+    assert trace_path.exists()
+    assert "generated_artifacts" in str(trace_path)
 
 
 def test_family_member_agent_can_answer_saved_phone_query() -> None:
@@ -156,3 +169,6 @@ def test_family_member_agent_can_answer_saved_phone_query() -> None:
     assert query_result["task"]["intent"] == "query_agent_knowledge"
     assert payload["answer"] == "爸爸的手机号是1234567890。"
     assert payload["knowledge_hits"]
+    trace_path = Path(query_result["execution_result"]["generated_trace_path"])
+    assert trace_path.exists()
+    assert "generated_artifacts" in str(trace_path)

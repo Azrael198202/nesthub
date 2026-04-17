@@ -8,6 +8,13 @@ PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 GENERATED_ROOT = PACKAGE_ROOT / "generated"
 
 
+def generated_root() -> Path:
+    env = os.getenv("NETHUB_GENERATED_ROOT")
+    if env:
+        return Path(env).expanduser().resolve()
+    return GENERATED_ROOT
+
+
 def app_home() -> Path:
     env = os.getenv("NETHUB_HOME")
     if env:
@@ -30,13 +37,14 @@ def ensure_app_dirs() -> dict[str, Path]:
 
 
 def ensure_generated_dirs() -> dict[str, Path]:
+    root = generated_root()
     paths = {
-        "root": GENERATED_ROOT,
-        "code": GENERATED_ROOT / "code",
-        "blueprints": GENERATED_ROOT / "blueprints",
-        "agents": GENERATED_ROOT / "agents",
-        "features": GENERATED_ROOT / "features",
-        "traces": GENERATED_ROOT / "traces",
+        "root": root,
+        "code": root / "code",
+        "blueprints": root / "blueprints",
+        "agents": root / "agents",
+        "features": root / "features",
+        "traces": root / "traces",
     }
     for path in paths.values():
         path.mkdir(parents=True, exist_ok=True)

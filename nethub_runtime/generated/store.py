@@ -20,8 +20,12 @@ class GeneratedArtifactStore:
     def __init__(self) -> None:
         self.paths = ensure_generated_dirs()
 
+    def _paths(self) -> dict[str, Path]:
+        self.paths = ensure_generated_dirs()
+        return self.paths
+
     def persist(self, category: str, artifact_id: str, payload: Any, *, extension: str = ".json") -> Path:
-        directory = self.paths[self.CATEGORY_TO_DIR[category]]
+        directory = self._paths()[self.CATEGORY_TO_DIR[category]]
         path = directory / f"{artifact_id}{extension}"
         if extension == ".py" and isinstance(payload, str):
             path.write_text(payload, encoding="utf-8")
@@ -32,8 +36,9 @@ class GeneratedArtifactStore:
 
     def list_artifacts(self) -> dict[str, list[dict[str, Any]]]:
         result: dict[str, list[dict[str, Any]]] = {}
+        paths = self._paths()
         for category, key in self.CATEGORY_TO_DIR.items():
-            directory = self.paths[key]
+            directory = paths[key]
             items: list[dict[str, Any]] = []
             for path in sorted(directory.iterdir() if directory.exists() else [], key=lambda item: item.name):
                 if not path.is_file():
@@ -52,7 +57,7 @@ class GeneratedArtifactStore:
         return result
 
     def delete(self, category: str, artifact_id: str) -> dict[str, Any]:
-        directory = self.paths[self.CATEGORY_TO_DIR[category]]
+        directory = self._paths()[self.CATEGORY_TO_DIR[category]]
         candidates = list(directory.glob(f"{artifact_id}.*"))
         for path in candidates:
             if path.is_file():

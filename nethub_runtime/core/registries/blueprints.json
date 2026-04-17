@@ -1,24 +1,22 @@
 {
   "data_ops:data_record": {
-    "blueprint_id": "blueprint_043390721e07",
-    "name": "data_ops:data_record:generated",
+    "blueprint_id": "bp_data_record",
+    "name": "Generic Data Record Blueprint",
     "domain": "data_ops",
     "intent": "data_record",
     "inputs": [
       "input_text",
-      "context"
+      "session_state"
     ],
     "outputs": [
-      "records"
+      "records",
+      "summary"
     ],
     "steps": [
       "extract_records",
       "persist_records"
     ],
-    "metadata": {
-      "generated": true,
-      "generated_artifact_path": "/home/lw-ai/Documents/nesthub/nethub_runtime/generated/blueprints/blueprint_043390721e07.json"
-    }
+    "metadata": {}
   },
   "data_ops:data_query": {
     "blueprint_id": "bp_data_query",
@@ -296,7 +294,7 @@
     "metadata": {}
   },
   "data_ops:data_record:generated": {
-    "blueprint_id": "blueprint_043390721e07",
+    "blueprint_id": "blueprint_724cbfbc5d44",
     "name": "data_ops:data_record:generated",
     "domain": "data_ops",
     "intent": "data_record",
@@ -313,7 +311,7 @@
     ],
     "metadata": {
       "generated": true,
-      "generated_artifact_path": "/home/lw-ai/Documents/nesthub/nethub_runtime/generated/blueprints/blueprint_043390721e07.json"
+      "generated_artifact_path": "/home/lw-ai/Documents/nesthub/nethub_runtime/generated/blueprints/blueprint_724cbfbc5d44.json"
     }
   },
   "agent_management:create_information_agent": {

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 from nethub_runtime.core.services.core_engine import AICore
+from nethub_runtime.core.services import execution_handler_registry as execution_handler_registry_module
 
 
 def test_core_engine_handle_workflow_path() -> None:
     core = AICore(model_config_path="nethub_runtime/config/model_config.yaml")
+    assert core.execution_coordinator._handler_registry is not None
     assert "tool" in core.execution_coordinator._executor_handlers
     assert "agent" in core.execution_coordinator._executor_handlers
     assert "extract_records" in core.execution_coordinator._step_handlers["tool"]
@@ -85,3 +88,50 @@ def test_core_engine_reports_capability_gap_when_blueprint_is_generated() -> Non
     assert any(item["artifact_type"] == "trace" for item in artifacts)
     assert any(item["artifact_type"] == "blueprint" for item in result.get("artifact_index", {}).get("blueprint", []))
     assert any(item["artifact_type"] == "trace" for item in result.get("artifact_index", {}).get("trace", []))
+
+
+def test_execution_handler_registry_can_load_plugins(tmp_path, monkeypatch) -> None:
+    plugin_config = tmp_path / "plugin_config.json"
+    plugin_config.write_text(
+        json.dumps(
+            {
+                "intent_analyzer_plugins": [],
+                "task_decomposer_plugins": [],
+                "workflow_planner_plugins": [],
+                "execution_handler_registry_plugins": [
+                    "nethub_runtime.core.services.demo_execution_handler_plugin:demo_execution_handler_plugin"
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(execution_handler_registry_module, "PLUGIN_CONFIG_PATH", plugin_config)
+
+    core = AICore(model_config_path="nethub_runtime/config/model_config.yaml")
+
+    assert "demo_executor" in core.execution_coordinator._executor_handlers
+    assert "demo_step" in core.execution_coordinator._step_handlers["demo_executor"]
+    manifests = core.execution_coordinator._handler_registry.get_plugin_manifests()
+    assert manifests
+    assert manifests[0]["name"] == "demo_execution_handler_plugin"
+    assert manifests[0]["executors"] == ["demo_executor"]
+    assert manifests[0]["steps"] == ["demo_executor.demo_step"]
+    assert manifests[0]["requirements_satisfied"] is True
+    assert manifests[0]["requirements"] == [
+        {
+            "type": "dispatcher",
+            "name": "llm",
+            "description": "Requires the coordinator LLM dispatcher.",
+            "required": True,
+            "satisfied": True,
+        },
+        {
+            "type": "service",
+            "name": "information_agent_service",
+            "description": "Verifies domain services can be surfaced as runtime requirements.",
+            "required": False,
+            "satisfied": True,
+        },
+    ]
