@@ -10,7 +10,14 @@ from __future__ import annotations
 import copy
 import json
 import re
+from datetime import UTC, datetime
 from typing import Any
+
+
+def _create_core_engine() -> Any:
+    from nethub_runtime.core.services.core_engine import AICore
+
+    return AICore()
 
 
 def _create_app() -> Any:
@@ -106,6 +113,134 @@ def _create_app() -> Any:
     dashboard_state = _load_json(demo_dir / "dashboard.demo.json", dashboard_fallback)
     cortex_template = _load_json(demo_dir / "cortex_unpacked.demo.json", cortex_fallback)
     artifact_store = GeneratedArtifactStore()
+    core_engine = _create_core_engine()
+
+    def _now_time() -> str:
+        return datetime.now(UTC).astimezone().strftime("%H:%M")
+
+    def _artifact_url(category: str, artifact_id: str) -> str:
+        return f"/api/generated-artifacts/open/{category}/{artifact_id}"
+
+    def _artifact_file_path(category: str, artifact_id: str) -> Path | None:
+        key = GeneratedArtifactStore.CATEGORY_TO_DIR.get(category)
+        if not key:
+            return None
+        directory = artifact_store.paths.get(key)
+        if directory is None:
+            return None
+        candidates = sorted(directory.glob(f"{artifact_id}.*"))
+        return candidates[0] if candidates else None
+
+    def _artifact_items_from_result(result: dict[str, Any]) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for artifact in result.get("artifacts", []) or []:
+            artifact_type = str(artifact.get("artifact_type") or "file")
+            artifact_id = str(artifact.get("artifact_id") or "")
+            if not artifact_id:
+                continue
+            items.append(
+                {
+                    "label": str(artifact.get("name") or artifact_id),
+                    "fileName": str(artifact.get("name") or artifact_id),
+                    "url": _artifact_url(artifact_type, artifact_id),
+                    "artifactType": artifact_type,
+                }
+            )
+        return items
+
+    def _extract_reply_text(result: dict[str, Any]) -> str:
+        execution_result = result.get("execution_result") or {}
+        if execution_result.get("execution_type") == "agent":
+            agent_result = execution_result.get("agent_result") or {}
+            final_answer = str(agent_result.get("final_answer") or "").strip()
+            if final_answer:
+                return final_answer
+        final_output = execution_result.get("final_output") or {}
+        for key in ("manage_information_agent", "query_information_knowledge", "file_generate", "generate_workflow_artifact", "single_step"):
+            payload = final_output.get(key) or {}
+            for field in ("message", "answer", "summary", "artifact_path"):
+                value = str(payload.get(field) or "").strip()
+                if value:
+                    return f"Generated artifact: {value}" if field == "artifact_path" else value
+        task = result.get("task") or {}
+        return f"NestHub completed {task.get('intent', 'the request')}."
+
+    def _to_runtime_agent_card(result: dict[str, Any]) -> dict[str, Any] | None:
+        agent = result.get("agent")
+        if not isinstance(agent, dict):
+            return None
+        return {
+            "id": str(agent.get("agent_id") or agent.get("name") or "runtime-agent"),
+            "name": str(agent.get("name") or "Runtime Agent"),
+            "role": str(agent.get("role") or "Runtime Agent"),
+            "status": "active",
+            "progress": 100,
+            "lastUpdate": _now_time(),
+        }
+
+    def _to_runtime_blueprint_cards(result: dict[str, Any]) -> list[dict[str, Any]]:
+        cards: list[dict[str, Any]] = []
+        for blueprint in result.get("blueprints") or []:
+            metadata = blueprint.get("metadata") or {}
+            synthesis = metadata.get("synthesis") or {}
+            cards.append(
+                {
+                    "id": str(blueprint.get("blueprint_id") or blueprint.get("name") or "runtime-blueprint"),
+                    "name": str(blueprint.get("name") or "Runtime Blueprint"),
+                    "summary": str(synthesis.get("purpose_summary") or blueprint.get("intent") or "Runtime generated blueprint"),
+                    "status": "complete",
+                    "createdAt": _now_time(),
+                    "latestRecord": str(synthesis.get("reasoning") or ""),
+                    "generatedFeaturePath": str(metadata.get("generated_artifact_path") or ""),
+                    "generatedFeatureId": str(blueprint.get("blueprint_id") or ""),
+                }
+            )
+        return cards
+
+    def _to_model_provider_cards(result: dict[str, Any]) -> list[dict[str, Any]]:
+        plan = (result.get("execution_result") or {}).get("execution_plan") or []
+        providers: dict[str, dict[str, Any]] = {}
+        for step in plan:
+            model_choice = ((step.get("capability") or {}).get("model_choice") or {})
+            provider = str(model_choice.get("provider") or "runtime")
+            model = str(model_choice.get("model") or "unknown")
+            key = f"{provider}:{model}"
+            entry = providers.setdefault(key, {"name": key, "capabilities": []})
+            step_name = str(step.get("name") or "")
+            if step_name and step_name not in entry["capabilities"]:
+                entry["capabilities"].append(step_name)
+        return list(providers.values())
+
+    def _record_runtime_result(message: str, result: dict[str, Any]) -> dict[str, Any]:
+        reply = _extract_reply_text(result)
+        artifacts = _artifact_items_from_result(result)
+        dashboard_state.setdefault("conversation", [])
+        dashboard_state["conversation"].append({"speaker": "You", "text": message, "time": _now_time(), "createdAt": ""})
+        dashboard_state["conversation"].append({"speaker": "HomeHub", "text": reply, "time": _now_time(), "createdAt": "", "artifacts": artifacts})
+        dashboard_state["conversation"] = dashboard_state["conversation"][-40:]
+
+        runtime_agent = _to_runtime_agent_card(result)
+        if runtime_agent:
+            agents = [item for item in dashboard_state.get("activeAgents", []) if item.get("id") != runtime_agent["id"]]
+            agents.append(runtime_agent)
+            dashboard_state["activeAgents"] = agents[-8:]
+
+        runtime_blueprints = _to_runtime_blueprint_cards(result)
+        if runtime_blueprints:
+            existing = {str(item.get("id") or ""): item for item in dashboard_state.get("customAgents", [])}
+            for item in runtime_blueprints:
+                existing[item["id"]] = item
+            dashboard_state["customAgents"] = list(existing.values())[-12:]
+
+        runtime_models = _to_model_provider_cards(result)
+        if runtime_models:
+            dashboard_state["modelProviders"] = runtime_models
+
+        dashboard_state.setdefault("timelineEvents", []).append(
+            {"time": _now_time(), "title": "NestHub Runtime", "detail": reply[:120]}
+        )
+        dashboard_state["timelineEvents"] = dashboard_state["timelineEvents"][-30:]
+        return {"reply": reply, "artifacts": artifacts}
 
     def _dashboard_snapshot() -> dict[str, Any]:
         snapshot = copy.deepcopy(dashboard_state)
@@ -193,6 +328,13 @@ def _create_app() -> Any:
     @app.get("/api/generated-artifacts")
     def api_generated_artifacts():
         return {"ok": True, "items": artifact_store.list_artifacts()}
+
+    @app.get("/api/generated-artifacts/open/{category}/{artifact_id}")
+    def api_generated_artifact_open(category: str, artifact_id: str):
+        path = _artifact_file_path(category, artifact_id)
+        if path is None or not path.exists():
+            return JSONResponse(status_code=404, content={"ok": False, "error": "artifact not found"})
+        return FileResponse(path)
 
     @app.post("/api/cortex/unpacked")
     async def api_cortex_unpacked(request: Request):
@@ -299,24 +441,34 @@ def _create_app() -> Any:
         body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
         message = str(body.get("message", "")).strip()
         locale = str(body.get("locale", dashboard_state.get("languageSettings", {}).get("current", "zh-CN")))
-        conversation = dashboard_state.setdefault("conversation", [])
-        if message:
-            conversation.append({"speaker": "You", "text": message, "time": "", "createdAt": ""})
-        reply = "这是 Demo 回复：页面已迁移，接口由示例数据驱动。"
-        conversation.append({"speaker": "HomeHub", "text": reply, "time": "", "createdAt": ""})
+        if not message:
+            return JSONResponse(status_code=400, content={"ok": False, "error": "message is required"})
+        try:
+            result = await core_engine.handle(
+                message,
+                {"metadata": {"source": "tvbox_debug_console", "locale": locale}},
+                fmt="dict",
+                use_langraph=True,
+            )
+        except Exception as exc:
+            return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
+
+        runtime_response = _record_runtime_result(message, result if isinstance(result, dict) else {})
+        conversation = copy.deepcopy(dashboard_state.get("conversation", []))
         dashboard_state.setdefault("voiceProfile", {})["locale"] = locale
         return {
             "ok": True,
-            "reply": reply,
+            "reply": runtime_response["reply"],
             "detectedLocale": locale,
-            "conversation": copy.deepcopy(conversation[-40:]),
+            "conversation": conversation,
             "voiceRoute": copy.deepcopy(dashboard_state.get("lastVoiceRoute", {})),
             "pendingVoiceClarification": dashboard_state.get("pendingVoiceClarification"),
             "uiAction": None,
             "lookupResult": None,
-            "artifacts": [],
+            "artifacts": runtime_response["artifacts"],
             "assistantMemory": copy.deepcopy(dashboard_state.get("assistantMemory", {})),
             "audio": None,
+            "result": result,
         }
 
     @app.post("/api/custom-agents/intake")

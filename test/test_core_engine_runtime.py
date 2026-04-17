@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from nethub_runtime.core.services.core_engine import AICore
+from nethub_runtime.core.services import core_engine as core_engine_module
 from nethub_runtime.core.services import execution_handler_registry as execution_handler_registry_module
 
 
@@ -135,3 +136,49 @@ def test_execution_handler_registry_can_load_plugins(tmp_path, monkeypatch) -> N
             "satisfied": True,
         },
     ]
+
+
+def test_runtime_blueprint_generation_does_not_persist_to_static_registry(tmp_path, monkeypatch) -> None:
+    model_registry_path = tmp_path / "models.json"
+    blueprint_registry_path = tmp_path / "blueprints.json"
+    agent_registry_path = tmp_path / "agents.json"
+    monkeypatch.setattr(core_engine_module, "MODEL_REGISTRY_PATH", model_registry_path)
+    monkeypatch.setattr(core_engine_module, "BLUEPRINT_REGISTRY_PATH", blueprint_registry_path)
+    monkeypatch.setattr(core_engine_module, "AGENT_REGISTRY_PATH", agent_registry_path)
+
+    core = AICore(model_config_path="nethub_runtime/config/model_config.yaml")
+    core.blueprint_resolver.resolve = lambda task, workflow: []
+
+    result = asyncio.run(
+        core.handle(
+            input_text="记录一下今天中午吃饭花了50元",
+            context={"user_id": "u_registry", "use_langgraph_runtime": False},
+            fmt="dict",
+            use_langraph=False,
+        )
+    )
+
+    assert Path(result["blueprints"][0]["metadata"]["generated_artifact_path"]).exists()
+    assert json.loads(model_registry_path.read_text(encoding="utf-8")) == {}
+    assert json.loads(blueprint_registry_path.read_text(encoding="utf-8")) == {}
+    assert json.loads(agent_registry_path.read_text(encoding="utf-8")) == {}
+
+
+def test_runtime_blueprint_generation_contains_synthesis_metadata() -> None:
+    core = AICore(model_config_path="nethub_runtime/config/model_config.yaml")
+    core.blueprint_resolver.resolve = lambda task, workflow: []
+
+    result = asyncio.run(
+        core.handle(
+            input_text="帮我生成一个文件处理流程",
+            context={"user_id": "u_synthesis", "use_langgraph_runtime": False},
+            fmt="dict",
+            use_langraph=False,
+        )
+    )
+
+    synthesis = result["blueprints"][0]["metadata"].get("synthesis")
+    assert isinstance(synthesis, dict)
+    assert synthesis["purpose_summary"]
+    assert synthesis["reasoning"]
+    assert isinstance(synthesis["execution_profile"], dict)

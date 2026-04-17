@@ -9,6 +9,7 @@ import logging
 import json
 from typing import Any, Optional
 
+from nethub_runtime.core.services.runtime_design_synthesizer import RuntimeDesignSynthesizer
 from nethub_runtime.core.workflows.schemas import AgentSpec, AgentCapability, AgentState
 from nethub_runtime.core.utils.id_generator import generate_id
 
@@ -34,6 +35,7 @@ class AgentBuilder:
         """
         self.model_router = model_router
         self.tool_registry = tool_registry
+        self.synthesizer = RuntimeDesignSynthesizer(model_router=model_router)
     
     async def generate_agent_spec(
         self,
@@ -59,31 +61,8 @@ class AgentBuilder:
             return self._create_default_agent_spec(agent_id, task)
         
         # 使用模型路由器生成规范
-        prompt = f"""
-        Generate an efficient Agent specification for the following task and workflow.
-
-        Task: {json.dumps(task, ensure_ascii=False, indent=2)}
-        Workflow: {json.dumps(workflow or {}, ensure_ascii=False, indent=2)}
-
-        Return JSON with these fields:
-        {{
-            "name": "agent name",
-            "role": "role description",
-            "goals": ["goal 1", "goal 2"],
-            "model_policy": {{"intent_analysis": "model_name"}},
-            "tool_policy": ["tool1", "tool2"],
-            "memory_type": "short_term|long_term|hybrid",
-            "max_iterations": 10
-        }}
-        """
-        
         try:
-            response = await self.model_router.invoke(
-                task_type="agent_reasoning",
-                prompt=prompt,
-                system_prompt="You are an Agent designer. Return JSON only.",
-            )
-            spec_dict = json.loads(response)
+            spec_dict = self.synthesizer.synthesize_agent_spec(task=task, workflow=workflow)
             if not isinstance(spec_dict, dict):
                 raise ValueError("Agent spec response is not JSON object")
             
@@ -128,7 +107,7 @@ class AgentBuilder:
             agent_id=agent_id,
             name=spec_dict.get("name", f"Agent-{agent_id[:8]}"),
             role=spec_dict.get("role", "Generic Agent"),
-            description=f"Agent for: {task.get('intent', 'general')}",
+            description=spec_dict.get("description", f"Agent for: {task.get('intent', 'general')}"),
             goals=spec_dict.get("goals", ["Complete task"]),
             constraints=spec_dict.get("constraints", []),
             scope="task",

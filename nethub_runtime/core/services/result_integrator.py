@@ -116,6 +116,23 @@ class ResultIntegrator:
                 )
             )
 
+        file_output = final_output.get("file_generate") or {}
+        file_path = file_output.get("artifact_path")
+        if file_path:
+            artifact_id = str(Path(str(file_path)).stem)
+            artifacts.append(
+                self._artifact_record(
+                    artifact_type=str(file_output.get("artifact_type") or "file"),
+                    artifact_id=artifact_id,
+                    path=str(file_path),
+                    source="workflow_file_generation",
+                    metadata={
+                        "status": file_output.get("status", "generated"),
+                        "storage": file_output.get("storage", "workspace"),
+                    },
+                )
+            )
+
         return artifacts
 
     def build_artifact_index(self, artifacts: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:

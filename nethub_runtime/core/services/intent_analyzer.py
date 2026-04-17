@@ -68,6 +68,25 @@ class SemanticIntentPlugin:
         metadata = context.metadata or {}
         input_type = str(metadata.get("input_type", "")).lower()
         lowered = text.lower()
+        code_file_markers = (
+            ".html",
+            ".htm",
+            ".js",
+            ".css",
+            ".json",
+            ".py",
+            "html文件",
+            "js文件",
+            "javascript文件",
+            "代码文件",
+            "写一个html",
+            "写个html",
+            "生成html",
+            "生成代码",
+            "写代码",
+            "保存到",
+            "保存为",
+        )
 
         if input_type in {"image", "screenshot"} or any(k in lowered for k in ("ocr", "识别图片", "图像文字", "票据识别")):
             return ("ocr_task", "multimodal_ops")
@@ -79,6 +98,8 @@ class SemanticIntentPlugin:
             return ("image_generation_task", "multimodal_ops")
         if any(k in lowered for k in ("生成视频", "动画生成", "短视频")):
             return ("video_generation_task", "multimodal_ops")
+        if any(k in lowered for k in code_file_markers):
+            return ("file_generation_task", "multimodal_ops")
         if input_type == "file" or any(k in lowered for k in ("生成pdf", "生成word", "生成ppt", "文件生成")):
             return ("file_generation_task", "multimodal_ops")
         if any(k in lowered for k in ("web检索", "网页抓取", "自动查询", "联网查询")):
@@ -189,11 +210,14 @@ class SemanticIntentPlugin:
         multimodal_intent = self._infer_multimodal_intent(text, _context)
         if multimodal_intent:
             intent, domain = multimodal_intent
+            output_requirements = ["artifact"]
+            if intent == "file_generation_task":
+                output_requirements = ["artifact", "file"]
             self._remember_runtime_intent(
                 text,
                 intent=intent,
                 domain=domain,
-                output_requirements=["artifact"],
+                output_requirements=output_requirements,
                 constraints={"need_agent": False},
                 keyword_signals=keyword_signals,
                 analysis_meta=analysis_meta,
@@ -201,7 +225,7 @@ class SemanticIntentPlugin:
             return {
                 "intent": intent,
                 "domain": domain,
-                "output_requirements": ["artifact"],
+                "output_requirements": output_requirements,
                 "constraints": {"need_agent": False},
                 "analysis": {"model_routing": analysis_meta, "multimodal": True},
             }

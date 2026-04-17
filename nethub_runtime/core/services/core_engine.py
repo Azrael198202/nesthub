@@ -18,12 +18,13 @@ from nethub_runtime.core.services.context_manager import ContextManager
 from nethub_runtime.core.services.dependency_manager import DependencyManager
 from nethub_runtime.core.services.execution_coordinator import ExecutionCoordinator
 from nethub_runtime.core.services.intent_analyzer import IntentAnalyzer
-from nethub_runtime.core.services.registry import JsonRegistry
+from nethub_runtime.core.services.registry import JsonRegistry, Registry
 from nethub_runtime.core.services.result_integrator import ResultIntegrator
 from nethub_runtime.core.services.runtime_failure_classifier import RuntimeFailureClassifier
 from nethub_runtime.core.services.runtime_outcome_evaluator import RuntimeOutcomeEvaluator
 from nethub_runtime.core.services.runtime_repair_service import RuntimeRepairService
 from nethub_runtime.core.services.security_guard import SecurityGuard
+from nethub_runtime.core.services.runtime_design_synthesizer import RuntimeDesignSynthesizer
 from nethub_runtime.core.services.task_decomposer import TaskDecomposer
 from nethub_runtime.core.services.workflow_planner import WorkflowPlanner
 from nethub_runtime.core.utils.logger import get_logger
@@ -64,17 +65,21 @@ class AICore:
         self.security_guard = SecurityGuard()
         
         # ========== 注册表管理 ==========
-        self.model_registry = JsonRegistry(MODEL_REGISTRY_PATH)
-        self.blueprint_registry = JsonRegistry(BLUEPRINT_REGISTRY_PATH)
-        self.agent_registry = JsonRegistry(AGENT_REGISTRY_PATH)
+        self.static_model_registry = JsonRegistry(MODEL_REGISTRY_PATH)
+        self.static_blueprint_registry = JsonRegistry(BLUEPRINT_REGISTRY_PATH)
+        self.static_agent_registry = JsonRegistry(AGENT_REGISTRY_PATH)
+        self.model_registry = Registry()
+        self.blueprint_registry = Registry()
+        self.agent_registry = Registry()
         self.generated_artifact_store = GeneratedArtifactStore()
+        self.runtime_design_synthesizer = RuntimeDesignSynthesizer()
         
         # ========== 传统插件-based 服务 ==========
         self.intent_analyzer = IntentAnalyzer()
         self.task_decomposer = TaskDecomposer()
         self.workflow_planner = WorkflowPlanner()
-        self.blueprint_resolver = BlueprintResolver(registry=self.blueprint_registry)
-        self.blueprint_generator = BlueprintGenerator(registry=self.blueprint_registry)
+        self.blueprint_resolver = BlueprintResolver(registry=Registry())
+        self.blueprint_generator = BlueprintGenerator(registry=self.blueprint_registry, synthesizer=self.runtime_design_synthesizer)
         self.agent_designer = AgentDesigner()
         self.capability_router = CapabilityRouter()
 
@@ -86,6 +91,8 @@ class AICore:
                 model_config_path = Path("nethub_runtime/config/model_config.yaml")
             
             self.model_router = ModelRouter(str(model_config_path))
+            self.runtime_design_synthesizer = RuntimeDesignSynthesizer(model_router=self.model_router)
+            self.blueprint_generator.synthesizer = self.runtime_design_synthesizer
             self.logger.info("✓ LiteLLM Model Router initialized")
         except Exception as e:
             self.logger.warning(f"Failed to initialize ModelRouter: {e}, will use plugins only")
@@ -227,9 +234,9 @@ class AICore:
             处理结果
         """
         self.security_guard.validate_output_format(fmt)
-        self.model_registry.hot_reload()
-        self.blueprint_registry.hot_reload()
-        self.agent_registry.hot_reload()
+        self.static_model_registry.hot_reload()
+        self.static_blueprint_registry.hot_reload()
+        self.static_agent_registry.hot_reload()
         dependency_status = self.dependency_manager.check()
 
         ctx = self.context_manager.load(context)

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import json
 
 from nethub_runtime.core.schemas.task_schema import TaskSchema
 from nethub_runtime.core.services.core_engine import AICore
+from nethub_runtime.core.services import core_engine as core_engine_module
 
 
 class DummyAgent:
@@ -84,3 +86,31 @@ def test_core_engine_handle_agent_path() -> None:
     assert any(item["artifact_type"] == "trace" for item in artifacts)
     assert any(item["artifact_type"] == "agent" for item in result.get("artifact_index", {}).get("agent", []))
     assert any(item["artifact_type"] == "trace" for item in result.get("artifact_index", {}).get("trace", []))
+
+
+def test_runtime_agent_generation_does_not_persist_to_static_registry(tmp_path, monkeypatch) -> None:
+    model_registry_path = tmp_path / "models.json"
+    blueprint_registry_path = tmp_path / "blueprints.json"
+    agent_registry_path = tmp_path / "agents.json"
+    monkeypatch.setattr(core_engine_module, "MODEL_REGISTRY_PATH", model_registry_path)
+    monkeypatch.setattr(core_engine_module, "BLUEPRINT_REGISTRY_PATH", blueprint_registry_path)
+    monkeypatch.setattr(core_engine_module, "AGENT_REGISTRY_PATH", agent_registry_path)
+
+    core = AICore(model_config_path="nethub_runtime/config/model_config.yaml")
+    core.intent_analyzer.analyze = _fake_analyze
+    core.agent_builder.generate_agent_spec = _fake_generate_agent_spec
+    core.agent_builder.build_agent = _fake_build_agent
+
+    result = asyncio.run(
+        core.handle(
+            input_text="请使用agent执行",
+            context={"user_id": "u_agent_registry"},
+            fmt="dict",
+            use_langraph=True,
+        )
+    )
+
+    assert Path(result["agent"]["generated_artifact_path"]).exists()
+    assert json.loads(model_registry_path.read_text(encoding="utf-8")) == {}
+    assert json.loads(blueprint_registry_path.read_text(encoding="utf-8")) == {}
+    assert json.loads(agent_registry_path.read_text(encoding="utf-8")) == {}

@@ -48,7 +48,7 @@ class DefaultWorkflowPlannerPlugin:
             "tts_synthesize": (["input_text"], ["artifact_type", "status", "message"]),
             "image_generate": (["input_text"], ["artifact_type", "status"]),
             "video_generate": (["input_text"], ["artifact_type", "status"]),
-            "file_generate": (["input_text"], ["artifact_type", "status"]),
+            "file_generate": (["input_text"], ["artifact_type", "artifact_path", "status", "content"]),
             "web_retrieve": (["input_text"], ["artifact_type", "status"]),
             "web_summarize": (["web_content"], ["artifact_type", "status"]),
             "single_step": (["input_text"], ["message"]),

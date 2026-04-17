@@ -26,6 +26,28 @@
       "justMyCode": false
     },
     {
+      "name": "Run NestHub Debug Console",
+      "type": "python",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "nethub_runtime.tvbox.main:_create_app",
+        "--factory",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "7788",
+        "--reload"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "serverReadyAction": {
+        "pattern": "Uvicorn running on (https?://\\S+)",
+        "uriFormat": "%s/",
+        "action": "openExternally"
+      }
+    },
+    {
       "name": "Run AI Core API + Open Semantic Dashboard",
       "type": "python",
       "request": "launch",

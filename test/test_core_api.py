@@ -38,5 +38,37 @@ def test_core_handle_budget(isolated_generated_artifacts, budget_semantic_runtim
     assert any(item["artifact_type"] == "trace" for item in artifacts)
     assert any(item["artifact_type"] == "trace" for item in data.get("artifact_index", {}).get("trace", []))
 
+
+def test_core_handle_can_generate_html_file_from_language_instruction(isolated_generated_artifacts, monkeypatch):
+    workspace = Path.cwd()
+    target_dir = workspace / "tmp_test_outputs"
+    monkeypatch.chdir(workspace)
+    payload = {
+        "input_text": "帮我写一个 html 文件，内容是点击一个按钮 Submit 能执行一个 js，弹出 hello,world!，保存到 tmp_test_outputs/hello_world_button.html",
+        "context": {},
+        "output_format": "dict"
+    }
+
+    try:
+        resp = client.post("/core/handle", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()["result"]
+        assert data["task"]["intent"] == "file_generation_task"
+        file_output = data["execution_result"]["final_output"]["file_generate"]
+        target_path = Path(file_output["artifact_path"])
+        assert target_path.exists()
+        content = target_path.read_text(encoding="utf-8")
+        assert "<button id=\"submitButton\"" in content
+        assert 'alert("hello,world!")' in content
+        assert file_output["status"] == "generated"
+        assert any(item["artifact_type"] == "file" for item in data.get("artifacts", []))
+        assert any(item["artifact_type"] == "file" for item in data.get("artifact_index", {}).get("file", []))
+    finally:
+        if target_dir.exists():
+            for path in target_dir.glob("*"):
+                if path.is_file():
+                    path.unlink()
+            target_dir.rmdir()
+
 if __name__ == "__main__":
     test_core_handle_budget()
