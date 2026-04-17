@@ -1,5 +1,6 @@
 from typing import List, Dict, Optional
 from threading import Lock
+from datetime import UTC, datetime
 from api.public_api.models.bridge_message import BridgeMessage
 
 class MemoryStore:
@@ -20,8 +21,7 @@ class MemoryStore:
             msg = self._messages.get(bridge_message_id)
             if msg and msg.status == "pending":
                 msg.status = "claimed"
-                from datetime import datetime
-                msg.claimed_at = datetime.utcnow()
+                msg.claimed_at = datetime.now(UTC)
                 return msg
             return None
 
@@ -30,8 +30,7 @@ class MemoryStore:
             msg = self._messages.get(bridge_message_id)
             if msg and msg.status == "claimed":
                 msg.status = "completed"
-                from datetime import datetime
-                msg.completed_at = datetime.utcnow()
+                msg.completed_at = datetime.now(UTC)
                 msg.result = result
                 return msg
             return None

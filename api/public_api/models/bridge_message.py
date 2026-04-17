@@ -1,5 +1,5 @@
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import UTC, datetime
 from pydantic import BaseModel, Field
 
 class BridgeMessage(BaseModel):
@@ -11,7 +11,7 @@ class BridgeMessage(BaseModel):
     text: str
     raw_payload: Dict[str, Any]
     status: str = Field(default="pending")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     claimed_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     result: Optional[Dict[str, Any]] = None

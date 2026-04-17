@@ -65,6 +65,27 @@ pip install -r api/public_api/requirements.txt
 python -m api.public_api.main
 ```
 
+To connect LINE to NestHub through `public_api`, set these environment variables before starting `api.public_api`:
+
+```bash
+export NESTHUB_CORE_HANDLE_URL=http://127.0.0.1:8000/core/handle
+export LINE_CHANNEL_ACCESS_TOKEN=...
+export LINE_CHANNEL_SECRET=...
+```
+
+Then configure the LINE Messaging API webhook URL to:
+
+```bash
+https://<your-public-api-host>/api/bridge/im/inbound
+```
+
+Flow:
+
+1. LINE sends webhook to `public_api`.
+2. `public_api` verifies the LINE signature.
+3. `public_api` calls NestHub core through `NESTHUB_CORE_HANDLE_URL`.
+4. `public_api` replies to LINE with the NestHub result using `replyToken`, and falls back to push when needed.
+
 ## Railway Deployment For Public API
 
 If you deploy the public bridge on Railway, do not rely on Railway's default Python dependency detection, because it will pick the root `requirements.txt`.
