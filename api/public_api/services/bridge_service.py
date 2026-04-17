@@ -1,5 +1,6 @@
 import os
 import uuid
+import mimetypes
 from pathlib import Path
 from typing import Any
 
@@ -90,11 +91,13 @@ class BridgeService:
         if not isinstance(result, dict):
             return {"reply": "NestHub returned an invalid response."}
 
+        downloads = self.stage_result_downloads(result)
         reply = self._extract_reply_text(result)
         return {
             "reply": reply,
             "result": result,
             "artifacts": result.get("artifacts", []),
+            "downloads": downloads,
         }
 
     def build_public_download_url(self, file_id: str, file_name: str, base_url: str | None = None) -> str:
@@ -144,6 +147,37 @@ class BridgeService:
                         "artifact_type": artifact.get("artifact_type", "file"),
                         "artifact_id": artifact.get("artifact_id", path.stem),
                         "source": artifact.get("source", "runtime"),
+                    },
+                )
+            )
+        return downloads
+
+    def stage_result_downloads(self, result: dict[str, Any], base_url: str | None = None) -> list[dict[str, Any]]:
+        downloads = self.stage_local_result_artifacts(result.get("artifacts") or [], base_url=base_url)
+        if downloads:
+            return downloads
+
+        final_output = ((result.get("execution_result") or {}).get("final_output") or {}) if isinstance(result, dict) else {}
+        candidates = [
+            final_output.get("file_read") or {},
+            final_output.get("file_generate") or {},
+        ]
+        for payload in candidates:
+            file_name = str(payload.get("file_name") or "").strip()
+            content = payload.get("content")
+            if not file_name or not isinstance(content, str) or not content:
+                continue
+            content_type = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+            downloads.append(
+                self.stage_artifact_bytes(
+                    file_name=file_name,
+                    content=content.encode("utf-8"),
+                    content_type=content_type,
+                    base_url=base_url,
+                    metadata={
+                        "artifact_type": str(payload.get("artifact_type") or "file"),
+                        "artifact_id": str(Path(file_name).stem),
+                        "source": "inline_result_content",
                     },
                 )
             )
@@ -208,7 +242,7 @@ class BridgeService:
         downloads = result.get("downloads") or []
         if not isinstance(downloads, list) or not downloads:
             return reply_text or "收到您的消息！"
-        lines = [reply_text or "已为您准备下载链接：", ""]
+        lines = ["已为您准备下载链接："]
         for item in downloads:
             url = str(item.get("download_url") or "").strip()
             name = str(item.get("file_name") or "download").strip()

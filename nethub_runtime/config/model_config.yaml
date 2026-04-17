@@ -66,10 +66,11 @@ routing_policies:
     timeout_sec: 15
 
   task_planning:
-    primary: "ollama:qwen2.5:7b-instruct"
+    primary: "groq:llama-3.1-8b-instant"
     fallback:
-      - "groq:llama-3.1-8b-instant"
+      - "openai:gpt-4o-mini"
       - "claude:claude-3-5-sonnet-latest"
+      - "ollama:qwen2.5:7b-instruct"
     timeout_sec: 30
 
   code_generation:
@@ -146,9 +147,10 @@ routing_policies:
     timeout_sec: 20
 
   default:
-    primary: "ollama:qwen2.5:7b-instruct"
+    primary: "groq:llama-3.3-70b-versatile"
     fallback:
-      - "groq:llama-3.3-70b-versatile"
+      - "openai:gpt-4o-mini"
+      - "ollama:qwen2.5:7b-instruct"
     timeout_sec: 30
 
 model_params:
@@ -192,6 +194,7 @@ provider_policies:
     min_request_interval_ms: 0
     skip_unhealthy: true
     healthcheck_timeout_sec: 2
+    request_timeout_cap_sec: 8
 
 agent_config:
   reasoning:

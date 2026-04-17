@@ -378,6 +378,16 @@ class ModelRouter:
         policy = provider_policies.get(provider)
         return policy if isinstance(policy, dict) else {}
 
+    def _effective_timeout_sec(self, model_id: str, task_timeout_sec: float) -> float:
+        provider_policy = self._get_provider_policy(model_id)
+        provider_cap = provider_policy.get("request_timeout_cap_sec")
+        if provider_cap is None:
+            return task_timeout_sec
+        try:
+            return max(0.1, min(float(task_timeout_sec), float(provider_cap)))
+        except (TypeError, ValueError):
+            return task_timeout_sec
+
     def _to_litellm_model(self, model_id: str) -> str:
         """将 provider:model_name 规范转换为 litellm model 名。"""
         cfg = self.get_model_config(model_id)
@@ -455,6 +465,7 @@ class ModelRouter:
             retry_backoff_sec = float(provider_policy.get("retry_backoff_sec", 1.0))
             min_interval_ms = int(provider_policy.get("min_request_interval_ms", 0))
             litellm_model = self._to_litellm_model(model)
+            request_timeout_sec = self._effective_timeout_sec(model, timeout_sec)
 
             if not await self._candidate_is_ready(model, timeout_sec):
                 continue
@@ -470,7 +481,7 @@ class ModelRouter:
                     response = await acompletion(
                         model=litellm_model,
                         messages=messages,
-                        timeout=timeout_sec,
+                        timeout=request_timeout_sec,
                         api_base=model_config.get("base_url"),
                         api_key=model_config.get("api_key"),
                         **merged_params,

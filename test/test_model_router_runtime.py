@@ -75,3 +75,58 @@ def test_model_router_skips_unhealthy_ollama_candidate(monkeypatch) -> None:
     result = asyncio.run(router.invoke("test_ollama_fallback", "hello"))
 
     assert result == "ok"
+
+
+def test_model_router_caps_ollama_request_timeout(monkeypatch) -> None:
+    router = ModelRouter("nethub_runtime/config/model_config.yaml")
+    router.mock_llm_calls = False
+    router.model_cache = {
+        "ollama:qwen2.5:7b-instruct": {
+            "provider": "ollama",
+            "provider_type": "ollama",
+            "name": "qwen2.5:7b-instruct",
+            "base_url": "http://localhost:11434",
+            "api_key": None,
+        },
+        "groq:llama-3.1-8b-instant": {
+            "provider": "groq",
+            "provider_type": "groq",
+            "name": "llama-3.1-8b-instant",
+            "base_url": "https://api.groq.com/openai/v1",
+            "api_key": "test-key",
+        },
+    }
+    router.config["routing_policies"]["test_ollama_timeout_cap"] = {
+        "primary": "ollama:qwen2.5:7b-instruct",
+        "fallback": ["groq:llama-3.1-8b-instant"],
+        "timeout_sec": 30,
+    }
+
+    monkeypatch.setattr(router, "_ollama_is_healthy", AsyncMock(return_value=True))
+
+    seen_timeouts: list[float] = []
+
+    async def fake_acompletion(**kwargs):
+        seen_timeouts.append(float(kwargs["timeout"]))
+        if kwargs["model"] == "ollama/qwen2.5:7b-instruct":
+            raise TimeoutError("simulated ollama timeout")
+
+        class Message:
+            content = "ok"
+
+        class Choice:
+            message = Message()
+
+        class Response:
+            choices = [Choice()]
+
+        return Response()
+
+    monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+
+    result = asyncio.run(router.invoke("test_ollama_timeout_cap", "hello"))
+
+    assert result == "ok"
+    assert seen_timeouts[0] == 8.0
+    assert seen_timeouts[1] == 8.0
+    assert seen_timeouts[2] == 30.0

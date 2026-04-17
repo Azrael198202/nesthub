@@ -159,6 +159,52 @@ def test_line_reply_text_includes_download_links() -> None:
         }
     )
 
-    assert "文件已经准备好。" in text
+    assert "文件已经准备好。" not in text
     assert "hello_world_button.html" in text
     assert "https://public.example/api/temp-files/abc123/hello_world_button.html" in text
+
+
+def test_inline_invoke_stages_file_read_content_as_download(monkeypatch) -> None:
+    monkeypatch.setenv("NESTHUB_CORE_HANDLE_URL", "https://core.example/handle")
+    monkeypatch.setenv("NESTHUB_PUBLIC_API_BASE_URL", "https://public.example")
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "result": {
+                    "task": {"intent": "file_delivery_task"},
+                    "execution_result": {
+                        "final_output": {
+                            "file_read": {
+                                "artifact_type": "file",
+                                "file_name": "hello_world_button.html",
+                                "content": "<html>Hello</html>",
+                                "status": "read",
+                            }
+                        }
+                    },
+                    "artifacts": [],
+                }
+            }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("httpx.AsyncClient", lambda *args, **kwargs: FakeClient())
+
+    message = app.state.bridge_service.create_message("line", "U1", "U1", "M1", "把文件发给我", {})
+    result = __import__("asyncio").run(app.state.bridge_service._invoke_nesthub(message))
+
+    assert result["downloads"]
+    assert result["downloads"][0]["file_name"] == "hello_world_button.html"
+    assert result["downloads"][0]["download_url"].startswith("https://public.example/api/temp-files/")
