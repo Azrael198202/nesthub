@@ -10,9 +10,11 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from typing import Any, Optional
 from pathlib import Path
 
+import httpx
 import yaml
 
 from nethub_runtime.config.secrets import _maybe_load_dotenv
@@ -54,6 +56,7 @@ class ModelRouter:
         self.fallback_chain: dict[str, list[str]] = {}
         self.mock_llm_calls = False
         self._ollama_models: set[str] | None = None
+        self._ollama_health_cache: tuple[float, bool] | None = None
         self.local_model_manager = LocalModelManager()
 
         _maybe_load_dotenv()
@@ -244,6 +247,39 @@ class ModelRouter:
 
     def _resolve_ollama_base_url(self) -> str:
         return os.getenv("OLLAMA_HOST") or "http://localhost:11434"
+
+    async def _ollama_is_healthy(self, timeout_sec: float = 2.0) -> bool:
+        now = time.monotonic()
+        if self._ollama_health_cache and now - self._ollama_health_cache[0] < 5.0:
+            return self._ollama_health_cache[1]
+
+        healthy = False
+        try:
+            async with httpx.AsyncClient(timeout=timeout_sec) as client:
+                response = await client.get(f"{self._resolve_ollama_base_url().rstrip('/')}/api/tags")
+                healthy = response.status_code == 200
+        except Exception:
+            healthy = False
+
+        self._ollama_health_cache = (now, healthy)
+        return healthy
+
+    async def _candidate_is_ready(self, model_id: str, timeout_sec: float) -> bool:
+        cfg = self.get_model_config(model_id)
+        provider_type = str(cfg.get("provider_type", "")).lower()
+        if provider_type != "ollama":
+            return True
+
+        provider_policy = self._get_provider_policy(model_id)
+        if provider_policy.get("skip_unhealthy", True) is False:
+            return True
+
+        health_timeout = float(provider_policy.get("healthcheck_timeout_sec", min(timeout_sec, 2.0)))
+        if await self._ollama_is_healthy(timeout_sec=max(0.1, health_timeout)):
+            return True
+
+        LOGGER.warning("Skipping unavailable Ollama candidate %s", self._to_litellm_model(model_id))
+        return False
     
     def select_model(self, task_type: str) -> str:
         """
@@ -419,6 +455,9 @@ class ModelRouter:
             retry_backoff_sec = float(provider_policy.get("retry_backoff_sec", 1.0))
             min_interval_ms = int(provider_policy.get("min_request_interval_ms", 0))
             litellm_model = self._to_litellm_model(model)
+
+            if not await self._candidate_is_ready(model, timeout_sec):
+                continue
 
             LOGGER.debug("Invoking %s for %s", model, task_type)
             LOGGER.debug("Params: %s", merged_params)

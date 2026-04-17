@@ -70,5 +70,36 @@ def test_core_handle_can_generate_html_file_from_language_instruction(isolated_g
                     path.unlink()
             target_dir.rmdir()
 
+
+def test_core_handle_can_return_existing_file_content_from_language_instruction(isolated_generated_artifacts, monkeypatch):
+    workspace = Path.cwd()
+    target_dir = workspace / "tmp_test_outputs"
+    target_dir.mkdir(exist_ok=True)
+    target_path = target_dir / "hello_world_button.html"
+    target_path.write_text("<html><body>Hello existing file</body></html>", encoding="utf-8")
+    monkeypatch.chdir(workspace)
+    payload = {
+        "input_text": "把tmp_test_outputs/hello_world_button.html文件发给我",
+        "context": {},
+        "output_format": "dict"
+    }
+
+    try:
+        resp = client.post("/core/handle", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()["result"]
+        assert data["task"]["intent"] == "file_delivery_task"
+        file_output = data["execution_result"]["final_output"]["file_read"]
+        assert file_output["status"] == "read"
+        assert Path(file_output["artifact_path"]).resolve() == target_path.resolve()
+        assert "Hello existing file" in file_output["content"]
+        assert not (workspace / "把tmp_test_outputs/hello_world_button.html").exists()
+        assert any(item["artifact_type"] == "file" for item in data.get("artifacts", []))
+    finally:
+        if target_path.exists():
+            target_path.unlink()
+        if target_dir.exists():
+            target_dir.rmdir()
+
 if __name__ == "__main__":
     test_core_handle_budget()

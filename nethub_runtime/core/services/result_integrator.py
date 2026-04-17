@@ -133,6 +133,23 @@ class ResultIntegrator:
                 )
             )
 
+        file_read_output = final_output.get("file_read") or {}
+        file_read_path = file_read_output.get("artifact_path")
+        if file_read_path:
+            artifact_id = str(Path(str(file_read_path)).stem)
+            artifacts.append(
+                self._artifact_record(
+                    artifact_type=str(file_read_output.get("artifact_type") or "file"),
+                    artifact_id=artifact_id,
+                    path=str(file_read_path),
+                    source="workflow_file_delivery",
+                    metadata={
+                        "status": file_read_output.get("status", "read"),
+                        "storage": file_read_output.get("storage", "workspace"),
+                    },
+                )
+            )
+
         return artifacts
 
     def build_artifact_index(self, artifacts: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:

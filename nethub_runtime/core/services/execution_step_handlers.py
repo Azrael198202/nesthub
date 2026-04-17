@@ -143,10 +143,38 @@ def handle_file_generate_step(
     }
 
 
+def handle_file_read_step(
+    coordinator: Any,
+    _step: dict[str, Any],
+    task: TaskSchema,
+    _context: CoreContextSchema,
+    _step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    target_path = _resolve_existing_file_path(task.input_text)
+    if target_path is None:
+        return {
+            "artifact_type": "file",
+            "status": "not_found",
+            "message": "Requested file path was not found in the workspace.",
+            "content": "",
+        }
+
+    content = target_path.read_text(encoding="utf-8")
+    return {
+        "artifact_type": "file",
+        "artifact_path": str(target_path),
+        "status": "read",
+        "message": f"File content from {target_path}",
+        "content": content,
+        "file_name": target_path.name,
+        "storage": "workspace",
+    }
+
+
 def _resolve_requested_file_path(text: str) -> Path | None:
     patterns = [
-        r"(?:保存到|保存为|写入到|写到|输出到)\s*[:：]?\s*([\w./\\-]+\.[A-Za-z0-9]+)",
-        r"([\w./\\-]+\.(?:html?|js|css|json|md|txt|py|ya?ml))",
+        r"(?:保存到|保存为|写入到|写到|输出到)\s*[:：]?\s*([A-Za-z0-9_./\\-]+\.[A-Za-z0-9]+)",
+        r"([A-Za-z0-9_./\\-]+\.(?:html?|js|css|json|md|txt|py|ya?ml))",
     ]
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)
@@ -156,6 +184,24 @@ def _resolve_requested_file_path(text: str) -> Path | None:
         if not candidate:
             continue
         return Path(candidate).expanduser()
+    return None
+
+
+def _resolve_existing_file_path(text: str) -> Path | None:
+    match = re.search(r"([A-Za-z0-9_./\\-]+\.(?:html?|js|css|json|md|txt|py|ya?ml))", text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    candidate = match.group(1).strip().strip('"\'')
+    if not candidate:
+        return None
+    path = Path(candidate).expanduser()
+    candidates = [path]
+    if not path.is_absolute():
+        candidates.append((Path.cwd() / path).resolve())
+        candidates.append((Path(__file__).resolve().parents[3] / path).resolve())
+    for candidate_path in candidates:
+        if candidate_path.exists() and candidate_path.is_file():
+            return candidate_path
     return None
 
 

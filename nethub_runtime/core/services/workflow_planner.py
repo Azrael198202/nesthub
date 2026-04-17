@@ -28,7 +28,7 @@ class DefaultWorkflowPlannerPlugin:
             return "tool"
         if step_name in {"extract_records", "parse_query", "aggregate_query", "persist_records"}:
             return "tool"
-        if step_name in {"ocr_extract", "stt_transcribe", "tts_synthesize", "image_generate", "video_generate", "file_generate", "web_retrieve", "web_summarize"}:
+        if step_name in {"ocr_extract", "stt_transcribe", "tts_synthesize", "image_generate", "video_generate", "file_generate", "file_read", "web_retrieve", "web_summarize"}:
             return "tool"
         return "llm"
 
@@ -49,6 +49,7 @@ class DefaultWorkflowPlannerPlugin:
             "image_generate": (["input_text"], ["artifact_type", "status"]),
             "video_generate": (["input_text"], ["artifact_type", "status"]),
             "file_generate": (["input_text"], ["artifact_type", "artifact_path", "status", "content"]),
+            "file_read": (["input_text"], ["artifact_type", "artifact_path", "status", "content", "message"]),
             "web_retrieve": (["input_text"], ["artifact_type", "status"]),
             "web_summarize": (["web_content"], ["artifact_type", "status"]),
             "single_step": (["input_text"], ["message"]),

@@ -13,6 +13,7 @@ from nethub_runtime.core.services.execution_agent_handlers import (
 from nethub_runtime.core.services.execution_step_handlers import (
     handle_aggregate_query_step,
     handle_extract_records_step,
+    handle_file_read_step,
     handle_file_generate_step,
     handle_generate_workflow_artifact_step,
     handle_image_generate_step,
@@ -196,6 +197,7 @@ def build_execution_handler_registry(coordinator: Any) -> ExecutionHandlerRegist
     registry.register_step("tool", "image_generate", lambda step, task, context, step_outputs: handle_image_generate_step(coordinator, step, task, context, step_outputs))
     registry.register_step("tool", "video_generate", lambda step, task, context, step_outputs: handle_video_generate_step(coordinator, step, task, context, step_outputs))
     registry.register_step("tool", "file_generate", lambda step, task, context, step_outputs: handle_file_generate_step(coordinator, step, task, context, step_outputs))
+    registry.register_step("tool", "file_read", lambda step, task, context, step_outputs: handle_file_read_step(coordinator, step, task, context, step_outputs))
     registry.register_step("tool", "generate_workflow_artifact", lambda step, task, context, step_outputs: handle_generate_workflow_artifact_step(coordinator, step, task, context, step_outputs))
     registry.register_step("tool", "persist_workflow_output", lambda step, task, context, step_outputs: handle_persist_workflow_output_step(coordinator, step, task, context, step_outputs))
     registry.register_step("tool", "prepare_runtime_tools", lambda step, task, context, step_outputs: handle_prepare_runtime_tools_step(coordinator, step, task, context, step_outputs))

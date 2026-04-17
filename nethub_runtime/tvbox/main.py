@@ -178,9 +178,9 @@ def _create_app() -> Any:
             if final_answer:
                 return final_answer
         final_output = execution_result.get("final_output") or {}
-        for key in ("manage_information_agent", "query_information_knowledge", "file_generate", "generate_workflow_artifact", "single_step"):
+        for key in ("manage_information_agent", "query_information_knowledge", "file_read", "file_generate", "generate_workflow_artifact", "single_step"):
             payload = final_output.get(key) or {}
-            for field in ("message", "answer", "summary", "artifact_path"):
+            for field in ("content", "message", "answer", "summary", "artifact_path"):
                 value = str(payload.get(field) or "").strip()
                 if value:
                     return f"Generated artifact: {value}" if field == "artifact_path" else value

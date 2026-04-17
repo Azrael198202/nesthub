@@ -68,6 +68,19 @@ class SemanticIntentPlugin:
         metadata = context.metadata or {}
         input_type = str(metadata.get("input_type", "")).lower()
         lowered = text.lower()
+        file_delivery_markers = (
+            "发给我",
+            "发送给我",
+            "给我看",
+            "读取",
+            "打开",
+            "查看",
+            "展示",
+            "show me",
+            "send me",
+            "open file",
+            "read file",
+        )
         code_file_markers = (
             ".html",
             ".htm",
@@ -87,6 +100,9 @@ class SemanticIntentPlugin:
             "保存到",
             "保存为",
         )
+        explicit_path = re.search(r"([A-Za-z0-9_./\\-]+\.(?:html?|js|css|json|md|txt|py|ya?ml))", text, flags=re.IGNORECASE)
+        if explicit_path and any(marker in lowered for marker in file_delivery_markers):
+            return ("file_delivery_task", "multimodal_ops")
 
         if input_type in {"image", "screenshot"} or any(k in lowered for k in ("ocr", "识别图片", "图像文字", "票据识别")):
             return ("ocr_task", "multimodal_ops")
@@ -213,6 +229,8 @@ class SemanticIntentPlugin:
             output_requirements = ["artifact"]
             if intent == "file_generation_task":
                 output_requirements = ["artifact", "file"]
+            elif intent == "file_delivery_task":
+                output_requirements = ["text", "file"]
             self._remember_runtime_intent(
                 text,
                 intent=intent,

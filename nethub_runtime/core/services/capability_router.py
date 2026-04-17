@@ -42,6 +42,7 @@ class CapabilityRouter:
             "image_generate": "image_generation",
             "video_generate": "video_generation",
             "file_generate": "file_generation",
+            "file_read": "file_generation",
             "web_retrieve": "web_research",
             "web_summarize": "web_summary",
             "single_step": "planning",
@@ -55,7 +56,7 @@ class CapabilityRouter:
             return "agent"
         if step_name == "query_information_knowledge" or tool_name == "vector_store":
             return "knowledge_retrieval"
-        if step_name in {"generate_workflow_artifact", "persist_workflow_output"}:
+        if step_name in {"generate_workflow_artifact", "persist_workflow_output", "file_read"}:
             return "tool"
         if tool_name not in {"", "none"}:
             return "tool"
