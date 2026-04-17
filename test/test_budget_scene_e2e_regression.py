@@ -10,7 +10,7 @@ from nethub_runtime.core.main import app
 client = TestClient(app)
 
 
-def test_budget_scene_category_aggregation_e2e() -> None:
+def test_budget_scene_category_aggregation_e2e(isolated_generated_artifacts) -> None:
     session_id = f"budget-scene-{uuid.uuid4().hex}"
     record_payload = {
         "input_text": "今天打车花了80元。下午去医院买药花了35元。这个月交网费120元",
@@ -49,7 +49,7 @@ def test_budget_scene_category_aggregation_e2e() -> None:
     assert aggregation["total_amount"] == 235
 
 
-def test_budget_scene_generic_query_not_misclassified_e2e() -> None:
+def test_budget_scene_generic_query_not_misclassified_e2e(isolated_generated_artifacts) -> None:
     session_id = f"budget-scene-{uuid.uuid4().hex}"
     record_payload = {
         "input_text": "今天打车花了80元。下午去医院买药花了35元。这个月交网费120元",

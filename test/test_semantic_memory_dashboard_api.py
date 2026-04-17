@@ -8,7 +8,7 @@ from nethub_runtime.core.main import app
 client = TestClient(app)
 
 
-def test_semantic_memory_api_exposes_learning_rules() -> None:
+def test_semantic_memory_api_exposes_learning_rules(isolated_generated_artifacts) -> None:
     response = client.get("/core/admin/semantic-memory")
 
     assert response.status_code == 200

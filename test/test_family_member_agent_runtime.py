@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 from nethub_runtime.core.main import app
@@ -11,14 +10,7 @@ from nethub_runtime.core.main import app
 client = TestClient(app)
 
 
-@pytest.fixture(autouse=True)
-def isolate_generated_artifacts(tmp_path, monkeypatch) -> None:
-    generated_root = tmp_path / "generated_artifacts"
-    generated_root.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("NETHUB_GENERATED_ROOT", str(generated_root))
-
-
-def test_family_member_agent_creation_and_member_collection_flow() -> None:
+def test_family_member_agent_creation_and_member_collection_flow(isolated_generated_artifacts) -> None:
     session_id = "family-member-agent-flow"
 
     create_response = client.post(
@@ -125,7 +117,7 @@ def test_family_member_agent_creation_and_member_collection_flow() -> None:
     assert "generated_artifacts" in str(trace_path)
 
 
-def test_family_member_agent_can_answer_saved_phone_query() -> None:
+def test_family_member_agent_can_answer_saved_phone_query(isolated_generated_artifacts) -> None:
     session_id = "family-member-agent-query"
     inputs = [
         "帮我创建家庭成员的智能体",

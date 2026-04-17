@@ -12,6 +12,18 @@
         "clear": true
       },
       "problemMatcher": []
+    },
+    {
+      "label": "regression: isolated api runtime",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/run_isolated_runtime_regression.sh",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
     }
   ]
 }

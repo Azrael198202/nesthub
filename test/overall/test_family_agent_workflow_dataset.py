@@ -94,7 +94,7 @@ def _assertions_for(step_name: str, response_data: dict[str, Any], assertions: l
 
 
 @pytest.mark.parametrize("scenario", ACTIVE_SCENARIOS, ids=[item["id"] for item in ACTIVE_SCENARIOS])
-def test_family_agent_workflow_active_scenarios(scenario: dict[str, Any]) -> None:
+def test_family_agent_workflow_active_scenarios(scenario: dict[str, Any], isolated_generated_artifacts) -> None:
     session_id = f"overall-{scenario['session_key']}-{uuid.uuid4().hex}"
     for step in scenario.get("steps", []):
         response_data = _run_step(step, session_id, DATASET.get("defaults", {}), DATASET["metadata"]["transport"])
