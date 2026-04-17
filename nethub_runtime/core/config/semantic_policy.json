@@ -20,189 +20,11 @@
         "我",
         "我个人",
         "本人"
-      ],
-      "food_and_drink": [
-        "餐饮",
-        "吃饭",
-        "咖啡",
-        "拉面"
-      ],
-      "shopping": [
-        "购物",
-        "买",
-        "超市",
-        "书"
-      ],
-      "entertainment": [
-        "娱乐",
-        "电影",
-        "游戏"
-      ],
-      "transportation": [
-        "交通",
-        "打车",
-        "地铁",
-        "公交",
-        "高铁",
-        "加油",
-        "停车"
-      ],
-      "housing": [
-        "房租",
-        "租房",
-        "房贷",
-        "物业",
-        "住宿"
-      ],
-      "utilities": [
-        "水电",
-        "电费",
-        "水费",
-        "燃气",
-        "网费",
-        "话费"
-      ],
-      "healthcare": [
-        "医疗",
-        "医院",
-        "药店",
-        "看病",
-        "体检",
-        "买药"
-      ],
-      "education": [
-        "教育",
-        "学费",
-        "培训",
-        "课程",
-        "考试",
-        "辅导"
-      ],
-      "travel": [
-        "旅行",
-        "旅游",
-        "酒店",
-        "机票",
-        "景点",
-        "度假"
       ]
     }
   },
   "semantic_label_threshold": 0.2,
   "semantic_label_margin": 0.08,
-  "label_taxonomy": {
-    "food_and_drink": {
-      "description": "expense related to dining, meals, beverages, cafes, restaurants, noodles, lunch, dinner, drinks and consumption of food; 与外出就餐、饮品消费、咖啡店、面馆、餐馆、聚餐、早餐午餐晚餐相关的支出",
-      "examples": [
-        "restaurant meal",
-        "coffee beverage",
-        "ramen shop dining",
-        "breakfast lunch dinner snack",
-        "外出吃饭消费",
-        "咖啡茶饮支出",
-        "拉面店就餐",
-        "餐馆堂食或外卖"
-      ]
-    },
-    "shopping": {
-      "description": "expense related to purchasing goods, supermarket items, books, daily necessities, retail shopping and merchandise; 与购买商品、超市采购、日用品、书籍、零售购物相关的支出",
-      "examples": [
-        "supermarket purchase",
-        "buy book",
-        "shopping mall retail",
-        "daily goods groceries",
-        "超市购物",
-        "购买日用品",
-        "商场零售消费"
-      ]
-    },
-    "entertainment": {
-      "description": "expense related to movies, games, leisure, tickets, performances and entertainment activities; 与电影、游戏、门票、演出、休闲娱乐活动相关的支出",
-      "examples": [
-        "movie ticket",
-        "game purchase",
-        "concert leisure",
-        "entertainment activity",
-        "电影票",
-        "演出门票",
-        "休闲娱乐消费"
-      ]
-    },
-    "transportation": {
-      "description": "expense related to transportation, taxi, subway, bus, train tickets, fuel, parking and commuting; 与打车、地铁、公交、高铁、火车票、加油、停车、通勤相关的支出",
-      "examples": [
-        "taxi fare",
-        "subway ticket",
-        "gas station fuel",
-        "parking fee",
-        "打车费用",
-        "地铁通勤支出",
-        "加油站油费",
-        "停车场费用"
-      ]
-    },
-    "housing": {
-      "description": "expense related to rent, mortgage, property management, accommodation and housing costs; 与房租、房贷、物业费、住宿、住房成本相关的支出",
-      "examples": [
-        "monthly rent",
-        "mortgage payment",
-        "property management fee",
-        "apartment accommodation",
-        "房租支出",
-        "物业管理费",
-        "住宿费用"
-      ]
-    },
-    "utilities": {
-      "description": "expense related to electricity, water, gas, internet, mobile phone bills and household utilities; 与电费、水费、燃气费、网费、话费等家庭公共事业相关的支出",
-      "examples": [
-        "electricity bill",
-        "water bill",
-        "gas bill",
-        "internet subscription",
-        "电费账单",
-        "水费支出",
-        "家庭网费",
-        "手机话费"
-      ]
-    },
-    "healthcare": {
-      "description": "expense related to hospitals, clinics, medicine, checkups, treatment and healthcare services; 与医院、门诊、买药、体检、治疗、医疗服务相关的支出",
-      "examples": [
-        "hospital visit",
-        "medicine purchase",
-        "health checkup",
-        "clinic treatment",
-        "医院挂号费用",
-        "药店买药",
-        "体检支出"
-      ]
-    },
-    "education": {
-      "description": "expense related to tuition, training courses, books for study, exams and education services; 与学费、培训课程、考试报名、学习资料、教育服务相关的支出",
-      "examples": [
-        "tuition fee",
-        "training course payment",
-        "exam registration",
-        "study materials",
-        "培训班学费",
-        "考试报名费",
-        "课程费用"
-      ]
-    },
-    "travel": {
-      "description": "expense related to travel, hotels, flights, scenic spots, vacations and tourism services; 与旅游、酒店、机票、景点门票、度假出行相关的支出",
-      "examples": [
-        "hotel booking",
-        "flight ticket",
-        "vacation travel",
-        "scenic spot ticket",
-        "酒店住宿",
-        "机票费用",
-        "旅行度假支出"
-      ]
-    }
-  },
   "entity_aliases": {
     "actor": {
       "self": [
@@ -212,11 +34,11 @@
       ],
       "家人": [
         "家人",
-        "家庭"
+        "家庭成员"
       ],
       "朋友": [
         "朋友",
-        "同事"
+        "好友"
       ]
     }
   },
@@ -224,57 +46,58 @@
     "多少",
     "一共",
     "总额",
-    "消费",
-    "花了",
     "是多少",
     "吗"
   ],
+  "label_taxonomy": {
+    "transportation": {
+      "description": "travel and transportation expenses",
+      "examples": [
+        "打车",
+        "出租车",
+        "地铁",
+        "公交",
+        "车费",
+        "机场"
+      ]
+    },
+    "healthcare": {
+      "description": "healthcare and medicine expenses",
+      "examples": [
+        "医院",
+        "看病",
+        "买药",
+        "药店",
+        "诊所"
+      ]
+    },
+    "utilities": {
+      "description": "utility and network expenses",
+      "examples": [
+        "网费",
+        "水费",
+        "电费",
+        "燃气费"
+      ]
+    }
+  },
   "record_type_rules": {
-    "expense": {
+    "schedule": {
+      "require_time": true,
+      "required_any": [
+        "去",
+        "前往",
+        "开会",
+        "安排",
+        "日程"
+      ]
+    },
+    "generic": {
       "default": true,
       "default_label": "other"
-    },
-    "schedule": {
-      "required_any": [
-        "安排",
-        "开会",
-        "远足",
-        "出差",
-        "上课",
-        "去",
-        "行程",
-        "会议",
-        "计划"
-      ],
-      "reject_any": [
-        "花了",
-        "消费",
-        "买了",
-        "支出",
-        "费用",
-        "元",
-        "日元",
-        "円",
-        "￥",
-        "$"
-      ],
-      "require_time": true,
-      "default_amount": 0,
-      "default_label": "schedule"
     }
   },
-  "query_metric_rules": {
-    "list": {
-      "required_any": [
-        "安排",
-        "日程",
-        "行程",
-        "计划",
-        "有什么"
-      ],
-      "requires_record_type": "schedule"
-    }
-  },
+  "query_metric_rules": {},
   "segment_split_patterns": [
     "[。；;\\n]",
     "还有",
@@ -305,30 +128,98 @@
     "按类别": "label",
     "按地点": "location",
     "按人员": "actor",
-    "按人": "actor"
+    "按人": "actor",
+    "by time": "time",
+    "by label": "label",
+    "by location": "location",
+    "by actor": "actor"
+  },
+  "actor_extract_patterns": [
+    "^(?:记录|添加|保存)?([\\u4e00-\\u9fffA-Za-z]{2,4})(?=今天|昨天|本周|下周|\\d{1,2}月\\d{1,2}[号日]|去|到|前往)",
+    "^([A-Za-z][A-Za-z0-9_-]{1,20})(?=\\s+\\d{4}-\\d{2}-\\d{2}|\\s+\\d{1,2}/\\d{1,2})"
+  ],
+  "explicit_date_patterns": [
+    {
+      "pattern": "(\\d{1,2})月(\\d{1,2})[号日]",
+      "month_group": 1,
+      "day_group": 2
+    },
+    {
+      "pattern": "(\\d{4})-(\\d{2})-(\\d{2})",
+      "year_group": 1,
+      "month_group": 2,
+      "day_group": 3
+    }
+  ],
+  "relative_week_rules": [
+    {
+      "pattern": "本周([一二三四五六日天])",
+      "weekday_group": 1,
+      "weekday_map": {
+        "一": 0,
+        "二": 1,
+        "三": 2,
+        "四": 3,
+        "五": 4,
+        "六": 5,
+        "日": 6,
+        "天": 6
+      },
+      "week_start": "monday"
+    }
+  ],
+  "boolean_aliases": {
+    "truthy": [
+      "是",
+      "参与",
+      "需要",
+      "yes",
+      "true",
+      "y",
+      "1"
+    ],
+    "falsy": [
+      "否",
+      "不",
+      "no",
+      "false",
+      "n",
+      "0"
+    ]
   },
   "model_semantic_parser": {
     "enabled": true,
     "prefer_model_for_query_parsing": true,
     "prefer_model_for_record_extraction": true,
-    "strict_schema_validation": true
+    "strict_schema_validation": true,
+    "router": "litellm",
+    "task_types": {
+      "record_extraction": "semantic_parsing",
+      "query_parsing": "semantic_parsing",
+      "aggregation": "semantic_aggregation",
+      "policy_learning": "semantic_learning",
+      "labeling": "semantic_labeling"
+    }
   },
   "time_marker_rules": {
     "today": {
       "aliases": [
         "今天",
-        "今日"
+        "今日",
+        "today"
       ],
       "match_mode": "same_day",
       "record_aliases": [
         "今天",
-        "今日"
+        "今日",
+        "today"
       ]
     },
     "current_month": {
       "aliases": [
         "这个月",
-        "本月"
+        "本月",
+        "this month"
       ],
       "match_mode": "same_month",
       "record_aliases": [
@@ -336,17 +227,21 @@
         "今日",
         "这个月",
         "本月",
+        "today",
+        "this month",
         "unspecified"
       ]
     },
     "previous_week": {
       "aliases": [
         "上周",
-        "上周末"
+        "上周末",
+        "last week"
       ],
       "match_mode": "prefix",
       "prefixes": [
-        "上周"
+        "上周",
+        "last week"
       ]
     }
   },
@@ -385,13 +280,21 @@
         "统计",
         "查询",
         "花了",
-        "消费",
         "今天",
         "这个月",
         "上周",
         "类别",
         "地点",
-        "人员"
+        "人员",
+        "total",
+        "count",
+        "query",
+        "today",
+        "this month",
+        "last week",
+        "label",
+        "location",
+        "actor"
       ],
       "reject_existing_conflicts": true
     },
@@ -402,7 +305,7 @@
     }
   },
   "external_semantic_router": {
-    "enabled": true,
+    "enabled": false,
     "provider_priority": [
       "openai",
       "claude"

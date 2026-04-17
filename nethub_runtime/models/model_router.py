@@ -8,12 +8,26 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import subprocess
+import sys
 from typing import Any, Optional
 from pathlib import Path
 
 import yaml
 
+from nethub_runtime.config.secrets import _maybe_load_dotenv
+from nethub_runtime.models.local_model_manager import LocalModelManager
+
 LOGGER = logging.getLogger("nethub_runtime.models")
+
+
+def _running_under_pytest() -> bool:
+    if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("PYTEST_VERSION"):
+        return True
+    argv = " ".join(sys.argv).lower()
+    if "pytest" in argv or any("pytest" in str(name).lower() for name in sys.modules):
+        return True
+    return False
 
 
 class ModelRouter:
@@ -39,6 +53,10 @@ class ModelRouter:
         self.model_cache: dict[str, dict[str, Any]] = {}
         self.fallback_chain: dict[str, list[str]] = {}
         self.mock_llm_calls = False
+        self._ollama_models: set[str] | None = None
+        self.local_model_manager = LocalModelManager()
+
+        _maybe_load_dotenv()
         
         self._load_config()
         self._initialize_models()
@@ -50,6 +68,8 @@ class ModelRouter:
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     self.config = yaml.safe_load(f) or {}
                 self.mock_llm_calls = bool(self.config.get("development", {}).get("mock_llm_calls", False))
+                if _running_under_pytest() and os.getenv("NETHUB_ENABLE_LIVE_MODELS_IN_TESTS", "").lower() not in {"1", "true", "yes", "on"}:
+                    self.mock_llm_calls = True
                 LOGGER.info(f"✓ Model config loaded from {self.config_path}")
             else:
                 LOGGER.warning(f"⚠ Config file not found: {self.config_path}, using empty config")
@@ -90,6 +110,10 @@ class ModelRouter:
             if base_url.rstrip("/") == "https://api.groq.com":
                 base_url = "https://api.groq.com/openai/v1"
 
+        if not self._provider_is_usable(normalized_type, api_key):
+            LOGGER.info("Skipping provider %s (%s): missing runtime credentials or local availability", provider_key, normalized_type)
+            return
+
         try:
             LOGGER.info("Initializing provider: %s (%s)", provider_key, normalized_type)
             for model in models:
@@ -100,6 +124,9 @@ class ModelRouter:
                     continue
 
                 model_name = str(model_cfg.get("name"))
+                if normalized_type == "ollama" and not self._ollama_model_exists(model_name):
+                    LOGGER.info("Skipping Ollama model not installed locally: %s", model_name)
+                    continue
                 model_id = f"{provider_key}:{model_name}"
                 self.model_cache[model_id] = {
                     "provider": provider_key,
@@ -134,6 +161,89 @@ class ModelRouter:
             env_name = value[2:-1].strip()
             return os.getenv(env_name)
         return value
+
+    def _provider_is_usable(self, provider_type: str, api_key: str | None) -> bool:
+        if provider_type == "ollama":
+            return bool(self._get_ollama_models())
+        return bool(api_key)
+
+    def _get_ollama_models(self) -> set[str]:
+        if self._ollama_models is not None:
+            return self._ollama_models
+        try:
+            completed = subprocess.run(
+                ["ollama", "list"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except Exception as exc:
+            LOGGER.info("Ollama is unavailable: %s", exc)
+            self._ollama_models = set()
+            return self._ollama_models
+
+        models: set[str] = set()
+        for line in completed.stdout.splitlines()[1:]:
+            parts = line.split()
+            if parts:
+                models.add(parts[0].strip())
+        self._ollama_models = models
+        return models
+
+    def _ollama_model_exists(self, model_name: str) -> bool:
+        return model_name in self._get_ollama_models()
+
+    def recommend_downloadable_local_models(self, task_type: str, query: str = "", limit: int = 5) -> list[dict[str, Any]]:
+        return self.local_model_manager.recommend_huggingface_models(task_type=task_type, query=query, limit=limit)
+
+    def install_downloadable_local_model(
+        self,
+        *,
+        task_type: str,
+        repo_id: str | None = None,
+        query: str = "",
+        alias: str | None = None,
+        filename_pattern: str | None = None,
+        set_as_fallback_for: str | None = None,
+    ) -> dict[str, Any]:
+        installed = self.local_model_manager.install_huggingface_model(
+            task_type=task_type,
+            repo_id=repo_id,
+            query=query,
+            alias=alias,
+            filename_pattern=filename_pattern,
+        )
+        model_name = str(installed.get("model_name") or "").strip()
+        if not model_name:
+            raise RuntimeError("Installed local model did not return a usable model_name")
+        self._ollama_models = None
+        self._register_dynamic_ollama_model(model_name)
+        if set_as_fallback_for:
+            self._append_fallback_model(set_as_fallback_for, f"ollama:{model_name}")
+        return installed
+
+    def _register_dynamic_ollama_model(self, model_name: str) -> None:
+        model_id = f"ollama:{model_name}"
+        self.model_cache[model_id] = {
+            "provider": "ollama",
+            "provider_type": "ollama",
+            "name": model_name,
+            "base_url": self._resolve_ollama_base_url(),
+            "api_key": None,
+            "enabled": True,
+            "source": "huggingface_local_import",
+        }
+
+    def _append_fallback_model(self, task_type: str, model_id: str) -> None:
+        policies = self.config.setdefault("routing_policies", {})
+        routing = policies.setdefault(task_type, {})
+        fallback = routing.setdefault("fallback", [])
+        if model_id not in fallback:
+            fallback.append(model_id)
+
+    def _resolve_ollama_base_url(self) -> str:
+        return os.getenv("OLLAMA_HOST") or "http://localhost:11434"
     
     def select_model(self, task_type: str) -> str:
         """
@@ -145,32 +255,57 @@ class ModelRouter:
         Returns:
             选中的模型名称 (provider/model_name)
         """
-        policies = self.config.get("routing_policies", {})
-        routing = policies.get(task_type)
-        
-        if not routing:
-            # 使用默认路由
-            default_routing = policies.get("default") or policies.get("general_chat", {})
-            routing = default_routing
-        
-        if not routing:
-            return self._get_any_available_model()
-        
-        primary = routing.get("primary", "")
-        
-        # 检查primary是否可用
-        if self._is_model_available(primary):
-            LOGGER.info(f"✓ Selected primary model for {task_type}: {primary}")
-            return primary
-        
-        # 尝试fallback
-        for fallback_model in routing.get("fallback", []):
-            if self._is_model_available(fallback_model):
-                LOGGER.info(f"⚠ Fallback to {fallback_model} for {task_type}")
-                return fallback_model
-        
+        candidates = self.get_candidate_models(task_type)
+        if candidates:
+            selected = candidates[0]
+            LOGGER.info("✓ Selected model for %s: %s", task_type, selected)
+            return selected
+
         LOGGER.warning(f"No model available for task: {task_type}, using any available")
         return self._get_any_available_model()
+
+    def get_candidate_models(self, task_type: str) -> list[str]:
+        policies = self.config.get("routing_policies", {})
+        routing = policies.get(task_type)
+
+        if not routing:
+            routing = policies.get("default") or policies.get("general_chat", {})
+
+        if not routing:
+            any_model = self._get_any_available_model()
+            return [] if any_model == "unknown" else [any_model]
+
+        ordered_models = [routing.get("primary", ""), *routing.get("fallback", [])]
+        candidates: list[str] = []
+        for model_id in ordered_models:
+            if model_id and self._is_model_available(model_id) and model_id not in candidates:
+                candidates.append(model_id)
+        if not candidates:
+            auto_provisioned = self._auto_provision_local_model(task_type)
+            if auto_provisioned and auto_provisioned not in candidates:
+                candidates.append(auto_provisioned)
+        return candidates
+
+    def _auto_provision_local_model(self, task_type: str) -> str | None:
+        cfg = self.config.get("local_model_management", {})
+        if not isinstance(cfg, dict) or not cfg.get("enabled", False) or not cfg.get("auto_download_from_huggingface", False):
+            return None
+        if task_type.startswith("test_") or _running_under_pytest():
+            return None
+
+        preferred_queries = cfg.get("preferred_queries", {}) if isinstance(cfg.get("preferred_queries", {}), dict) else {}
+        query = str(preferred_queries.get(task_type) or preferred_queries.get("default") or task_type).strip()
+        try:
+            installed = self.install_downloadable_local_model(
+                task_type=task_type,
+                query=query,
+                set_as_fallback_for=task_type,
+            )
+        except Exception as exc:
+            LOGGER.warning("Auto-provision local model failed for %s: %s", task_type, exc)
+            return None
+        model_name = str(installed.get("model_name") or "").strip()
+        return f"ollama:{model_name}" if model_name else None
     
     def _is_model_available(self, model_id: str) -> bool:
         """检查模型是否可用"""
@@ -246,27 +381,18 @@ class ModelRouter:
         Returns:
             模型响应
         """
-        model = self.select_model(task_type)
-        model_config = self.get_model_config(model)
         task_params = self.get_model_params(task_type)
         timeout_sec = (
             self.config.get("routing_policies", {}).get(task_type, {}).get("timeout_sec")
             or self.config.get("routing_policies", {}).get("default", {}).get("timeout_sec")
             or 30
         )
-        provider_policy = self._get_provider_policy(model)
-        max_retries = int(provider_policy.get("max_retries", 1))
-        retry_backoff_sec = float(provider_policy.get("retry_backoff_sec", 1.0))
-        min_interval_ms = int(provider_policy.get("min_request_interval_ms", 0))
-        
         # 合并参数
         merged_params = {**task_params}
         merged_params.update(kwargs)
-        
-        LOGGER.debug(f"Invoking {model} for {task_type}")
-        LOGGER.debug(f"Params: {merged_params}")
 
         if self.mock_llm_calls:
+            model = self.select_model(task_type)
             LOGGER.info("mock_llm_calls enabled, returning mock response for %s", model)
             return f"Model response (mock): {prompt[:80]}..."
         
@@ -275,43 +401,59 @@ class ModelRouter:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        litellm_model = self._to_litellm_model(model)
         try:
             from litellm import acompletion
         except ImportError:
             LOGGER.warning("litellm is not installed, using mock response")
             return f"Model response (mock): {prompt[:50]}..."
 
+        candidates = self.get_candidate_models(task_type)
+        if not candidates:
+            raise RuntimeError(f"No available models configured for task_type={task_type}")
+
         last_exc: Exception | None = None
-        for attempt in range(max_retries + 1):
-            try:
-                if min_interval_ms > 0:
-                    await asyncio.sleep(min_interval_ms / 1000.0)
+        for model in candidates:
+            model_config = self.get_model_config(model)
+            provider_policy = self._get_provider_policy(model)
+            max_retries = int(provider_policy.get("max_retries", 1))
+            retry_backoff_sec = float(provider_policy.get("retry_backoff_sec", 1.0))
+            min_interval_ms = int(provider_policy.get("min_request_interval_ms", 0))
+            litellm_model = self._to_litellm_model(model)
 
-                response = await acompletion(
-                    model=litellm_model,
-                    messages=messages,
-                    timeout=timeout_sec,
-                    api_base=model_config.get("base_url"),
-                    api_key=model_config.get("api_key"),
-                    **merged_params,
-                )
-                return response.choices[0].message.content or ""
-            except Exception as exc:
-                last_exc = exc
-                if attempt >= max_retries:
+            LOGGER.debug("Invoking %s for %s", model, task_type)
+            LOGGER.debug("Params: %s", merged_params)
+
+            for attempt in range(max_retries + 1):
+                try:
+                    if min_interval_ms > 0:
+                        await asyncio.sleep(min_interval_ms / 1000.0)
+
+                    response = await acompletion(
+                        model=litellm_model,
+                        messages=messages,
+                        timeout=timeout_sec,
+                        api_base=model_config.get("base_url"),
+                        api_key=model_config.get("api_key"),
+                        **merged_params,
+                    )
+                    return response.choices[0].message.content or ""
+                except Exception as exc:
+                    last_exc = exc
+                    if attempt < max_retries:
+                        wait_sec = retry_backoff_sec * (2**attempt)
+                        LOGGER.warning(
+                            "Model invoke retrying (%s) attempt=%s wait=%.2fs error=%s",
+                            litellm_model,
+                            attempt + 1,
+                            wait_sec,
+                            exc,
+                        )
+                        await asyncio.sleep(wait_sec)
+                        continue
+                    LOGGER.warning("Model invoke failed for candidate %s: %s", litellm_model, exc)
                     break
-                wait_sec = retry_backoff_sec * (2**attempt)
-                LOGGER.warning(
-                    "Model invoke retrying (%s) attempt=%s wait=%.2fs error=%s",
-                    litellm_model,
-                    attempt + 1,
-                    wait_sec,
-                    exc,
-                )
-                await asyncio.sleep(wait_sec)
 
-        LOGGER.error("Model invoke failed (%s): %s", litellm_model, last_exc)
+        LOGGER.error("Model invoke failed for task %s: %s", task_type, last_exc)
         raise last_exc or RuntimeError("Model invoke failed")
     
     def list_available_models(self) -> list[str]:

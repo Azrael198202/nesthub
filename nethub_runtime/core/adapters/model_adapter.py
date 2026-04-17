@@ -34,13 +34,33 @@ class ModelRouter:
 
     def _load_local_registry(self) -> set[str]:
         if not self.local_registry_path.exists():
-            self.local_registry_path.write_text(json.dumps({"models": []}, indent=2), encoding="utf-8")
+            self.local_registry_path.write_text(json.dumps({"models": [], "ollama_models": {}, "huggingface_models": {}}, indent=2), encoding="utf-8")
             return set()
         payload = json.loads(self.local_registry_path.read_text(encoding="utf-8"))
-        return {item.lower() for item in payload.get("models", [])}
+        if not isinstance(payload, dict):
+            payload = {"models": []}
+        registry_models = {str(item).lower() for item in payload.get("models", []) if str(item).strip()}
+        discovered_models = self._discover_ollama_models()
+        combined = registry_models | {item.lower() for item in discovered_models}
+        if combined != registry_models:
+            payload["models"] = sorted(combined)
+            ollama_metadata = payload.setdefault("ollama_models", {})
+            for model_name in sorted(discovered_models):
+                ollama_metadata.setdefault(model_name, {"provider": "ollama", "source": "ollama_list"})
+            self.local_registry_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return combined
 
     def _save_local_registry(self) -> None:
-        self.local_registry_path.write_text(json.dumps({"models": sorted(self._local_registry)}, ensure_ascii=False, indent=2), encoding="utf-8")
+        payload = {"models": sorted(self._local_registry), "ollama_models": {}, "huggingface_models": {}}
+        for model_name in sorted(self._local_registry):
+            payload["ollama_models"][model_name] = {"provider": "ollama", "source": "registry_sync"}
+        self.local_registry_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _discover_ollama_models(self) -> set[str]:
+        try:
+            return {item.lower() for item in self._ollama_provider.list_models()}
+        except Exception:
+            return set()
 
     def route(self, task_kind: str) -> dict[str, str]:
         candidates = self.policy.get("task_mapping", {}).get(task_kind) or self.policy.get("task_mapping", {}).get("routing", [])

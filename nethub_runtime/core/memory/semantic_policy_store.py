@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -288,6 +289,247 @@ class SemanticPolicyStore:
             "recent_versions": [dict(row) for row in version_rows],
         }
 
+    def get_profile_signal(self, request_text: str) -> dict[str, Any] | None:
+        normalized_request = self._normalize_candidate_value({"request_text": request_text.strip().lower()})
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT value_json
+                FROM semantic_policy_candidates
+                WHERE policy_key = 'profile_signals' AND normalized_value = ? AND status IN ('candidate', 'active')
+                ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, updated_at DESC
+                LIMIT 1
+                """,
+                (normalized_request,),
+            ).fetchone()
+        if not row:
+            return None
+        payload = json.loads(row[0])
+        return payload if isinstance(payload, dict) else None
+
+    def record_profile_signal(
+        self,
+        request_text: str,
+        signal_payload: dict[str, Any],
+        *,
+        confidence: float,
+        source: str,
+        evidence: str = "",
+    ) -> None:
+        if not isinstance(signal_payload, dict) or not request_text.strip():
+            return
+        normalized_request = self._normalize_candidate_value({"request_text": request_text.strip().lower()})
+        now = datetime.now(UTC).isoformat()
+        payload_json = json.dumps(signal_payload, ensure_ascii=False, sort_keys=True)
+        metadata = json.dumps({"request_text": request_text}, ensure_ascii=False, sort_keys=True)
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT id, hit_count, confidence, status
+                FROM semantic_policy_candidates
+                WHERE policy_key = 'profile_signals' AND normalized_value = ?
+                """,
+                (normalized_request,),
+            ).fetchone()
+            if row:
+                conn.execute(
+                    """
+                    UPDATE semantic_policy_candidates
+                    SET value_json = ?, confidence = ?, hit_count = ?, source = ?, evidence = ?, metadata_json = ?,
+                        status = CASE WHEN status = 'rolled_back' THEN 'candidate' ELSE status END,
+                        last_seen_at = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        payload_json,
+                        max(float(row[2] or 0.0), float(confidence)),
+                        int(row[1] or 0) + 1,
+                        source,
+                        evidence,
+                        metadata,
+                        now,
+                        now,
+                        int(row[0]),
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO semantic_policy_candidates(
+                        policy_key, value_json, normalized_value, confidence, hit_count, status,
+                        source, evidence, metadata_json, failure_count, activated_at, first_seen_at, last_seen_at, updated_at
+                    ) VALUES ('profile_signals', ?, ?, ?, ?, 'candidate', ?, ?, ?, 0, NULL, ?, ?, ?)
+                    """,
+                    (
+                        payload_json,
+                        normalized_request,
+                        float(confidence),
+                        1,
+                        source,
+                        evidence,
+                        metadata,
+                        now,
+                        now,
+                        now,
+                    ),
+                )
+            conn.commit()
+
+    def match_intent_knowledge(self, request_text: str, *, min_score: float = 0.6) -> dict[str, Any] | None:
+        normalized_text = " ".join(request_text.strip().split()).lower()
+        if not normalized_text:
+            return None
+        normalized_request = self._normalize_candidate_value({"request_text": normalized_text})
+        request_tokens = self._tokenize_intent_text(normalized_text)
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            exact_row = conn.execute(
+                """
+                SELECT *
+                FROM runtime_intent_knowledge
+                WHERE normalized_request = ?
+                ORDER BY hit_count DESC, confidence DESC, updated_at DESC
+                LIMIT 1
+                """,
+                (normalized_request,),
+            ).fetchone()
+            if exact_row:
+                payload = self._row_to_intent_knowledge(dict(exact_row))
+                payload["match_score"] = 1.0
+                payload["match_type"] = "exact"
+                return payload
+
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM runtime_intent_knowledge
+                ORDER BY hit_count DESC, confidence DESC, updated_at DESC
+                LIMIT 50
+                """
+            ).fetchall()
+
+        best_match: dict[str, Any] | None = None
+        best_score = 0.0
+        request_token_set = set(request_tokens)
+        for row in rows:
+            payload = self._row_to_intent_knowledge(dict(row))
+            candidate_tokens = set(payload.get("tokens", []))
+            if not request_token_set or not candidate_tokens:
+                continue
+            overlap = request_token_set & candidate_tokens
+            union = request_token_set | candidate_tokens
+            token_score = len(overlap) / len(union) if union else 0.0
+            if token_score < min_score:
+                continue
+            score = min(1.0, token_score + min(float(payload.get("confidence", 0.0)), 1.0) * 0.1)
+            if score > best_score:
+                best_score = score
+                best_match = payload
+
+        if best_match is None:
+            return None
+        best_match["match_score"] = round(best_score, 4)
+        best_match["match_type"] = "token_overlap"
+        return best_match
+
+    def record_intent_knowledge(
+        self,
+        request_text: str,
+        knowledge_payload: dict[str, Any],
+        *,
+        source: str,
+        confidence: float,
+        evidence: str = "",
+    ) -> None:
+        normalized_text = " ".join(request_text.strip().split()).lower()
+        if not normalized_text or not isinstance(knowledge_payload, dict):
+            return
+
+        now = datetime.now(UTC).isoformat()
+        normalized_request = self._normalize_candidate_value({"request_text": normalized_text})
+        tokens = self._tokenize_intent_text(normalized_text)
+        markers = self._extract_runtime_marker_payload(knowledge_payload)
+        payload_json = json.dumps(knowledge_payload, ensure_ascii=False, sort_keys=True)
+        metadata_json = json.dumps({"request_text": request_text}, ensure_ascii=False, sort_keys=True)
+
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT id, hit_count, confidence
+                FROM runtime_intent_knowledge
+                WHERE normalized_request = ?
+                """,
+                (normalized_request,),
+            ).fetchone()
+            if row:
+                conn.execute(
+                    """
+                    UPDATE runtime_intent_knowledge
+                    SET payload_json = ?, intent = ?, domain = ?, tokens_json = ?,
+                        query_markers_json = ?, record_markers_json = ?, agent_markers_json = ?,
+                        goal_terms_json = ?, intent_hints_json = ?, action_flags_json = ?,
+                        output_requirements_json = ?, constraints_json = ?, confidence = ?, hit_count = ?,
+                        source = ?, evidence = ?, metadata_json = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        payload_json,
+                        str(knowledge_payload.get("intent") or "general_task"),
+                        str(knowledge_payload.get("domain") or "general"),
+                        json.dumps(tokens, ensure_ascii=False, sort_keys=True),
+                        json.dumps(markers["query_markers"], ensure_ascii=False, sort_keys=True),
+                        json.dumps(markers["record_markers"], ensure_ascii=False, sort_keys=True),
+                        json.dumps(markers["agent_markers"], ensure_ascii=False, sort_keys=True),
+                        json.dumps(markers["goal_terms"], ensure_ascii=False, sort_keys=True),
+                        json.dumps(markers["intent_hints"], ensure_ascii=False, sort_keys=True),
+                        json.dumps(markers["action_flags"], ensure_ascii=False, sort_keys=True),
+                        json.dumps(knowledge_payload.get("output_requirements") or [], ensure_ascii=False, sort_keys=True),
+                        json.dumps(knowledge_payload.get("constraints") or {}, ensure_ascii=False, sort_keys=True),
+                        max(float(row[2] or 0.0), float(confidence)),
+                        int(row[1] or 0) + 1,
+                        source,
+                        evidence,
+                        metadata_json,
+                        now,
+                        int(row[0]),
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO runtime_intent_knowledge(
+                        normalized_request, payload_json, intent, domain, tokens_json,
+                        query_markers_json, record_markers_json, agent_markers_json,
+                        goal_terms_json, intent_hints_json, action_flags_json,
+                        output_requirements_json, constraints_json, confidence, hit_count,
+                        source, evidence, metadata_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        normalized_request,
+                        payload_json,
+                        str(knowledge_payload.get("intent") or "general_task"),
+                        str(knowledge_payload.get("domain") or "general"),
+                        json.dumps(tokens, ensure_ascii=False, sort_keys=True),
+                        json.dumps(markers["query_markers"], ensure_ascii=False, sort_keys=True),
+                        json.dumps(markers["record_markers"], ensure_ascii=False, sort_keys=True),
+                        json.dumps(markers["agent_markers"], ensure_ascii=False, sort_keys=True),
+                        json.dumps(markers["goal_terms"], ensure_ascii=False, sort_keys=True),
+                        json.dumps(markers["intent_hints"], ensure_ascii=False, sort_keys=True),
+                        json.dumps(markers["action_flags"], ensure_ascii=False, sort_keys=True),
+                        json.dumps(knowledge_payload.get("output_requirements") or [], ensure_ascii=False, sort_keys=True),
+                        json.dumps(knowledge_payload.get("constraints") or {}, ensure_ascii=False, sort_keys=True),
+                        float(confidence),
+                        source,
+                        evidence,
+                        metadata_json,
+                        now,
+                        now,
+                    ),
+                )
+            conn.commit()
+
     def _build_active_overlay(self) -> dict[str, Any]:
         overlay: dict[str, Any] = {}
         with sqlite3.connect(self.db_path) as conn:
@@ -404,6 +646,67 @@ class SemanticPolicyStore:
             "updated_at": row["updated_at"],
         }
 
+    def _row_to_intent_knowledge(self, row: dict[str, Any]) -> dict[str, Any]:
+        payload = json.loads(row.get("payload_json") or "{}")
+        payload.update(
+            {
+                "intent": row.get("intent") or payload.get("intent") or "general_task",
+                "domain": row.get("domain") or payload.get("domain") or "general",
+                "tokens": json.loads(row.get("tokens_json") or "[]"),
+                "query_markers": json.loads(row.get("query_markers_json") or "[]"),
+                "record_markers": json.loads(row.get("record_markers_json") or "[]"),
+                "agent_markers": json.loads(row.get("agent_markers_json") or "[]"),
+                "goal_terms": json.loads(row.get("goal_terms_json") or "[]"),
+                "intent_hints": json.loads(row.get("intent_hints_json") or "[]"),
+                "action_flags": json.loads(row.get("action_flags_json") or "{}"),
+                "output_requirements": json.loads(row.get("output_requirements_json") or "[]"),
+                "constraints": json.loads(row.get("constraints_json") or "{}"),
+                "confidence": row.get("confidence") or 0.0,
+                "hit_count": row.get("hit_count") or 0,
+                "source": row.get("source") or "",
+                "evidence": row.get("evidence") or "",
+                "metadata": json.loads(row.get("metadata_json") or "{}"),
+            }
+        )
+        return payload
+
+    def _tokenize_intent_text(self, text: str) -> list[str]:
+        tokens = re.split(r"[^\w\u4e00-\u9fff\-]+", text.lower())
+        deduped: list[str] = []
+        for token in tokens:
+            normalized = token.strip("_-")
+            if len(normalized) < 2:
+                continue
+            if normalized not in deduped:
+                deduped.append(normalized)
+            if re.fullmatch(r"[\u4e00-\u9fff]+", normalized):
+                for size in (2, 3, 4):
+                    if len(normalized) < size:
+                        continue
+                    for index in range(0, len(normalized) - size + 1):
+                        gram = normalized[index : index + size]
+                        if gram not in deduped:
+                            deduped.append(gram)
+        return deduped
+
+    def _extract_runtime_marker_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        action_flags = payload.get("action_flags", {}) if isinstance(payload.get("action_flags"), dict) else {}
+        return {
+            "query_markers": list(payload.get("query_markers") or []),
+            "record_markers": list(payload.get("record_markers") or []),
+            "agent_markers": list(payload.get("agent_markers") or []),
+            "goal_terms": list(payload.get("goal_terms") or []),
+            "intent_hints": list(payload.get("intent_hints") or []),
+            "action_flags": {
+                "query_like": bool(action_flags.get("query_like", False)),
+                "record_like": bool(action_flags.get("record_like", False)),
+                "agent_create_like": bool(action_flags.get("agent_create_like", False)),
+                "finalize_like": bool(action_flags.get("finalize_like", False)),
+                "knowledge_capture_like": bool(action_flags.get("knowledge_capture_like", False)),
+                "multimodal_like": bool(action_flags.get("multimodal_like", False)),
+            },
+        }
+
     def _learning_rules_snapshot(self) -> dict[str, Any]:
         policy = self.load_main_policy()
         learning_cfg = policy.get("policy_memory", {}).get("learning", {})
@@ -452,6 +755,33 @@ class SemanticPolicyStore:
                     source TEXT NOT NULL,
                     reason TEXT NOT NULL,
                     created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runtime_intent_knowledge (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    normalized_request TEXT NOT NULL UNIQUE,
+                    payload_json TEXT NOT NULL,
+                    intent TEXT NOT NULL,
+                    domain TEXT NOT NULL,
+                    tokens_json TEXT NOT NULL DEFAULT '[]',
+                    query_markers_json TEXT NOT NULL DEFAULT '[]',
+                    record_markers_json TEXT NOT NULL DEFAULT '[]',
+                    agent_markers_json TEXT NOT NULL DEFAULT '[]',
+                    goal_terms_json TEXT NOT NULL DEFAULT '[]',
+                    intent_hints_json TEXT NOT NULL DEFAULT '[]',
+                    action_flags_json TEXT NOT NULL DEFAULT '{}',
+                    output_requirements_json TEXT NOT NULL DEFAULT '[]',
+                    constraints_json TEXT NOT NULL DEFAULT '{}',
+                    confidence REAL NOT NULL DEFAULT 0,
+                    hit_count INTEGER NOT NULL DEFAULT 1,
+                    source TEXT NOT NULL DEFAULT '',
+                    evidence TEXT NOT NULL DEFAULT '',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 )
                 """
             )

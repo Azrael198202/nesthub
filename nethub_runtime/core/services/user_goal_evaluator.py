@@ -4,9 +4,13 @@ import re
 from typing import Any
 
 from nethub_runtime.core.schemas.task_schema import TaskSchema
+from nethub_runtime.core.services.runtime_keyword_signal_analyzer import RuntimeKeywordSignalAnalyzer
 
 
 class UserGoalEvaluator:
+    def __init__(self, keyword_analyzer: RuntimeKeywordSignalAnalyzer | None = None) -> None:
+        self.keyword_analyzer = keyword_analyzer or RuntimeKeywordSignalAnalyzer()
+
     def evaluate(self, *, task: TaskSchema, execution_result: dict[str, Any]) -> dict[str, Any]:
         final_output = execution_result.get("final_output") or {}
         flattened_segments: list[str] = []
@@ -28,6 +32,9 @@ class UserGoalEvaluator:
         }
 
     def _extract_goal_terms(self, text: str) -> list[str]:
+        runtime_terms = self.keyword_analyzer.analyze(text).get("goal_terms", [])
+        if runtime_terms:
+            return runtime_terms[:6]
         normalized = re.sub(r"[^\w\u4e00-\u9fff]+", " ", text.lower())
         tokens = [item.strip() for item in normalized.split() if item.strip()]
         stopwords = {"根据", "生成", "并", "以及", "然后", "一个", "一份", "请", "帮我", "把", "的", "了", "在", "前", "后", "我", "用户", "要求"}

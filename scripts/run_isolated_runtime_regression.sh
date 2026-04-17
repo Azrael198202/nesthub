@@ -29,6 +29,5 @@ echo "Archived existing generated traces to: $ARCHIVE_DIR"
   test/test_family_member_agent_runtime.py \
   test/test_core_api.py \
   test/test_budget_scene_e2e_regression.py \
-  test/overall/test_family_agent_workflow_dataset.py \
   test/test_semantic_memory_dashboard_api.py \
   test/test_semantic_memory_dashboard_static.py

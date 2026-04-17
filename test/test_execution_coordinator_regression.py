@@ -95,6 +95,33 @@ def test_location_query_does_not_pick_up_spurious_label_filter(tmp_path: Path) -
     assert query["filters"] == {"location_keyword": "博多"}
 
 
+def test_query_stopwords_come_from_semantic_policy_not_intent_policy(tmp_path: Path) -> None:
+    coordinator = _build_coordinator(tmp_path)
+    coordinator.intent_policy = {"numeric_value_patterns": coordinator.intent_policy.get("numeric_value_patterns", [])}
+
+    query = coordinator._parse_query("4月份一共花了多少钱？", existing_records=[])
+
+    assert "一共" not in query["terms"]
+    assert "多少" not in query["terms"]
+    assert "4月份" in query["terms"]
+
+
+def test_time_markers_come_from_semantic_policy_rules(tmp_path: Path) -> None:
+    coordinator = _build_coordinator(tmp_path)
+    coordinator.intent_policy = {"numeric_value_patterns": coordinator.intent_policy.get("numeric_value_patterns", [])}
+
+    assert coordinator._extract_time("今天买了咖啡") == "今天"
+
+
+def test_group_by_markers_come_from_semantic_policy_aliases(tmp_path: Path) -> None:
+    coordinator = _build_coordinator(tmp_path)
+    coordinator.intent_policy = {"numeric_value_patterns": coordinator.intent_policy.get("numeric_value_patterns", [])}
+
+    query = coordinator._parse_query("今天按类别统计花了多少钱？", existing_records=[])
+
+    assert query["group_by"] == ["label"]
+
+
 def test_schedule_records_are_extracted_without_amounts(tmp_path: Path) -> None:
     coordinator = _build_coordinator(tmp_path)
 

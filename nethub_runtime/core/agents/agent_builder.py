@@ -60,16 +60,16 @@ class AgentBuilder:
         
         # 使用模型路由器生成规范
         prompt = f"""
-        根据以下任务和工作流生成一个高效的Agent规范：
-        
-        任务: {json.dumps(task, ensure_ascii=False, indent=2)}
-        工作流: {json.dumps(workflow or {}, ensure_ascii=False, indent=2)}
-        
-        返回包含以下字段的JSON：
+        Generate an efficient Agent specification for the following task and workflow.
+
+        Task: {json.dumps(task, ensure_ascii=False, indent=2)}
+        Workflow: {json.dumps(workflow or {}, ensure_ascii=False, indent=2)}
+
+        Return JSON with these fields:
         {{
-            "name": "Agent名称",
-            "role": "角色描述",
-            "goals": ["目标1", "目标2"],
+            "name": "agent name",
+            "role": "role description",
+            "goals": ["goal 1", "goal 2"],
             "model_policy": {{"intent_analysis": "model_name"}},
             "tool_policy": ["tool1", "tool2"],
             "memory_type": "short_term|long_term|hybrid",
@@ -81,7 +81,7 @@ class AgentBuilder:
             response = await self.model_router.invoke(
                 task_type="agent_reasoning",
                 prompt=prompt,
-                system_prompt="你是 Agent 设计器，只返回 JSON。",
+                system_prompt="You are an Agent designer. Return JSON only.",
             )
             spec_dict = json.loads(response)
             if not isinstance(spec_dict, dict):
@@ -186,16 +186,47 @@ class ReasoningAgent:
         self.model_router = model_router
         self.tool_registry = tool_registry
         self.memory: list[dict[str, Any]] = []
+        self.available_tools: list[dict[str, Any]] = []
+        self.available_model_policies: dict[str, str] = {}
+        self.initialized_context: dict[str, Any] = {}
         
         LOGGER.info(f"🤖 Created Agent: {spec.name} ({spec.agent_id})")
     
     async def initialize(self) -> None:
         """初始化Agent"""
         LOGGER.info(f"🤖 Initializing Agent: {self.spec.name}")
-        
-        # TODO: 加载工具、模型等初始化工作
-        # 当前仅记录
-        LOGGER.debug(f"  Tools available: {len(self.spec.tool_policy)}")
+
+        available_tools: list[dict[str, Any]] = []
+        if self.tool_registry and hasattr(self.tool_registry, "get"):
+            for tool_name in self.spec.tool_policy:
+                tool = self.tool_registry.get(tool_name)
+                if tool is None:
+                    available_tools.append({"name": tool_name, "available": False})
+                    continue
+                schema_getter = getattr(tool, "get_schema", None)
+                tool_schema = schema_getter() if callable(schema_getter) else {"name": tool_name}
+                available_tools.append({"name": tool_name, "available": True, "schema": tool_schema})
+        self.available_tools = available_tools
+
+        available_model_policies: dict[str, str] = {}
+        if self.model_router and hasattr(self.model_router, "get_model_config"):
+            for task_type, model_name in self.spec.model_policy.items():
+                if not model_name or model_name == "default_model":
+                    continue
+                model_config = self.model_router.get_model_config(model_name)
+                available_model_policies[task_type] = model_config.get("name", model_name) if isinstance(model_config, dict) else str(model_name)
+        self.available_model_policies = available_model_policies
+
+        self.memory = [] if self.spec.memory_type == "short_term" else list(self.memory)
+        self.initialized_context = {
+            "memory_type": self.spec.memory_type,
+            "memory_capacity": self.spec.memory_capacity,
+            "tool_count": len(self.available_tools),
+            "model_policy_count": len(self.available_model_policies),
+        }
+
+        LOGGER.debug(f"  Tools available: {len(self.available_tools)}")
+        LOGGER.debug(f"  Model policies available: {len(self.available_model_policies)}")
         LOGGER.debug(f"  Memory type: {self.spec.memory_type}")
     
     async def think_and_act(

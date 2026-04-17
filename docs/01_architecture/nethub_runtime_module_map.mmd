@@ -1,0 +1,292 @@
+flowchart LR
+
+  subgraph root["nethub_runtime Root"]
+    root_init["__init__.py\nPackage root"]
+    root_main["main.py\nProcess entry; boot app/UI/LINE demo"]
+  end
+
+  subgraph app["app/"]
+    app_bootstrap["app/bootstrap.py\nBootstrap runtime profile/capability/environment context"]
+    app_main["app/main.py\nInitialize AICore and expose runtime context"]
+  end
+
+  subgraph config_root["config/"]
+    cfg_settings["config/settings.py\nApp-level paths and settings"]
+    cfg_secrets["config/secrets.py\nSecret loading helpers"]
+  end
+
+  subgraph platform["platform/"]
+    platform_detector["platform/detector.py\nDetect runtime OS/platform profile"]
+    platform_os_profile["platform/os_profile.py\nOS profile structures/helpers"]
+  end
+
+  subgraph capability["capability/"]
+    capability_registry["capability/registry.py\nCapability registry and local snapshot"]
+    capability_resolver["capability/resolver.py\nResolve required runtime capabilities"]
+    capability_install_plan["capability/install_plan.py\nInstall-plan model for capability gaps"]
+  end
+
+  subgraph environment["environment/"]
+    env_manager["environment/manager.py\nManage installer selection and environment provisioning"]
+    env_inst_base["environment/installers/base.py\nInstaller base contract"]
+    env_inst_ollama["environment/installers/ollama_installer.py\nInstall/manage Ollama runtime"]
+    env_inst_pip["environment/installers/pip_installer.py\nInstall Python packages"]
+    env_inst_shell["environment/installers/shell_installer.py\nRun shell-based installs"]
+    env_inst_tool["environment/installers/tool_installer.py\nInstall generic external tools"]
+  end
+
+  subgraph runtime_mod["runtime/"]
+    runtime_policies["runtime/policies.py\nRuntime policy objects/helpers"]
+    runtime_runner["runtime/command_runner.py\nShell command execution wrapper"]
+  end
+
+  subgraph models["models/"]
+    models_router["models/model_router.py\nLiteLLM routing, availability, invoke abstraction"]
+    models_provider["models/provider.py\nProvider base abstractions"]
+    models_openai["models/openai_provider.py\nOpenAI provider implementation"]
+    models_ollama["models/ollama_provider.py\nOllama provider implementation"]
+  end
+
+  subgraph tools["tools/"]
+    tools_base["tools/base.py\nTool base class/interface"]
+    tools_python["tools/python_tool.py\nPython execution tool"]
+    tools_shell["tools/shell_tool.py\nShell execution tool"]
+  end
+
+  subgraph integrations["integrations/im/"]
+    im_line["integrations/im/line_demo.py\nLINE polling and reply demo"]
+  end
+
+  subgraph execution_legacy["execution/"]
+    exec_dispatcher["execution/dispatcher.py\nDispatch execution units"]
+    exec_pipeline["execution/pipeline.py\nPipeline composition/execution"]
+    exec_task_runner["execution/task_runner.py\nTask runner orchestration"]
+  end
+
+  subgraph blueprint_pkg["blueprint/"]
+    bp_manifest["blueprint/manifest.py\nBlueprint manifest definitions"]
+    bp_loader["blueprint/loader.py\nLoad blueprint files/manifests"]
+    bp_executor["blueprint/executor.py\nExecute blueprint-defined flows"]
+  end
+
+  subgraph agents_pkg["agents/"]
+    ag_base["agents/base/base_agent.py\nLegacy base agent"]
+    ag_executor["agents/executor/executor_agent.py\nLegacy execution agent"]
+    ag_planner["agents/planner/planner_agent.py\nLegacy planner agent"]
+  end
+
+  subgraph generated["generated/"]
+    gen_init["generated/__init__.py\nGenerated artifact package"]
+    gen_store["generated/store.py\nPersist traces/artifacts/generated blueprints"]
+    gen_trace["generated/traces/trace_ea9f10b16d6f.json\nExample runtime execution trace artifact"]
+    gen_bp_0433["generated/blueprints/blueprint_043390721e07.json\nGenerated blueprint artifact"]
+    gen_bp_07ae["generated/blueprints/blueprint_07ae2faa1642.json\nGenerated blueprint artifact"]
+    gen_bp_170c["generated/blueprints/blueprint_170cbc7f5f3b.json\nGenerated blueprint artifact"]
+    gen_bp_6708["generated/blueprints/blueprint_67089fd54700.json\nGenerated blueprint artifact"]
+    gen_bp_6c0c["generated/blueprints/blueprint_6c0c46b09a99.json\nGenerated blueprint artifact"]
+    gen_bp_6cb6["generated/blueprints/blueprint_6cb64eaced34.json\nGenerated blueprint artifact"]
+    gen_bp_6cdb["generated/blueprints/blueprint_6cdb74eb4855.json\nGenerated blueprint artifact"]
+    gen_bp_724c["generated/blueprints/blueprint_724cbfbc5d44.json\nGenerated blueprint artifact"]
+    gen_bp_979a["generated/blueprints/blueprint_979a7dfc7768.json\nGenerated blueprint artifact"]
+    gen_bp_9801["generated/blueprints/blueprint_98013b887abe.json\nGenerated blueprint artifact"]
+    gen_bp_b5a1["generated/blueprints/blueprint_b5a1013a5c0e.json\nGenerated blueprint artifact"]
+    gen_bp_c54e["generated/blueprints/blueprint_c54e385a0387.json\nGenerated blueprint artifact"]
+    gen_bp_e0b5["generated/blueprints/blueprint_e0b5011d1469.json\nGenerated blueprint artifact"]
+    gen_bp_feaa["generated/blueprints/blueprint_feaa657ffeec.json\nGenerated blueprint artifact"]
+  end
+
+  subgraph tvbox["tvbox/"]
+    tv_main["tvbox/main.py\nTV box local UI entry"]
+    tv_comp_init["tvbox/components/__init__.py\nComponent package init"]
+    tv_comp_i18n["tvbox/components/i18n.py\nUI i18n component helpers"]
+    tv_i18n_init["tvbox/i18n/__init__.py\nI18n package init"]
+    tv_i18n_texts["tvbox/i18n/settings_texts.py\nSettings text accessors"]
+    tv_locale_en["tvbox/i18n/locales/en-US.json\nEnglish locale strings"]
+    tv_locale_ja["tvbox/i18n/locales/ja-JP.json\nJapanese locale strings"]
+    tv_locale_zh["tvbox/i18n/locales/zh-CN.json\nChinese locale strings"]
+  end
+
+  subgraph core["core/"]
+    core_main["core/main.py\nFastAPI app entry for AI Core"]
+    core_enums["core/enums.py\nShared runtime enums"]
+    core_models_py["core/models.py\nLegacy shared model exports"]
+
+    subgraph core_config["core/config/"]
+      core_cfg_settings["core/config/settings.py\nCore paths/env helpers"]
+      core_cfg_dependencies["dependencies.json\nRuntime dependency policy"]
+      core_cfg_intent["intent_policy.json\nIntent markers and query heuristics"]
+      core_cfg_local_models["local_model_registry.json\nLocal model registry config"]
+      core_cfg_routes["model_routes.json\nModel route mapping config"]
+      core_cfg_routing["model_routing_policy.json\nModel routing policy"]
+      core_cfg_plugins["plugin_config.json\nPlugin enablement config"]
+      core_cfg_runtime_caps["runtime_capabilities.json\nRuntime capability declarations"]
+      core_cfg_security["security_policy.json\nRuntime security policy"]
+      core_cfg_semantic["semantic_policy.json\nSemantic extraction/query policy"]
+      core_cfg_vector["vector_store_policy.json\nVector-store policy config"]
+    end
+
+    subgraph core_memory["core/memory/"]
+      mem_semantic["semantic_policy_store.py\nSemantic memory DB, overlay, profile-signal memory"]
+      mem_session["session_store.py\nSession state store"]
+      mem_vector["vector_store.py\nIn-memory/vector retrieval store"]
+    end
+
+    subgraph core_models["core/models/"]
+      mdl_agent["models/agent.py\nLegacy agent model"]
+      mdl_blueprint["models/blueprint.py\nLegacy blueprint model"]
+      mdl_context["models/context.py\nLegacy context model"]
+      mdl_task["models/task.py\nLegacy task model"]
+      mdl_workflow["models/workflow.py\nLegacy workflow model"]
+    end
+
+    subgraph core_registries["core/registries/"]
+      reg_agents["agents.json\nAgent registry persistence"]
+      reg_blueprints["blueprints.json\nBlueprint registry persistence"]
+      reg_models["models.json\nModel registry persistence"]
+    end
+
+    subgraph core_routers["core/routers/"]
+      router_core_api["routers/core_api.py\n/core HTTP endpoints and admin APIs"]
+    end
+
+    subgraph core_schemas["core/schemas/"]
+      sch_agent_framework["agent_framework_schema.py\nFramework/profile schema"]
+      sch_agent["agent_schema.py\nAgent schema"]
+      sch_blueprint["blueprint_schema.py\nBlueprint schema"]
+      sch_context["context_schema.py\nRequest context schema"]
+      sch_task["task_schema.py\nTask schema"]
+      sch_workflow["workflow_schema.py\nWorkflow schema"]
+    end
+
+    subgraph core_services["core/services/"]
+      svc_core_engine["core_engine.py\nTop-level orchestration: analyze → decompose → plan → execute → repair → integrate"]
+      svc_context["context_manager.py\nContext/session normalization and trace IDs"]
+      svc_intent["intent_analyzer.py\nIntent/domain/output inference"]
+      svc_intent_policy_mgr["intent_policy_manager.py\nModel-assisted intent policy synthesis"]
+      svc_task_decomp["task_decomposer.py\nTask → SubTask decomposition plugins"]
+      svc_workflow_plan["workflow_planner.py\nSubTask → workflow steps planner"]
+      svc_workflow_comp["workflow_composition_service.py\nWorkflow component composition template builder"]
+      svc_blueprint_resolver["blueprint_resolver.py\nResolve blueprint from task/workflow"]
+      svc_blueprint_gen["blueprint_generator.py\nGenerate reusable blueprint artifacts"]
+      svc_agent_designer["agent_designer.py\nGenerate long-lived agent definitions"]
+      svc_agent_framework["agent_framework_service.py\nAssemble information-agent framework profile from abstract signals"]
+      svc_info_signal["information_profile_signal_analyzer.py\nMemory/model-backed profile signal analyzer"]
+      svc_info_agent["information_agent_service.py\nInformation-agent setup, capture, query lifecycle"]
+      svc_cap_router["capability_router.py\nMap workflow steps to models/tools/services"]
+      svc_dep_mgr["dependency_manager.py\nBuild/execute dependency install plans"]
+      svc_sec_guard["security_guard.py\nRuntime safety/auto-install guard"]
+      svc_exec_coord["execution_coordinator.py\nExecute workflow steps and data extraction"]
+      svc_exec_registry["execution_handler_registry.py\nExecutor/step handler registry"]
+      svc_exec_agents["execution_agent_handlers.py\nAgent step handlers"]
+      svc_exec_steps["execution_step_handlers.py\nTool/output step handlers"]
+      svc_plugin_base["plugin_base.py\nPlugin base interfaces"]
+      svc_plugin_loader["plugin_loader.py\nDynamic plugin loading"]
+      svc_demo_plugin["demo_execution_handler_plugin.py\nExample execution plugin"]
+      svc_registry["registry.py\nIn-memory/JSON registry wrappers"]
+      svc_result["result_integrator.py\nFinal response + artifact aggregation"]
+      svc_outcome["runtime_outcome_evaluator.py\nCheck unmet outputs/failed steps"]
+      svc_failure_cls["runtime_failure_classifier.py\nClassify repair causes"]
+      svc_repair["runtime_repair_service.py\nInject repair workflow steps"]
+      svc_goal_eval["user_goal_evaluator.py\nGoal alignment evaluation"]
+    end
+
+    subgraph core_adapters["core/adapters/"]
+      ad_model["adapters/model_adapter.py\nModel invocation adapter"]
+      ad_tool["adapters/tool_adapter.py\nTool invocation adapter"]
+      ad_web["adapters/web_adapter.py\nWeb access adapter"]
+    end
+
+    subgraph core_agents_pkg["core/agents/"]
+      core_agent_builder["agents/agent_builder.py\nGenerate/build ReAct-style agents"]
+    end
+
+    subgraph core_workflows["core/workflows/"]
+      wf_base["workflows/base_workflow.py\nSimple workflow runtime logic"]
+      wf_exec["workflows/executor.py\nWorkflow executor abstraction"]
+      wf_schemas["workflows/schemas.py\nAgent/workflow runtime state schemas"]
+    end
+
+    subgraph core_tools_pkg["core/tools/"]
+      core_tool_registry["tools/registry.py\nTool registry for agent/runtime usage"]
+    end
+
+    subgraph core_utils["core/utils/"]
+      util_ids["utils/id_generator.py\nID generation helpers"]
+      util_logger["utils/logger.py\nLogger factory"]
+    end
+
+    subgraph core_tests["core/tests/"]
+      core_test_budget["tests/test_core_scene_budget.py\nCore budget scene regression"]
+    end
+  end
+
+  root_main --> app_main
+  root_main --> tv_main
+  root_main --> im_line
+  app_bootstrap --> platform_detector
+  app_bootstrap --> capability_registry
+  app_bootstrap --> env_manager
+  app_main --> app_bootstrap
+  app_main --> svc_core_engine
+  core_main --> router_core_api
+  router_core_api --> svc_core_engine
+  svc_core_engine --> svc_context
+  svc_core_engine --> svc_intent
+  svc_core_engine --> svc_task_decomp
+  svc_core_engine --> svc_workflow_plan
+  svc_core_engine --> svc_blueprint_resolver
+  svc_core_engine --> svc_blueprint_gen
+  svc_core_engine --> svc_cap_router
+  svc_core_engine --> svc_exec_coord
+  svc_core_engine --> svc_result
+  svc_core_engine --> svc_outcome
+  svc_core_engine --> svc_failure_cls
+  svc_core_engine --> svc_repair
+  svc_core_engine --> svc_goal_eval
+  svc_core_engine --> models_router
+  svc_core_engine --> core_tool_registry
+  svc_core_engine --> wf_exec
+  svc_core_engine --> core_agent_builder
+  svc_exec_coord --> mem_session
+  svc_exec_coord --> mem_vector
+  svc_exec_coord --> mem_semantic
+  svc_exec_coord --> svc_info_agent
+  svc_exec_coord --> svc_exec_registry
+  svc_info_agent --> svc_info_signal
+  svc_info_agent --> svc_agent_framework
+  svc_info_signal --> mem_semantic
+  svc_info_signal --> models_router
+  svc_agent_framework --> sch_agent_framework
+  svc_blueprint_resolver --> reg_blueprints
+  svc_blueprint_gen --> reg_blueprints
+  svc_result --> gen_store
+  svc_exec_steps --> gen_store
+  capability_registry --> capability_resolver
+  env_manager --> env_inst_base
+  env_manager --> env_inst_ollama
+  env_manager --> env_inst_pip
+  env_manager --> env_inst_shell
+  env_manager --> env_inst_tool
+  core_tool_registry --> tools_base
+  core_tool_registry --> tools_python
+  core_tool_registry --> tools_shell
+  tv_main --> tv_comp_i18n
+  tv_comp_i18n --> tv_i18n_texts
+  tv_i18n_texts --> tv_locale_en
+  tv_i18n_texts --> tv_locale_ja
+  tv_i18n_texts --> tv_locale_zh
+  gen_store --> gen_trace
+  gen_store --> gen_bp_0433
+  gen_store --> gen_bp_07ae
+  gen_store --> gen_bp_170c
+  gen_store --> gen_bp_6708
+  gen_store --> gen_bp_6c0c
+  gen_store --> gen_bp_6cb6
+  gen_store --> gen_bp_6cdb
+  gen_store --> gen_bp_724c
+  gen_store --> gen_bp_979a
+  gen_store --> gen_bp_9801
+  gen_store --> gen_bp_b5a1
+  gen_store --> gen_bp_c54e
+  gen_store --> gen_bp_e0b5
+  gen_store --> gen_bp_feaa

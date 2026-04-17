@@ -33,6 +33,7 @@ from nethub_runtime.core.workflows.base_workflow import SimpleWorkflow
 from nethub_runtime.core.agents.agent_builder import AgentBuilder
 from nethub_runtime.core.tools.registry import ToolRegistry
 from nethub_runtime.core.services.user_goal_evaluator import UserGoalEvaluator
+from nethub_runtime.core.services.runtime_keyword_signal_analyzer import RuntimeKeywordSignalAnalyzer
 from nethub_runtime.generated.store import GeneratedArtifactStore
 
 
@@ -66,6 +67,7 @@ class AICore:
         self.model_registry = JsonRegistry(MODEL_REGISTRY_PATH)
         self.blueprint_registry = JsonRegistry(BLUEPRINT_REGISTRY_PATH)
         self.agent_registry = JsonRegistry(AGENT_REGISTRY_PATH)
+        self.generated_artifact_store = GeneratedArtifactStore()
         
         # ========== 传统插件-based 服务 ==========
         self.intent_analyzer = IntentAnalyzer()
@@ -75,17 +77,7 @@ class AICore:
         self.blueprint_generator = BlueprintGenerator(registry=self.blueprint_registry)
         self.agent_designer = AgentDesigner()
         self.capability_router = CapabilityRouter()
-        self.execution_coordinator = ExecutionCoordinator(
-            session_store=self.context_manager.session_store,
-            vector_store=self.vector_store,
-            generated_artifact_store=self.generated_artifact_store,
-        )
-        self.result_integrator = ResultIntegrator()
-        self.runtime_failure_classifier = RuntimeFailureClassifier()
-        self.runtime_outcome_evaluator = RuntimeOutcomeEvaluator()
-        self.runtime_repair_service = RuntimeRepairService()
-        self.user_goal_evaluator = UserGoalEvaluator()
-        
+
         # ========== 新增：LiteLLM 模型路由 ==========
         # 参考: docs/02_router/litellm_routing_design.md
         try:
@@ -98,11 +90,25 @@ class AICore:
         except Exception as e:
             self.logger.warning(f"Failed to initialize ModelRouter: {e}, will use plugins only")
             self.model_router = None
+
+        keyword_signal_analyzer = RuntimeKeywordSignalAnalyzer(model_router=self.model_router)
+        self.intent_analyzer = IntentAnalyzer(keyword_analyzer=keyword_signal_analyzer)
+
+        self.execution_coordinator = ExecutionCoordinator(
+            session_store=self.context_manager.session_store,
+            vector_store=self.vector_store,
+            generated_artifact_store=self.generated_artifact_store,
+            model_router=self.model_router,
+        )
+        self.result_integrator = ResultIntegrator()
+        self.runtime_failure_classifier = RuntimeFailureClassifier()
+        self.runtime_outcome_evaluator = RuntimeOutcomeEvaluator()
+        self.runtime_repair_service = RuntimeRepairService()
+        self.user_goal_evaluator = UserGoalEvaluator(keyword_analyzer=keyword_signal_analyzer)
         
         # ========== 新增：工具注册表 ==========
         self.tool_registry = ToolRegistry()
         self.logger.info("✓ Tool Registry initialized")
-        self.generated_artifact_store = GeneratedArtifactStore()
         
         # ========== 新增：LangGraph 工作流执行器 ==========
         # 参考: docs/03_workflow/langgraph_agent_framework.md
@@ -172,13 +178,18 @@ class AICore:
         capability = self._autonomous_implementation_capability()
         return int(capability.get("max_runtime_repair_iterations", 2) or 2)
 
+    def _should_apply_goal_repair(self, task: Any) -> bool:
+        return task.domain not in {"agent_management", "knowledge_ops"}
+
 
     def reload_plugins(self) -> dict[str, Any]:
         """Reload plugin-enabled services from config without restarting process."""
-        self.intent_analyzer = IntentAnalyzer()
+        keyword_signal_analyzer = RuntimeKeywordSignalAnalyzer(model_router=self.model_router)
+        self.intent_analyzer = IntentAnalyzer(keyword_analyzer=keyword_signal_analyzer)
         self.task_decomposer = TaskDecomposer()
         self.workflow_planner = WorkflowPlanner()
         self.capability_router = CapabilityRouter()
+        self.user_goal_evaluator = UserGoalEvaluator(keyword_analyzer=keyword_signal_analyzer)
         return {
             "status": "reloaded",
             "intent_analyzer_plugins": len(self.intent_analyzer.plugins),
@@ -338,7 +349,7 @@ class AICore:
                     task=task,
                     execution_result=execution_result,
                 )
-                if not goal_evaluation.get("satisfied", False):
+                if self._should_apply_goal_repair(task) and not goal_evaluation.get("satisfied", False):
                     outcome_evaluation["should_repair"] = True
                     unmet_requirements = list(outcome_evaluation.get("unmet_requirements", []))
                     if "goal_alignment" not in unmet_requirements:
@@ -387,7 +398,7 @@ class AICore:
                         task=task,
                         execution_result=repaired_execution_result,
                     )
-                    if not goal_evaluation.get("satisfied", False):
+                    if self._should_apply_goal_repair(task) and not goal_evaluation.get("satisfied", False):
                         outcome_evaluation["should_repair"] = True
                         unmet_requirements = list(outcome_evaluation.get("unmet_requirements", []))
                         if "goal_alignment" not in unmet_requirements:

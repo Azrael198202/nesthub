@@ -1,0 +1,156 @@
+{
+  "blueprint_id": "blueprint_92d700ebb3cd",
+  "name": "data_ops:data_record:generated",
+  "domain": "data_ops",
+  "intent": "data_record",
+  "inputs": [
+    "input_text",
+    "context"
+  ],
+  "outputs": [
+    "records"
+  ],
+  "steps": [
+    "extract_records",
+    "persist_records"
+  ],
+  "metadata": {
+    "generated": true
+  },
+  "source": "runtime_blueprint_generation",
+  "task": {
+    "task_id": "task_37f3feeddf1c",
+    "intent": "data_record",
+    "input_text": "记录一下今天中午吃饭花了50元",
+    "domain": "data_ops",
+    "constraints": {
+      "need_agent": false
+    },
+    "output_requirements": [
+      "records"
+    ],
+    "metadata": {
+      "trace_id": "trace_28078b411850",
+      "session_id": "default",
+      "analysis": {
+        "has_numeric_value": true,
+        "is_query": false,
+        "is_record": true,
+        "runtime_keywords": {
+          "query_markers": [],
+          "record_markers": [
+            "记录一下今天中午吃饭花了50元"
+          ],
+          "agent_markers": [],
+          "goal_terms": [
+            "记录一下今天中午吃饭花了50元"
+          ],
+          "intent_hints": [
+            "data_record",
+            "capture_agent_knowledge"
+          ],
+          "action_flags": {
+            "query_like": false,
+            "record_like": true,
+            "agent_create_like": false,
+            "finalize_like": false,
+            "knowledge_capture_like": true,
+            "multimodal_like": false
+          }
+        },
+        "model_routing": {
+          "provider": "ollama",
+          "model": "qwen2.5",
+          "api": "ollama_local_api",
+          "model_available": true,
+          "auto_pulled": false
+        }
+      }
+    }
+  },
+  "workflow": {
+    "workflow_id": "workflow_48d4ddfac69c",
+    "task_id": "task_37f3feeddf1c",
+    "mode": "normal",
+    "steps": [
+      {
+        "step_id": "step_fb9d45ec36a4",
+        "name": "extract_records",
+        "task_type": "data_record",
+        "executor_type": "tool",
+        "inputs": [
+          "input_text"
+        ],
+        "outputs": [
+          "records",
+          "count"
+        ],
+        "depends_on": [],
+        "retry": 1,
+        "metadata": {
+          "goal": "Extract structured records from natural language.",
+          "selection_basis": "task_decomposition",
+          "subtask_name": "extract_records"
+        }
+      },
+      {
+        "step_id": "step_4aa1ec7b1dd7",
+        "name": "persist_records",
+        "task_type": "data_record",
+        "executor_type": "tool",
+        "inputs": [
+          "records",
+          "session_state"
+        ],
+        "outputs": [
+          "saved",
+          "total_records"
+        ],
+        "depends_on": [
+          "step_fb9d45ec36a4"
+        ],
+        "retry": 1,
+        "metadata": {
+          "goal": "Persist normalized records.",
+          "selection_basis": "task_decomposition",
+          "subtask_name": "persist_records"
+        }
+      }
+    ],
+    "composition": {
+      "workflow_name": "data_record_workflow",
+      "objective": "记录一下今天中午吃饭花了50元",
+      "knowledge_agents": [],
+      "execution_agents": [],
+      "analysis_agents": [],
+      "tools": [],
+      "analyzers": [],
+      "io_operations": [],
+      "components": [
+        {
+          "component_type": "workflow",
+          "name": "workflow_orchestrator",
+          "responsibility": "Coordinate knowledge, execution, analysis, tools, and IO operations.",
+          "dependencies": [],
+          "metadata": {}
+        }
+      ],
+      "metadata": {
+        "task_intent": "data_record",
+        "task_domain": "data_ops",
+        "subtask_names": [
+          "extract_records",
+          "persist_records"
+        ],
+        "system_owner": "nesthub_runtime",
+        "agent_creation_managed_by": "nesthub_runtime",
+        "workflow_execution_managed_by": "nesthub_runtime",
+        "runtime_issue_resolution_managed_by": "nesthub_runtime"
+      }
+    }
+  },
+  "context": {
+    "trace_id": "trace_28078b411850",
+    "session_id": "default"
+  }
+}

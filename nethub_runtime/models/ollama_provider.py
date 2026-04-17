@@ -8,9 +8,17 @@ class OllamaProvider(ModelProvider):
     def __init__(self) -> None:
         self.runner = CommandRunner()
 
-    def is_available(self, model_name: str) -> bool:
+    def list_models(self) -> list[str]:
         result = self.runner.run(["ollama", "list"])
-        return model_name.lower() in result.stdout.lower()
+        models: list[str] = []
+        for line in result.stdout.splitlines()[1:]:
+            parts = line.split()
+            if parts:
+                models.append(parts[0].strip())
+        return models
+
+    def is_available(self, model_name: str) -> bool:
+        return model_name.lower() in {item.lower() for item in self.list_models()}
 
     def ensure(self, model_name: str) -> None:
         result = self.runner.run(["ollama", "pull", model_name], timeout=1800)

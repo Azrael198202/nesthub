@@ -4,6 +4,8 @@ import json
 import os
 import re
 import logging
+import asyncio
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -33,12 +35,14 @@ class ExecutionCoordinator:
         session_store: SessionStore | None = None,
         vector_store: VectorStore | None = None,
         generated_artifact_store: Any | None = None,
+        model_router: Any | None = None,
         intent_policy_path: Path | None = None,
         semantic_policy_path: Path | None = None,
     ) -> None:
         self.session_store = session_store or SessionStore()
         self.vector_store = vector_store or VectorStore()
         self.generated_artifact_store = generated_artifact_store
+        self.model_router = model_router
         self.intent_policy_path = intent_policy_path or INTENT_POLICY_PATH
         self.semantic_policy_path = semantic_policy_path or SEMANTIC_POLICY_PATH
         self.semantic_policy_store = SemanticPolicyStore(policy_path=self.semantic_policy_path)
@@ -50,6 +54,8 @@ class ExecutionCoordinator:
         self.information_agent_service = InformationAgentService(
             session_store=self.session_store,
             vector_store=self.vector_store,
+            model_router=model_router,
+            semantic_policy_store=self.semantic_policy_store,
         )
         self._handler_registry = build_execution_handler_registry(self)
         self._executor_handlers = self._handler_registry.get_executor_handlers()
@@ -58,7 +64,7 @@ class ExecutionCoordinator:
     def _load_intent_policy(self) -> dict[str, Any]:
         if self.intent_policy_path.exists():
             return json.loads(self.intent_policy_path.read_text(encoding="utf-8"))
-        return {"time_markers": [], "stopwords": [], "group_by_markers": [], "numeric_value_patterns": []}
+        return {"numeric_value_patterns": []}
 
     def _load_semantic_policy(self) -> dict[str, Any]:
         policy = self.semantic_policy_store.load_runtime_policy()
@@ -247,7 +253,29 @@ class ExecutionCoordinator:
         return self._run_code_step(step["name"], task, context, step_outputs)
 
     def _run_llm_step(self, step_name: str, task: TaskSchema, context: CoreContextSchema) -> dict[str, Any]:
-        return {"message": f"llm step placeholder for {step_name}", "input_text": task.input_text, "session_id": context.session_id}
+        if self.model_router is None:
+            return {"message": f"llm step placeholder for {step_name}", "input_text": task.input_text, "session_id": context.session_id}
+
+        prompt = (
+            "Execute the requested workflow step and return a concise plain-text result.\n"
+            f"step_name: {step_name}\n"
+            f"task_intent: {task.intent}\n"
+            f"input_text: {task.input_text}\n"
+            f"session_id: {context.session_id}"
+        )
+        response = self._invoke_model_text(
+            task_type="llm_execution",
+            prompt=prompt,
+            system_prompt="You are the NestHub runtime execution model. Follow the step request and return plain text only.",
+        )
+        if not response:
+            return {"message": f"llm step placeholder for {step_name}", "input_text": task.input_text, "session_id": context.session_id}
+        return {
+            "message": response,
+            "input_text": task.input_text,
+            "session_id": context.session_id,
+            "model_routed": True,
+        }
 
     def _run_code_step(
         self,
@@ -265,13 +293,14 @@ class ExecutionCoordinator:
 
     def _normalize_yes_no(self, text: str) -> bool:
         lowered = self._normalize_text(text)
-        return any(token in lowered for token in ("是", "参与", "需要", "yes", "true", "y"))
+        boolean_aliases = self.semantic_policy.get("boolean_aliases", {})
+        truthy_aliases = boolean_aliases.get("truthy", ["yes", "true", "y", "1"])
+        normalized_aliases = {self._normalize_text(str(item)) for item in truthy_aliases if str(item).strip()}
+        return lowered in normalized_aliases or any(token and token in lowered for token in normalized_aliases)
 
     def _sanitize_member_value(self, key: str, text: str) -> Any:
         value = text.strip()
-        if key in {"include_expense", "include_schedule"}:
-            return self._normalize_yes_no(value)
-        if key == "extra_notes":
+        if key == "details":
             value = value.replace("完成添加", "").strip()
             return value
         return value
@@ -312,40 +341,20 @@ class ExecutionCoordinator:
         records: list[dict[str, Any]] = []
         for segment in segments:
             record_type = self._infer_record_type(segment)
-            if record_type != "expense":
-                type_rule = self.semantic_policy.get("record_type_rules", {}).get(record_type, {})
-                records.append(
-                    {
-                        "record_type": record_type,
-                        "time": self._extract_time(segment),
-                        "location": self._extract_location(segment),
-                        "content": self._extract_content(segment),
-                        "amount": int(type_rule.get("default_amount", 0)),
-                        "participants": self._extract_participants(segment),
-                        "actor": self._extract_actor(segment),
-                        "label": str(type_rule.get("default_label", record_type)),
-                        "raw_text": segment,
-                        "created_at": datetime.now(UTC).isoformat(),
-                    }
-                )
-                continue
-            amount = self._extract_amount(segment)
-            if amount is not None:
-                records.append(
-                    {
-                        "record_type": "expense",
-                        "time": self._extract_time(segment),
-                        "location": self._extract_location(segment),
-                        "content": self._extract_content(segment),
-                        "amount": amount,
-                        "participants": self._extract_participants(segment),
-                        "actor": self._extract_actor(segment),
-                        "label": self._infer_label(segment),
-                        "raw_text": segment,
-                        "created_at": datetime.now(UTC).isoformat(),
-                    }
-                )
-                continue
+            records.append(
+                {
+                    "record_type": record_type,
+                    "time": self._extract_time(segment),
+                    "location": self._extract_location(segment),
+                    "content": self._extract_content(segment),
+                    "amount": self._extract_amount(segment) or 0,
+                    "participants": self._extract_participants(segment),
+                    "actor": self._extract_actor(segment),
+                    "label": self._infer_label(segment),
+                    "raw_text": segment,
+                    "created_at": datetime.now(UTC).isoformat(),
+                }
+            )
         self._learn_semantic_candidates(text, stage="record_extraction")
         return records
 
@@ -368,8 +377,8 @@ class ExecutionCoordinator:
         relative_week_date = self._extract_relative_week_date(text)
         if relative_week_date:
             return relative_week_date
-        for marker in self.intent_policy.get("time_markers", []):
-            if marker in text:
+        for marker in self._time_markers():
+            if marker and marker in text:
                 return marker
         return "unspecified"
 
@@ -411,48 +420,85 @@ class ExecutionCoordinator:
         return "self"
 
     def _extract_named_actor(self, text: str) -> str | None:
-        match = re.match(r"^(?:记录|添加|保存)?([\u4e00-\u9fffA-Za-z]{2,4})(?=今天|昨天|本周|下周|\d{1,2}月\d{1,2}[号日]|去|开会|远足|安排|出差)", text.strip())
-        if match:
-            return match.group(1)
+        patterns = self.semantic_policy.get("actor_extract_patterns", [])
+        if not isinstance(patterns, list):
+            return None
+        for pattern in patterns:
+            try:
+                match = re.match(str(pattern), text.strip())
+            except re.error:
+                continue
+            if match:
+                return match.group(1)
         return None
 
     def _extract_explicit_date(self, text: str) -> str | None:
-        match = re.search(r"(\d{1,2})月(\d{1,2})[号日]", text)
-        if not match:
+        rules = self.semantic_policy.get("explicit_date_patterns", [])
+        if not isinstance(rules, list):
             return None
         now = datetime.now(UTC)
-        month = int(match.group(1))
-        day = int(match.group(2))
-        return f"{now.year:04d}-{month:02d}-{day:02d}"
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            pattern = str(rule.get("pattern") or "").strip()
+            if not pattern:
+                continue
+            try:
+                match = re.search(pattern, text)
+            except re.error:
+                continue
+            if not match:
+                continue
+            month_group = int(rule.get("month_group", 1))
+            day_group = int(rule.get("day_group", 2))
+            year_group = rule.get("year_group")
+            try:
+                month = int(match.group(month_group))
+                day = int(match.group(day_group))
+                year = int(match.group(int(year_group))) if year_group is not None else now.year
+            except (IndexError, TypeError, ValueError):
+                continue
+            return f"{year:04d}-{month:02d}-{day:02d}"
+        return None
 
     def _extract_relative_week_date(self, text: str) -> str | None:
-        match = re.search(r"本周([一二三四五六日天])", text)
-        if not match:
+        rules = self.semantic_policy.get("relative_week_rules", [])
+        if not isinstance(rules, list):
             return None
-        weekday_map = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
-        target_weekday = weekday_map[match.group(1)]
         now = datetime.now(UTC)
-        monday = now - timedelta(days=now.weekday())
-        target = monday + timedelta(days=target_weekday)
-        return target.date().isoformat()
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            pattern = str(rule.get("pattern") or "").strip()
+            weekday_map = rule.get("weekday_map", {})
+            if not pattern or not isinstance(weekday_map, dict):
+                continue
+            try:
+                match = re.search(pattern, text)
+            except re.error:
+                continue
+            if not match:
+                continue
+            weekday_token = str(match.group(int(rule.get("weekday_group", 1))))
+            if weekday_token not in weekday_map:
+                continue
+            target_weekday = int(weekday_map[weekday_token])
+            week_start = str(rule.get("week_start") or "monday").lower()
+            base_offset = now.weekday() if week_start == "monday" else (now.weekday() + 1) % 7
+            period_start = now - timedelta(days=base_offset)
+            target = period_start + timedelta(days=target_weekday)
+            return target.date().isoformat()
+        return None
 
     def _infer_record_type(self, text: str) -> str:
         record_type_rules = self.semantic_policy.get("record_type_rules", {})
-        if not isinstance(record_type_rules, dict):
-            return "expense"
-
-        default_type = "expense"
-        for record_type, rule in record_type_rules.items():
-            if isinstance(rule, dict) and rule.get("default"):
-                default_type = str(record_type)
-                break
-
-        for record_type, rule in record_type_rules.items():
-            if record_type == default_type or not isinstance(rule, dict):
-                continue
-            if self._rule_matches_text(text, rule):
-                return str(record_type)
-        return default_type
+        if isinstance(record_type_rules, dict):
+            for record_type, rule in record_type_rules.items():
+                if not isinstance(rule, dict) or rule.get("default"):
+                    continue
+                if self._rule_matches_text(text, rule):
+                    return str(record_type)
+        return "generic"
 
     def _rule_matches_text(self, text: str, rule: dict[str, Any]) -> bool:
         if rule.get("require_time") and self._extract_time(text) == "unspecified":
@@ -476,7 +522,7 @@ class ExecutionCoordinator:
         if model_query is not None:
             return model_query
 
-        stopwords = set(self.intent_policy.get("stopwords", []))
+        stopwords = self._query_stopwords()
         ignored_tokens = set(self.semantic_policy.get("ignored_query_tokens", []))
         normalized = text
         for stopword in stopwords:
@@ -519,7 +565,7 @@ class ExecutionCoordinator:
                     continue
                 if self._rule_matches_text(text, rule):
                     return str(metric)
-        return "sum"
+        return "list"
 
     def _query_has_explicit_label_signal(self, text: str, label: str) -> bool:
         normalized_text = self._normalize_text(text)
@@ -574,10 +620,48 @@ class ExecutionCoordinator:
     def _extract_group_by(self, text: str) -> list[str]:
         results: list[str] = []
         marker_map = self._require_semantic_value("group_by_aliases", dict)
-        for marker in self.intent_policy.get("group_by_markers", []):
+        markers = list(marker_map.keys())
+        for marker in markers:
             if marker in text and marker in marker_map:
                 results.append(marker_map[marker])
         return results
+
+    def _time_markers(self) -> list[str]:
+        markers: list[str] = []
+        explicit_markers = self.semantic_policy.get("time_markers", [])
+        if isinstance(explicit_markers, list):
+            for marker in explicit_markers:
+                marker_text = str(marker).strip()
+                if marker_text and marker_text not in markers:
+                    markers.append(marker_text)
+        rules = self.semantic_policy.get("time_marker_rules", {})
+        if isinstance(rules, dict):
+            for rule in rules.values():
+                if not isinstance(rule, dict):
+                    continue
+                for alias in rule.get("aliases", []):
+                    alias_text = str(alias).strip()
+                    if alias_text and alias_text not in markers:
+                        markers.append(alias_text)
+                for alias in rule.get("record_aliases", []):
+                    alias_text = str(alias).strip()
+                    if alias_text and alias_text not in markers:
+                        markers.append(alias_text)
+                for prefix in rule.get("prefixes", []):
+                    prefix_text = str(prefix).strip()
+                    if prefix_text and prefix_text not in markers:
+                        markers.append(prefix_text)
+        return markers
+
+    def _query_stopwords(self) -> set[str]:
+        stopwords: set[str] = set()
+        semantic_stopwords = self.semantic_policy.get("ignored_query_tokens", [])
+        if isinstance(semantic_stopwords, list):
+            stopwords.update(str(item) for item in semantic_stopwords if str(item).strip())
+        legacy_stopwords = self.intent_policy.get("stopwords", [])
+        if isinstance(legacy_stopwords, list):
+            stopwords.update(str(item) for item in legacy_stopwords if str(item).strip())
+        return stopwords
 
     def _model_parse_records(self, text: str) -> list[dict[str, Any]] | None:
         parser_cfg = self.semantic_policy.get("model_semantic_parser", {})
@@ -602,7 +686,7 @@ class ExecutionCoordinator:
                 ]
             },
         }
-        data = self._call_external_semantic_parser(payload)
+        data = self._call_semantic_parser(payload, task_type="semantic_parsing")
         if not data:
             return None
 
@@ -651,7 +735,7 @@ class ExecutionCoordinator:
                 "query_text": "string",
             },
         }
-        data = self._call_external_semantic_parser(payload)
+        data = self._call_semantic_parser(payload, task_type="semantic_parsing")
         if not data:
             return None
 
@@ -670,6 +754,35 @@ class ExecutionCoordinator:
             "filters": {str(k): v for k, v in data.get("filters", {}).items() if v not in (None, "")},
             "query_text": str(data.get("query_text") or text),
         }
+
+    def _call_semantic_parser(self, payload: dict[str, Any], *, task_type: str) -> dict[str, Any] | None:
+        model_result = self._call_model_semantic_parser(payload, task_type=task_type)
+        if model_result is not None:
+            return model_result
+        return self._call_external_semantic_parser(payload)
+
+    def _call_model_semantic_parser(self, payload: dict[str, Any], *, task_type: str) -> dict[str, Any] | None:
+        parser_cfg = self.semantic_policy.get("model_semantic_parser", {})
+        if not parser_cfg.get("enabled", True) or self.model_router is None:
+            return None
+
+        prompt = (
+            "Return valid JSON only.\n"
+            "Follow the provided instruction and output exactly the requested schema.\n"
+            f"payload: {json.dumps(payload, ensure_ascii=False)}"
+        )
+        response = self._invoke_model_text(
+            task_type=task_type,
+            prompt=prompt,
+            system_prompt="You are the semantic parser for NestHub runtime. Return JSON only and do not add markdown fences.",
+            temperature=0,
+        )
+        if not response:
+            return None
+        try:
+            return json.loads(response)
+        except Exception:
+            return None
 
     def _call_external_semantic_parser(self, payload: dict[str, Any]) -> dict[str, Any] | None:
         router = self.semantic_policy.get("external_semantic_router", {})
@@ -696,6 +809,44 @@ class ExecutionCoordinator:
             LOGGER.debug("External semantic parse failed: %s", exc)
             return None
         return None
+
+    def _invoke_model_text(
+        self,
+        *,
+        task_type: str,
+        prompt: str,
+        system_prompt: str,
+        **kwargs: Any,
+    ) -> str | None:
+        if self.model_router is None:
+            return None
+
+        holder: dict[str, Any] = {}
+
+        def _runner() -> None:
+            try:
+                holder["response"] = asyncio.run(
+                    self.model_router.invoke(
+                        task_type=task_type,
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        **kwargs,
+                    )
+                )
+            except Exception as exc:
+                holder["error"] = exc
+
+        thread = threading.Thread(target=_runner, daemon=True)
+        thread.start()
+        thread.join(timeout=20)
+        raw = holder.get("response")
+        if not isinstance(raw, str):
+            return None
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`")
+            cleaned = cleaned.replace("json\n", "", 1).strip()
+        return cleaned or None
 
     def _aggregate_records(self, records: list[dict[str, Any]], query: dict[str, Any], model_choice: dict[str, Any]) -> dict[str, Any]:
         filters = query.get("filters", {})
@@ -761,7 +912,7 @@ class ExecutionCoordinator:
         if metric == "list":
             response["matched_records"] = [
                 {
-                    "record_type": item.get("record_type", "expense"),
+                    "record_type": item.get("record_type", "generic"),
                     "actor": item.get("actor"),
                     "time": item.get("time"),
                     "location": item.get("location"),
@@ -821,6 +972,10 @@ class ExecutionCoordinator:
         return filters
 
     def _semantic_label_from_text(self, text: str) -> str | None:
+        model_label = self._model_infer_label(text)
+        if model_label:
+            return model_label
+
         taxonomy = self.semantic_policy.get("label_taxonomy", {})
         if not isinstance(taxonomy, dict) or not taxonomy:
             return None
@@ -855,6 +1010,8 @@ class ExecutionCoordinator:
             lexical_hits = sum(1 for hint in lexical_hints if hint and hint in normalized_text)
             if lexical_hits or synonym_hits:
                 score = min(1.0, score + min(0.5, 0.28 * synonym_hits + 0.08 * max(0, lexical_hits - synonym_hits)))
+            if lexical_hits > 0:
+                score = max(score, min(0.95, 0.45 + 0.1 * lexical_hits))
             scored_labels.append((score, str(label)))
 
         if not scored_labels:
@@ -945,6 +1102,17 @@ class ExecutionCoordinator:
         records: list[dict[str, Any]],
         model_choice: dict[str, Any],
     ) -> dict[str, Any] | None:
+        model_payload = {
+            "instruction": "Aggregate records according to query relationships and return JSON with total_amount, count, grouped, and optionally matched_records.",
+            "query": query,
+            "records": records,
+            "model_choice": model_choice,
+        }
+        model_data = self._call_model_semantic_parser(model_payload, task_type="semantic_aggregation")
+        if isinstance(model_data, dict) and all(k in model_data for k in ("total_amount", "count", "grouped")):
+            model_data["semantic_mode"] = "model_router"
+            return model_data
+
         router = self.semantic_policy.get("external_semantic_router", {})
         if not router.get("enabled", False):
             return None
@@ -999,7 +1167,7 @@ class ExecutionCoordinator:
                 ]
             },
         }
-        data = self._call_external_semantic_parser(payload)
+        data = self._call_semantic_parser(payload, task_type="semantic_learning")
         if not isinstance(data, dict):
             return
 
@@ -1111,3 +1279,22 @@ class ExecutionCoordinator:
         current_value = self.semantic_policy.get(policy_key)
         _collect(current_value)
         return existing
+
+    def _model_infer_label(self, text: str) -> str | None:
+        parser_cfg = self.semantic_policy.get("model_semantic_parser", {})
+        if not parser_cfg.get("enabled", True):
+            return None
+        payload = {
+            "instruction": "Infer the best semantic label for input_text and return JSON only with key label.",
+            "input_text": text,
+            "available_labels": list(self.semantic_policy.get("label_taxonomy", {}).keys()),
+            "schema": {"label": "string|null"},
+        }
+        data = self._call_model_semantic_parser(payload, task_type="semantic_labeling")
+        if not isinstance(data, dict):
+            return None
+        label = str(data.get("label") or "").strip()
+        if not label:
+            return None
+        taxonomy = self.semantic_policy.get("label_taxonomy", {})
+        return label if label in taxonomy else None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from nethub_runtime.generated.store import GeneratedArtifactStore
 from nethub_runtime.core.schemas.context_schema import CoreContextSchema
@@ -12,6 +13,9 @@ from nethub_runtime.core.services.execution_step_handlers import (
     handle_persist_workflow_output_step,
 )
 from nethub_runtime.core.services.dependency_manager import DependencyManager
+from nethub_runtime.core.services.agent_framework_service import AgentFrameworkService
+from nethub_runtime.core.services.information_profile_signal_analyzer import InformationProfileSignalAnalyzer
+from nethub_runtime.core.memory.semantic_policy_store import SemanticPolicyStore
 from nethub_runtime.core.services.runtime_failure_classifier import RuntimeFailureClassifier
 from nethub_runtime.core.services.runtime_outcome_evaluator import RuntimeOutcomeEvaluator
 from nethub_runtime.core.services.runtime_repair_service import RuntimeRepairService
@@ -53,6 +57,44 @@ def test_runtime_outcome_evaluator_detects_unmet_outputs_and_failed_steps() -> N
     assert evaluation["failed_steps"] == ["single_step"]
     assert set(evaluation["unmet_requirements"]) == {"summary", "artifact"}
     assert evaluation["should_repair"] is True
+
+
+def test_runtime_outcome_evaluator_treats_dialog_state_as_dialog_output() -> None:
+    evaluator = RuntimeOutcomeEvaluator()
+    task = TaskSchema(
+        task_id="task_dialog_alias",
+        intent="create_information_agent",
+        input_text="帮我创建参考资料智能体",
+        domain="agent_management",
+        output_requirements=["agent", "dialog"],
+    )
+    workflow = WorkflowSchema(
+        workflow_id="workflow_dialog_alias",
+        task_id=task.task_id,
+        steps=[
+            WorkflowStepSchema(
+                step_id="step_1",
+                name="manage_information_agent",
+                task_type=task.intent,
+                outputs=["message", "dialog_state", "agent", "knowledge"],
+            )
+        ],
+    )
+    execution_result = {
+        "steps": [{"name": "manage_information_agent", "status": "completed"}],
+        "final_output": {
+            "manage_information_agent": {
+                "message": "好的，这个智能体主要是什么功能呢？",
+                "dialog_state": {"stage": "awaiting_purpose"},
+                "agent": {"agent_id": "information_agent"},
+            }
+        },
+    }
+
+    evaluation = evaluator.evaluate(task=task, workflow=workflow, execution_result=execution_result)
+
+    assert evaluation["status"] == "satisfied"
+    assert evaluation["unmet_requirements"] == []
 
 
 def test_runtime_repair_service_builds_repaired_workflow_from_evaluation() -> None:
@@ -354,19 +396,19 @@ def test_user_goal_evaluator_detects_missing_goal_terms() -> None:
     task = TaskSchema(
         task_id="task_goal_eval",
         intent="prepare_trip_brief",
-        input_text="整理大阪联系人并生成提醒文档",
+        input_text="整理项目资料并生成汇总文档",
         domain="general",
     )
     execution_result = {
         "final_output": {
-            "analyze_workflow_context": {"summary": "这里只整理了联系人，没有提醒文档"},
+            "analyze_workflow_context": {"summary": "这里只整理了项目资料，没有生成汇总文档"},
         }
     }
 
     evaluation = evaluator.evaluate(task=task, execution_result=execution_result)
 
     assert evaluation["satisfied"] is False
-    assert "大阪联系人并生成提醒文档" not in evaluation["matched_terms"]
+    assert "项目资料并生成汇总文档" not in evaluation["matched_terms"]
     assert evaluation["missing_terms"]
 
 
@@ -381,7 +423,7 @@ def test_workflow_artifact_handlers_generate_and_persist_real_artifact(tmp_path:
     task = TaskSchema(
         task_id="task_artifact",
         intent="prepare_document",
-        input_text="生成一份提醒文档",
+        input_text="生成一份汇总文档",
         domain="general",
     )
     context = CoreContextSchema(session_id="artifact-session", trace_id="artifact-trace")
@@ -391,7 +433,7 @@ def test_workflow_artifact_handlers_generate_and_persist_real_artifact(tmp_path:
         {},
         task,
         context,
-        {"analyze_workflow_context": {"summary": "这是提醒文档内容。"}},
+        {"analyze_workflow_context": {"summary": "这是汇总文档内容。"}},
     )
     assert generated["status"] == "generated"
     artifact_path = Path(generated["artifact_path"])
@@ -417,7 +459,7 @@ def test_result_integrator_collects_workflow_generated_artifacts(tmp_path: Path)
     task = TaskSchema(
         task_id="task_result_integrator",
         intent="prepare_document",
-        input_text="生成提醒文档",
+        input_text="生成汇总文档",
         domain="general",
     )
     workflow = WorkflowSchema(
@@ -448,3 +490,90 @@ def test_result_integrator_collects_workflow_generated_artifacts(tmp_path: Path)
     artifact_sources = {item["source"] for item in response["artifacts"]}
     assert "workflow_generated_artifact" in artifact_sources
     assert "document" in response["artifact_index"]
+
+
+def test_agent_framework_service_generates_information_profile_from_input() -> None:
+    service = AgentFrameworkService()
+
+    profile = service.resolve_information_profile_definition(
+        purpose="主要记录供应商资料的信息",
+        signals={
+            "combined_text": "主要记录供应商资料的信息",
+            "profile_seed": "entity_directory",
+            "entity_label": "供应商资料",
+            "role_name": "供应商资料信息管理智能体",
+            "knowledge_added_message": "已完成添加，并已记录该供应商资料信息。",
+            "query_aliases": {"联系方式": "contact"},
+            "knowledge_schema": [{"key": "item_name", "prompt": "好的，请先告诉我对象名称。"}],
+        },
+    )
+
+    assert profile is not None
+    assert profile["profile_name"] == "entity_directory"
+    assert profile["entity_label"] == "供应商资料"
+    assert profile["knowledge_schema"][0]["key"] == "item_name"
+    assert profile["metadata"]["generated_by"] == "runtime_inference"
+
+
+def test_information_profile_signal_analyzer_prefers_model_output() -> None:
+    class ModelRouterStub:
+        async def invoke(self, task_type: str, prompt: str, system_prompt: str | None = None, **kwargs) -> str:
+            assert task_type == "intent_analysis"
+            assert "user_request:" in prompt
+            return json.dumps(
+                {
+                    "profile_seed": "entity_directory",
+                    "entity_label": "活动资料",
+                    "role_name": "活动资料信息智能体",
+                    "knowledge_added_message": "已经将此信息记录到活动资料信息智能体。",
+                    "query_aliases": {"联系方式": "contact"},
+                    "knowledge_schema": [{"key": "item_name", "prompt": "请提供对象名称。"}],
+                },
+                ensure_ascii=False,
+            )
+
+    analyzer = InformationProfileSignalAnalyzer(model_router=ModelRouterStub())
+
+    signals = analyzer.analyze("主要记录活动资料", "需要名称和说明")
+
+    assert signals["profile_seed"] == "entity_directory"
+    assert signals["entity_label"] == "活动资料"
+    assert signals["knowledge_schema"][0]["key"] == "item_name"
+
+
+def test_information_profile_signal_analyzer_falls_back_when_model_unavailable() -> None:
+    analyzer = InformationProfileSignalAnalyzer(model_router=None)
+
+    signals = analyzer.analyze("主要记录供应商资料的信息", "")
+
+    assert signals["profile_seed"] == "entity_directory"
+    assert signals["entity_label"] == "供应商资料"
+    assert signals["knowledge_schema"][0]["key"] == "item_name"
+
+
+def test_information_profile_signal_analyzer_reuses_semantic_memory() -> None:
+    with TemporaryDirectory() as tmp_dir:
+        policy_path = Path(tmp_dir) / "semantic_policy.json"
+        db_path = Path(tmp_dir) / "semantic_policy_memory.sqlite3"
+        policy_path.write_text(json.dumps({"policy_memory": {"enabled": True}}, ensure_ascii=False), encoding="utf-8")
+        store = SemanticPolicyStore(policy_path=policy_path, db_path=db_path)
+        store.record_profile_signal(
+            "主要记录供应商资料的信息",
+            {
+                "profile_seed": "entity_directory",
+                "entity_label": "供应商资料",
+                "role_name": "供应商资料信息管理智能体",
+                "knowledge_added_message": "已完成添加，并已记录该供应商资料信息。",
+                "query_aliases": {"联系方式": "contact"},
+                "knowledge_schema": [{"key": "item_name", "prompt": "好的，请先告诉我对象名称。"}],
+            },
+            confidence=0.9,
+            source="test",
+        )
+
+        analyzer = InformationProfileSignalAnalyzer(model_router=None, semantic_policy_store=store)
+        signals = analyzer.analyze("主要记录供应商资料的信息", "")
+
+        assert signals["profile_seed"] == "entity_directory"
+        assert signals["entity_label"] == "供应商资料"
+    assert signals["knowledge_schema"][0]["key"] == "item_name"

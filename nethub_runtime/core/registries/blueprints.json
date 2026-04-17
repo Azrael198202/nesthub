@@ -75,226 +75,8 @@
     ],
     "metadata": {}
   },
-  "general:general_task": {
-    "blueprint_id": "blueprint_8375e77a2e93",
-    "name": "general:general_task:generated",
-    "domain": "general",
-    "intent": "general_task",
-    "inputs": [
-      "input_text",
-      "context"
-    ],
-    "outputs": [
-      "text"
-    ],
-    "steps": [
-      "single_step"
-    ],
-    "metadata": {
-      "generated": true,
-      "generated_artifact_path": "/home/lw-ai/Documents/nesthub/nethub_runtime/generated/blueprints/blueprint_8375e77a2e93.json"
-    }
-  },
-  "general:general_task:generated": {
-    "blueprint_id": "blueprint_8375e77a2e93",
-    "name": "general:general_task:generated",
-    "domain": "general",
-    "intent": "general_task",
-    "inputs": [
-      "input_text",
-      "context"
-    ],
-    "outputs": [
-      "text"
-    ],
-    "steps": [
-      "single_step"
-    ],
-    "metadata": {
-      "generated": true,
-      "generated_artifact_path": "/home/lw-ai/Documents/nesthub/nethub_runtime/generated/blueprints/blueprint_8375e77a2e93.json"
-    }
-  },
-  "family_management:create_family_member_agent": {
-    "blueprint_id": "bp_family_member_agent_create",
-    "name": "Family Member Agent Creation Blueprint",
-    "domain": "family_management",
-    "intent": "create_family_member_agent",
-    "inputs": [
-      "input_text",
-      "session_state"
-    ],
-    "outputs": [
-      "agent",
-      "dialog"
-    ],
-    "steps": [
-      "manage_family_member_agent"
-    ],
-    "metadata": {}
-  },
-  "family_management:refine_family_member_agent": {
-    "blueprint_id": "bp_family_member_agent_refine",
-    "name": "Family Member Agent Setup Blueprint",
-    "domain": "family_management",
-    "intent": "refine_family_member_agent",
-    "inputs": [
-      "input_text",
-      "session_state"
-    ],
-    "outputs": [
-      "agent",
-      "dialog"
-    ],
-    "steps": [
-      "manage_family_member_agent"
-    ],
-    "metadata": {}
-  },
-  "family_management:finalize_family_member_agent": {
-    "blueprint_id": "bp_family_member_agent_finalize",
-    "name": "Family Member Agent Finalization Blueprint",
-    "domain": "family_management",
-    "intent": "finalize_family_member_agent",
-    "inputs": [
-      "input_text",
-      "session_state"
-    ],
-    "outputs": [
-      "agent",
-      "dialog"
-    ],
-    "steps": [
-      "manage_family_member_agent"
-    ],
-    "metadata": {}
-  },
-  "family_management:add_family_member_profile": {
-    "blueprint_id": "bp_family_member_profile_collect",
-    "name": "Family Member Profile Collection Blueprint",
-    "domain": "family_management",
-    "intent": "add_family_member_profile",
-    "inputs": [
-      "input_text",
-      "session_state"
-    ],
-    "outputs": [
-      "member_profile",
-      "dialog"
-    ],
-    "steps": [
-      "manage_family_member_agent"
-    ],
-    "metadata": {}
-  },
-  "family_management:query_family_member_profile": {
-    "blueprint_id": "bp_family_member_profile_query",
-    "name": "Family Member Profile Query Blueprint",
-    "domain": "family_management",
-    "intent": "query_family_member_profile",
-    "inputs": [
-      "input_text",
-      "session_state"
-    ],
-    "outputs": [
-      "answer"
-    ],
-    "steps": [
-      "query_family_member_agent"
-    ],
-    "metadata": {}
-  },
-  "Family Member Agent Creation Blueprint": {
-    "blueprint_id": "bp_family_member_agent_create",
-    "name": "Family Member Agent Creation Blueprint",
-    "domain": "family_management",
-    "intent": "create_family_member_agent",
-    "inputs": [
-      "input_text",
-      "session_state"
-    ],
-    "outputs": [
-      "agent",
-      "dialog"
-    ],
-    "steps": [
-      "manage_family_member_agent"
-    ],
-    "metadata": {}
-  },
-  "Family Member Agent Setup Blueprint": {
-    "blueprint_id": "bp_family_member_agent_refine",
-    "name": "Family Member Agent Setup Blueprint",
-    "domain": "family_management",
-    "intent": "refine_family_member_agent",
-    "inputs": [
-      "input_text",
-      "session_state"
-    ],
-    "outputs": [
-      "agent",
-      "dialog"
-    ],
-    "steps": [
-      "manage_family_member_agent"
-    ],
-    "metadata": {}
-  },
-  "Family Member Agent Finalization Blueprint": {
-    "blueprint_id": "bp_family_member_agent_finalize",
-    "name": "Family Member Agent Finalization Blueprint",
-    "domain": "family_management",
-    "intent": "finalize_family_member_agent",
-    "inputs": [
-      "input_text",
-      "session_state"
-    ],
-    "outputs": [
-      "agent",
-      "dialog"
-    ],
-    "steps": [
-      "manage_family_member_agent"
-    ],
-    "metadata": {}
-  },
-  "Family Member Profile Query Blueprint": {
-    "blueprint_id": "bp_family_member_profile_query",
-    "name": "Family Member Profile Query Blueprint",
-    "domain": "family_management",
-    "intent": "query_family_member_profile",
-    "inputs": [
-      "input_text",
-      "session_state"
-    ],
-    "outputs": [
-      "answer"
-    ],
-    "steps": [
-      "query_family_member_agent"
-    ],
-    "metadata": {}
-  },
-  "Family Member Profile Collection Blueprint": {
-    "blueprint_id": "bp_family_member_profile_collect",
-    "name": "Family Member Profile Collection Blueprint",
-    "domain": "family_management",
-    "intent": "add_family_member_profile",
-    "inputs": [
-      "input_text",
-      "session_state"
-    ],
-    "outputs": [
-      "member_profile",
-      "dialog"
-    ],
-    "steps": [
-      "manage_family_member_agent"
-    ],
-    "metadata": {}
-  },
   "data_ops:data_record:generated": {
-    "blueprint_id": "blueprint_724cbfbc5d44",
+    "blueprint_id": "blueprint_24d963ac6d83",
     "name": "data_ops:data_record:generated",
     "domain": "data_ops",
     "intent": "data_record",
@@ -311,7 +93,7 @@
     ],
     "metadata": {
       "generated": true,
-      "generated_artifact_path": "/home/lw-ai/Documents/nesthub/nethub_runtime/generated/blueprints/blueprint_724cbfbc5d44.json"
+      "generated_artifact_path": "/home/lw-ai/Documents/nesthub/nethub_runtime/generated/blueprints/blueprint_24d963ac6d83.json"
     }
   },
   "agent_management:create_information_agent": {
@@ -493,5 +275,45 @@
       "query_information_knowledge"
     ],
     "metadata": {}
+  },
+  "general:general_task": {
+    "blueprint_id": "blueprint_6089803d958b",
+    "name": "general:general_task:generated",
+    "domain": "general",
+    "intent": "general_task",
+    "inputs": [
+      "input_text",
+      "context"
+    ],
+    "outputs": [
+      "text"
+    ],
+    "steps": [
+      "single_step"
+    ],
+    "metadata": {
+      "generated": true,
+      "generated_artifact_path": "/tmp/pytest-of-lw-ai/pytest-50/test_family_member_agent_can_a0/generated_artifacts/blueprints/blueprint_6089803d958b.json"
+    }
+  },
+  "general:general_task:generated": {
+    "blueprint_id": "blueprint_6089803d958b",
+    "name": "general:general_task:generated",
+    "domain": "general",
+    "intent": "general_task",
+    "inputs": [
+      "input_text",
+      "context"
+    ],
+    "outputs": [
+      "text"
+    ],
+    "steps": [
+      "single_step"
+    ],
+    "metadata": {
+      "generated": true,
+      "generated_artifact_path": "/tmp/pytest-of-lw-ai/pytest-50/test_family_member_agent_can_a0/generated_artifacts/blueprints/blueprint_6089803d958b.json"
+    }
   }
 }

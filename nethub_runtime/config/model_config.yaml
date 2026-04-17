@@ -6,11 +6,11 @@ model_providers:
     type: "ollama"
     base_url: "http://localhost:11434"
     models:
-      - name: "llama2"
+      - name: "qwen2.5:7b-instruct"
         enabled: true
-      - name: "neural-chat"
+      - name: "qwen2.5:3b-instruct"
         enabled: true
-      - name: "codeup"
+      - name: "qwen3-coder:30b"
         enabled: true
 
   openai:
@@ -18,30 +18,30 @@ model_providers:
     api_key: "${OPENAI_API_KEY}"
     models:
       - name: "gpt-4o"
-        enabled: false
+        enabled: true
       - name: "gpt-4o-mini"
-        enabled: false
+        enabled: true
 
   claude:
     type: "anthropic"
     api_key: "${ANTHROPIC_API_KEY}"
     models:
       - name: "claude-3-5-sonnet-latest"
-        enabled: false
+        enabled: true
 
   gemini:
     type: "gemini"
     api_key: "${GEMINI_API_KEY}"
     models:
-      - name: "gemini-2.0-flash-free"
+      - name: "gemini-2.0-flash"
         enabled: true
         context_window: 1000000
-        is_free_tier: true
+        is_free_tier: false
         rate_limit_rpm: 2
-      - name: "gemini-1.5-free"
+      - name: "gemini-2.0-flash-lite"
         enabled: true
         context_window: 1000000
-        is_free_tier: true
+        is_free_tier: false
         rate_limit_rpm: 2
 
   groq:
@@ -49,68 +49,106 @@ model_providers:
     api_key: "${GROQ_API_KEY}"
     base_url: "https://api.groq.com"
     models:
-      - name: "llama-3-70b"
+      - name: "llama-3.3-70b-versatile"
         enabled: true
         latency_ms: 200
-      - name: "mixtral-8x7b"
+      - name: "llama-3.1-8b-instant"
         enabled: true
         latency_ms: 150
 
 routing_policies:
   intent_analysis:
-    primary: "groq:llama-3-70b"
+    primary: "groq:llama-3.3-70b-versatile"
     fallback:
-      - "groq:mixtral-8x7b"
-      - "ollama:neural-chat"
-      - "gemini:gemini-2.0-flash-free"
+      - "groq:llama-3.1-8b-instant"
+      - "ollama:qwen2.5:7b-instruct"
+      - "gemini:gemini-2.0-flash"
     timeout_sec: 15
 
   task_planning:
-    primary: "ollama:llama2"
+    primary: "ollama:qwen2.5:7b-instruct"
     fallback:
-      - "groq:mixtral-8x7b"
+      - "groq:llama-3.1-8b-instant"
       - "claude:claude-3-5-sonnet-latest"
     timeout_sec: 30
 
   code_generation:
     primary: "openai:gpt-4o"
     fallback:
-      - "groq:mixtral-8x7b"
-      - "ollama:codeup"
+      - "groq:llama-3.1-8b-instant"
+      - "ollama:qwen3-coder:30b"
     timeout_sec: 60
 
   document_generation:
-    primary: "gemini:gemini-1.5-free"
+    primary: "gemini:gemini-2.0-flash"
     fallback:
-      - "gemini:gemini-2.0-flash-free"
+      - "gemini:gemini-2.0-flash-lite"
+      - "openai:gpt-4o-mini"
+      - "ollama:qwen2.5:7b-instruct"
       - "claude:claude-3-5-sonnet-latest"
     timeout_sec: 45
 
   long_context_analysis:
-    primary: "gemini:gemini-1.5-free"
+    primary: "gemini:gemini-2.0-flash"
     fallback:
-      - "gemini:gemini-2.0-flash-free"
+      - "gemini:gemini-2.0-flash-lite"
       - "openai:gpt-4o"
+      - "ollama:qwen2.5:7b-instruct"
     timeout_sec: 60
 
   fast_extraction:
-    primary: "groq:mixtral-8x7b"
+    primary: "groq:llama-3.1-8b-instant"
     fallback:
-      - "groq:llama-3-70b"
-      - "gemini:gemini-2.0-flash-free"
+      - "groq:llama-3.3-70b-versatile"
+      - "gemini:gemini-2.0-flash"
     timeout_sec: 20
 
-  general_chat:
-    primary: "groq:llama-3-70b"
+  semantic_parsing:
+    primary: "groq:llama-3.1-8b-instant"
     fallback:
-      - "ollama:neural-chat"
-      - "gemini:gemini-2.0-flash-free"
+      - "gemini:gemini-2.0-flash"
+      - "ollama:qwen2.5:7b-instruct"
+    timeout_sec: 20
+
+  semantic_aggregation:
+    primary: "gemini:gemini-2.0-flash"
+    fallback:
+      - "groq:llama-3.3-70b-versatile"
+      - "ollama:qwen2.5:7b-instruct"
+    timeout_sec: 30
+
+  semantic_learning:
+    primary: "groq:llama-3.3-70b-versatile"
+    fallback:
+      - "gemini:gemini-2.0-flash"
+      - "ollama:qwen2.5:7b-instruct"
+    timeout_sec: 20
+
+  semantic_labeling:
+    primary: "groq:llama-3.1-8b-instant"
+    fallback:
+      - "ollama:qwen2.5:3b-instruct"
+      - "gemini:gemini-2.0-flash"
+    timeout_sec: 15
+
+  llm_execution:
+    primary: "groq:llama-3.3-70b-versatile"
+    fallback:
+      - "ollama:qwen2.5:7b-instruct"
+      - "gemini:gemini-2.0-flash"
+    timeout_sec: 30
+
+  general_chat:
+    primary: "groq:llama-3.3-70b-versatile"
+    fallback:
+      - "ollama:qwen2.5:7b-instruct"
+      - "gemini:gemini-2.0-flash"
     timeout_sec: 20
 
   default:
-    primary: "ollama:llama2"
+    primary: "ollama:qwen2.5:7b-instruct"
     fallback:
-      - "groq:llama-3-70b"
+      - "groq:llama-3.3-70b-versatile"
     timeout_sec: 30
 
 model_params:
@@ -159,14 +197,24 @@ agent_config:
     timeout: 120
     use_model_router: true
     routing:
-      fast_reasoning_model: "groq:llama-3-70b"
-      long_context_model: "gemini:gemini-1.5-free"
+      fast_reasoning_model: "groq:llama-3.3-70b-versatile"
+      long_context_model: "gemini:gemini-2.0-flash"
       fallback_model: "openai:gpt-4o"
 
 workflow_config:
   step_timeout: 60
   max_retries: 3
   enable_parallel: true
+
+local_model_management:
+  enabled: true
+  auto_download_from_huggingface: true
+  preferred_queries:
+    code_generation: "coder gguf instruct"
+    semantic_parsing: "small instruct gguf"
+    document_generation: "instruct gguf"
+    long_context_analysis: "long context gguf"
+    default: "instruct gguf"
 
 development:
   mock_llm_calls: false

@@ -18,10 +18,6 @@
 
 - `test/reports/`
 
-这次家庭成员智能体测试报告的正式位置是：
-
-- `test/reports/20260417_family_member_agent_test_report.md`
-
 `docs/99_homework/` 只保留操作说明、回归策略和手动执行方法，不再存放测试结果正文。
 
 #### 2.1 基础 focused runtime 回归

@@ -1,1 +1,23 @@
-{}
+{
+  "agent_test": {
+    "agent_id": "agent_test",
+    "name": "agent_test",
+    "role": "tester",
+    "description": "test agent",
+    "goals": [
+      "test"
+    ],
+    "constraints": [],
+    "scope": "task",
+    "capabilities": [],
+    "model_policy": {
+      "default": "groq:llama-3-70b"
+    },
+    "tool_policy": [],
+    "memory_type": "short_term",
+    "memory_capacity": 10,
+    "max_iterations": 2,
+    "timeout_sec": 30,
+    "retry_policy": "exponential_backoff"
+  }
+}
