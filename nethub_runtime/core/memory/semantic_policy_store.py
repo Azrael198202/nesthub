@@ -25,6 +25,11 @@ class SemanticPolicyStore:
         "entity_aliases.actor": "dict_list",
         "record_type_rules": "dict",
         "query_metric_rules": "dict",
+        "actor_extract_patterns": "list",
+        "explicit_date_patterns": "list_dict",
+        "relative_week_rules": "list_dict",
+        "boolean_aliases": "dict_list",
+        "time_marker_rules": "dict_deep",
     }
 
     def __init__(self, policy_path: Path, db_path: Path | None = None) -> None:
@@ -563,16 +568,40 @@ class SemanticPolicyStore:
             if isinstance(value, dict):
                 bucket.update(value)
             return
+        if mode == "dict_deep":
+            bucket = overlay.setdefault(policy_key, {})
+            if isinstance(value, dict):
+                overlay[policy_key] = self._deep_merge(bucket, value)
+            return
         if mode == "dict_list":
-            field, nested_key = policy_key.split(".", 1)
-            nested = overlay.setdefault(field, {})
-            bucket = nested.setdefault(nested_key, {})
+            if "." in policy_key:
+                field, nested_key = policy_key.split(".", 1)
+                nested = overlay.setdefault(field, {})
+                bucket = nested.setdefault(nested_key, {})
+                if isinstance(value, dict):
+                    for canonical, aliases in value.items():
+                        current = bucket.setdefault(canonical, [])
+                        for alias in aliases:
+                            if alias not in current:
+                                current.append(alias)
+                return
+            bucket = overlay.setdefault(policy_key, {})
             if isinstance(value, dict):
                 for canonical, aliases in value.items():
                     current = bucket.setdefault(canonical, [])
                     for alias in aliases:
                         if alias not in current:
                             current.append(alias)
+            return
+        if mode == "list_dict":
+            bucket = overlay.setdefault(policy_key, [])
+            values = value if isinstance(value, list) else [value]
+            for item in values:
+                if not isinstance(item, dict):
+                    continue
+                if item not in bucket:
+                    bucket.append(item)
+            return
 
     def _deep_merge(self, left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
         for key, value in right.items():
@@ -617,11 +646,16 @@ class SemanticPolicyStore:
             return isinstance(value, list) and all(isinstance(item, str) and item.strip() for item in value)
         if mode == "dict":
             return isinstance(value, dict) and bool(value)
+        if mode == "dict_deep":
+            return isinstance(value, dict) and bool(value)
         if mode == "dict_list":
             return isinstance(value, dict) and all(
                 isinstance(name, str) and isinstance(aliases, list) and all(isinstance(alias, str) for alias in aliases)
                 for name, aliases in value.items()
             )
+        if mode == "list_dict":
+            values = value if isinstance(value, list) else [value]
+            return bool(values) and all(isinstance(item, dict) and bool(item) for item in values)
         return False
 
     def _normalize_candidate_value(self, value: Any) -> str:

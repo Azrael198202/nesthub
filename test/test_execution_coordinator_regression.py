@@ -2,19 +2,85 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from datetime import UTC, datetime
 
 from nethub_runtime.core.config.settings import SEMANTIC_POLICY_PATH
 from nethub_runtime.core.services.execution_coordinator import ExecutionCoordinator
 
 
-def _build_coordinator(tmp_path: Path) -> ExecutionCoordinator:
-    policy = json.loads(SEMANTIC_POLICY_PATH.read_text(encoding="utf-8"))
+def _sample_semantic_policy() -> dict:
+    policy = ExecutionCoordinator.default_semantic_policy()
     policy["semantic_matching"]["embedding_model"] = ""
     policy["model_semantic_parser"]["enabled"] = False
     policy["model_semantic_parser"]["prefer_model_for_query_parsing"] = False
     policy["model_semantic_parser"]["prefer_model_for_record_extraction"] = False
     policy["external_semantic_router"]["enabled"] = False
     policy["policy_memory"]["enabled"] = False
+    policy["normalization"]["synonyms"] = {
+        "self": ["我", "我个人", "本人"],
+    }
+    policy["entity_aliases"]["actor"] = {
+        "self": ["我", "我个人", "本人"],
+        "家人": ["家人", "家庭成员"],
+        "朋友": ["朋友", "好友"],
+    }
+    policy["ignored_query_tokens"] = ["多少", "一共", "总额", "是多少", "吗"]
+    policy["label_taxonomy"] = {
+        "transportation": {"description": "travel and transportation expenses", "examples": ["打车", "出租车", "地铁", "公交", "车费", "机场"]},
+        "healthcare": {"description": "healthcare and medicine expenses", "examples": ["医院", "看病", "买药", "药店", "诊所"]},
+        "utilities": {"description": "utility and network expenses", "examples": ["网费", "水费", "电费", "燃气费"]},
+    }
+    policy["record_type_rules"] = {
+        "schedule": {"require_time": True, "required_any": ["去", "前往", "开会", "安排", "日程"]},
+        "generic": {"default": True, "default_label": "other"},
+    }
+    policy["segment_split_patterns"] = ["[。；;\\n]", "还有", "并且", "\\band\\b"]
+    policy["location_markers"] = ["在", "去", "于", "at", "in"]
+    policy["location_keyword_patterns"] = ["([\\u4e00-\\u9fffA-Za-z0-9]{2,})地区"]
+    policy["participant_pattern"] = "(\\d+)\\s*人"
+    policy["participant_aliases"] = {"两个人": 2, "三个人": 3}
+    policy["group_by_aliases"] = {
+        "按时间": "time",
+        "按类别": "label",
+        "按地点": "location",
+        "按人员": "actor",
+        "按人": "actor",
+        "by time": "time",
+        "by label": "label",
+        "by location": "location",
+        "by actor": "actor",
+    }
+    policy["actor_extract_patterns"] = [
+        "^(?:记录|添加|保存)?([\\u4e00-\\u9fffA-Za-z]{2,4})(?=今天|昨天|本周|下周|\\d{1,2}月\\d{1,2}[号日]|去|到|前往)",
+        "^([A-Za-z][A-Za-z0-9_-]{1,20})(?=\\s+\\d{4}-\\d{2}-\\d{2}|\\s+\\d{1,2}/\\d{1,2})",
+    ]
+    policy["explicit_date_patterns"] = [
+        {"pattern": "(\\d{1,2})月(\\d{1,2})[号日]", "month_group": 1, "day_group": 2},
+        {"pattern": "(\\d{4})-(\\d{2})-(\\d{2})", "year_group": 1, "month_group": 2, "day_group": 3},
+    ]
+    policy["relative_week_rules"] = [
+        {
+            "pattern": "本周([一二三四五六日天])",
+            "weekday_group": 1,
+            "weekday_map": {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6},
+            "week_start": "monday",
+        }
+    ]
+    policy["boolean_aliases"] = {"truthy": ["是", "参与", "需要", "yes", "true", "y", "1"], "falsy": ["否", "不", "no", "false", "n", "0"]}
+    policy["time_marker_rules"] = {
+        "today": {"aliases": ["今天", "今日", "today"], "match_mode": "same_day", "record_aliases": ["今天", "今日", "today"]},
+        "current_month": {"aliases": ["这个月", "本月", "this month"], "match_mode": "same_month", "record_aliases": ["今天", "今日", "这个月", "本月", "today", "this month", "unspecified"]},
+        "previous_week": {"aliases": ["上周", "上周末", "last week"], "match_mode": "prefix", "prefixes": ["上周", "last week"]},
+    }
+    policy["policy_memory"]["learning"]["blocked_terms"] = [
+        "多少", "一共", "总额", "统计", "查询", "花了", "今天", "这个月", "上周", "类别", "地点", "人员",
+        "total", "count", "query", "today", "this month", "last week", "label", "location", "actor",
+    ]
+    return policy
+
+
+def _build_coordinator(tmp_path: Path) -> ExecutionCoordinator:
+    policy = _sample_semantic_policy()
 
     semantic_policy_path = tmp_path / "semantic_policy.json"
     semantic_policy_path.write_text(json.dumps(policy, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -122,6 +188,76 @@ def test_group_by_markers_come_from_semantic_policy_aliases(tmp_path: Path) -> N
     assert query["group_by"] == ["label"]
 
 
+def test_actor_extract_pattern_can_be_supplied_by_runtime_overlay(tmp_path: Path) -> None:
+    policy = _sample_semantic_policy()
+    policy["policy_memory"]["enabled"] = True
+    policy["actor_extract_patterns"] = []
+
+    semantic_policy_path = tmp_path / "semantic_policy_actor_overlay.json"
+    semantic_policy_path.write_text(json.dumps(policy, ensure_ascii=False, indent=2), encoding="utf-8")
+    coordinator = ExecutionCoordinator(semantic_policy_path=semantic_policy_path)
+    coordinator.semantic_policy_store.record_candidate(
+        "actor_extract_patterns",
+        r"^([\u4e00-\u9fff]{2})(?=今天)",
+        confidence=0.9,
+        source="test",
+        evidence="爸爸今天",
+    )
+    coordinator.semantic_policy_store.record_candidate(
+        "actor_extract_patterns",
+        r"^([\u4e00-\u9fff]{2})(?=今天)",
+        confidence=0.95,
+        source="test",
+        evidence="妈妈今天",
+    )
+    coordinator._refresh_semantic_policy()
+
+    assert coordinator._extract_named_actor("爸爸今天去了超市") == "爸爸"
+
+
+def test_boolean_aliases_can_be_supplied_by_runtime_overlay(tmp_path: Path) -> None:
+    coordinator = _build_coordinator(tmp_path)
+    coordinator.semantic_policy_store.record_candidate(
+        "boolean_aliases",
+        {"truthy": ["参与"], "falsy": ["不参与"]},
+        confidence=0.9,
+        source="test",
+        evidence="参与",
+    )
+    coordinator.semantic_policy_store.record_candidate(
+        "boolean_aliases",
+        {"truthy": ["参与"], "falsy": ["不参与"]},
+        confidence=0.95,
+        source="test",
+        evidence="不参与",
+    )
+    coordinator._refresh_semantic_policy()
+
+    assert coordinator._normalize_yes_no("我参与") is True
+
+
+def test_explicit_date_pattern_can_be_supplied_by_runtime_overlay(tmp_path: Path) -> None:
+    coordinator = _build_coordinator(tmp_path)
+    coordinator.semantic_policy_store.record_candidate(
+        "explicit_date_patterns",
+        {"pattern": r"(\d{1,2})月(\d{1,2})号", "month_group": 1, "day_group": 2},
+        confidence=0.9,
+        source="test",
+        evidence="4月21号",
+    )
+    coordinator.semantic_policy_store.record_candidate(
+        "explicit_date_patterns",
+        {"pattern": r"(\d{1,2})月(\d{1,2})号", "month_group": 1, "day_group": 2},
+        confidence=0.95,
+        source="test",
+        evidence="4月22号",
+    )
+    coordinator._refresh_semantic_policy()
+
+    expected = f"{datetime.now(UTC).year:04d}-04-21"
+    assert coordinator._extract_explicit_date("爸爸4月21号去大阪") == expected
+
+
 def test_schedule_records_are_extracted_without_amounts(tmp_path: Path) -> None:
     coordinator = _build_coordinator(tmp_path)
 
@@ -192,3 +328,23 @@ def test_learning_guard_blocks_existing_location_marker_but_accepts_new_one(tmp_
 
     assert not coordinator._should_accept_learning_candidate("location_markers", "在", learning_cfg)
     assert coordinator._should_accept_learning_candidate("location_markers", "途经", learning_cfg)
+
+
+def test_schema_only_semantic_policy_seed_can_boot(tmp_path: Path) -> None:
+    policy = ExecutionCoordinator.default_semantic_policy()
+    policy["semantic_matching"]["embedding_model"] = ""
+    policy["model_semantic_parser"]["enabled"] = False
+    policy["model_semantic_parser"]["prefer_model_for_query_parsing"] = False
+    policy["model_semantic_parser"]["prefer_model_for_record_extraction"] = False
+    policy["external_semantic_router"]["enabled"] = False
+    policy["policy_memory"]["enabled"] = False
+
+    semantic_policy_path = tmp_path / "semantic_policy_seed.json"
+    semantic_policy_path.write_text(json.dumps(policy, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    coordinator = ExecutionCoordinator(semantic_policy_path=semantic_policy_path)
+    records = coordinator._extract_records("today paid 20 usd")
+    query = coordinator._parse_query("what did I spend", existing_records=records)
+
+    assert records
+    assert query["filters"] == {}

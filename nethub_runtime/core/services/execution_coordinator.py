@@ -30,6 +30,97 @@ LOGGER = logging.getLogger("nethub_runtime.core.execution_coordinator")
 class ExecutionCoordinator:
     """Executes workflow nodes with semantic filtering and model-routed fallback aggregation."""
 
+    @staticmethod
+    def default_semantic_policy() -> dict[str, Any]:
+        return {
+            "tokenizer": {"preferred": "regex", "fallback": "regex", "min_token_length": 2},
+            "semantic_matching": {
+                "method": "embedding_or_token",
+                "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+                "similarity_threshold": 0.62,
+                "fallback_to_external_threshold": 0.35,
+            },
+            "normalization": {"text_replace": {}, "synonyms": {}},
+            "entity_aliases": {"actor": {}},
+            "label_taxonomy": {},
+            "semantic_label_threshold": 0.32,
+            "semantic_label_margin": 0.08,
+            "ignored_query_tokens": [],
+            "record_type_rules": {"generic": {"default": True, "default_label": "other"}},
+            "query_metric_rules": {},
+            "segment_split_patterns": ["[。；;\\n]", "\\band\\b"],
+            "location_markers": [],
+            "location_keyword_patterns": [],
+            "participant_pattern": "(\\d+)",
+            "participant_aliases": {},
+            "content_cleanup_patterns": ["\\d+(?:\\.\\d+)?\\s*(日元|円|yen|usd|rmb|元|块|美元|￥|\\$)?"],
+            "content_strip_chars": " ，,.。",
+            "group_by_aliases": {},
+            "actor_extract_patterns": [],
+            "explicit_date_patterns": [],
+            "relative_week_rules": [],
+            "boolean_aliases": {"truthy": ["yes", "true", "y", "1"], "falsy": ["no", "false", "n", "0"]},
+            "model_semantic_parser": {
+                "enabled": True,
+                "prefer_model_for_query_parsing": True,
+                "prefer_model_for_record_extraction": True,
+                "strict_schema_validation": True,
+                "router": "litellm",
+                "task_types": {
+                    "record_extraction": "semantic_parsing",
+                    "query_parsing": "semantic_parsing",
+                    "aggregation": "semantic_aggregation",
+                    "policy_learning": "semantic_learning",
+                    "labeling": "semantic_labeling",
+                },
+            },
+            "time_marker_rules": {},
+            "policy_memory": {
+                "enabled": True,
+                "backend": "sqlite",
+                "read_only_main_policy": True,
+                "auto_candidate_zone": True,
+                "auto_activate": {
+                    "enabled": True,
+                    "min_hits": 2,
+                    "min_confidence": 0.75,
+                },
+                "learning": {
+                    "enabled": True,
+                    "extractor": "model",
+                    "max_updates_per_text": 8,
+                    "default_confidence": 0.82,
+                    "allowed_policy_keys": [
+                        "location_markers",
+                        "ignored_query_tokens",
+                        "time_markers",
+                        "segment_split_patterns",
+                        "location_keyword_patterns",
+                        "participant_aliases",
+                        "group_by_aliases",
+                        "entity_aliases.actor",
+                        "record_type_rules",
+                        "query_metric_rules",
+                    ],
+                    "min_candidate_text_length": 2,
+                    "blocked_terms": [],
+                    "reject_existing_conflicts": True,
+                },
+                "self_heal": {
+                    "enabled": True,
+                    "max_failures": 2,
+                    "rollback_batch_size": 3,
+                },
+            },
+            "external_semantic_router": {
+                "enabled": False,
+                "provider_priority": ["openai", "claude"],
+                "openai": {"model": "gpt-4o", "api_env": "OPENAI_API_KEY"},
+                "claude": {"model": "claude-3-5-sonnet-latest", "api_env": "ANTHROPIC_API_KEY"},
+                "generic_endpoint_env": "NETHUB_LLM_ROUTER_ENDPOINT",
+            },
+        }
+
     def __init__(
         self,
         session_store: SessionStore | None = None,
@@ -67,24 +158,10 @@ class ExecutionCoordinator:
         return {"numeric_value_patterns": []}
 
     def _load_semantic_policy(self) -> dict[str, Any]:
-        policy = self.semantic_policy_store.load_runtime_policy()
-        if not policy:
-            policy = {
-            "tokenizer": {"preferred": "regex", "fallback": "regex", "min_token_length": 2},
-            "semantic_matching": {
-                "method": "embedding_or_token",
-                "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
-                "similarity_threshold": 0.62,
-                "fallback_to_external_threshold": 0.35,
-            },
-            "normalization": {"text_replace": {}, "synonyms": {}},
-            "entity_aliases": {"actor": {}},
-            "label_taxonomy": {},
-            "semantic_label_threshold": 0.32,
-            "ignored_query_tokens": [],
-            "policy_memory": {"enabled": False},
-            "external_semantic_router": {"enabled": False},
-        }
+        policy = self.default_semantic_policy()
+        runtime_policy = self.semantic_policy_store.load_runtime_policy()
+        if runtime_policy:
+            policy = self._deep_merge_dicts(policy, runtime_policy)
         try:
             self._validate_semantic_policy(policy)
             return policy
@@ -110,24 +187,43 @@ class ExecutionCoordinator:
         missing = [key for key in required_top_level if key not in policy]
         if missing:
             raise ValueError(f"semantic policy missing required keys: {', '.join(missing)}")
-        if not isinstance(policy.get("location_markers"), list) or not policy["location_markers"]:
-            raise ValueError("semantic policy location_markers must be a non-empty list")
+        if not isinstance(policy.get("location_markers"), list):
+            raise ValueError("semantic policy location_markers must be a list")
         if not isinstance(policy.get("participant_aliases"), dict):
             raise ValueError("semantic policy participant_aliases must be a dict")
-        if not isinstance(policy.get("group_by_aliases"), dict) or not policy["group_by_aliases"]:
-            raise ValueError("semantic policy group_by_aliases must be a non-empty dict")
+        if not isinstance(policy.get("group_by_aliases"), dict):
+            raise ValueError("semantic policy group_by_aliases must be a dict")
         if not isinstance(policy.get("location_keyword_patterns"), list):
             raise ValueError("semantic policy location_keyword_patterns must be a list")
-        if not isinstance(policy.get("segment_split_patterns"), list) or not policy["segment_split_patterns"]:
-            raise ValueError("semantic policy segment_split_patterns must be a non-empty list")
+        if not isinstance(policy.get("segment_split_patterns"), list):
+            raise ValueError("semantic policy segment_split_patterns must be a list")
         if not isinstance(policy.get("content_cleanup_patterns"), list):
             raise ValueError("semantic policy content_cleanup_patterns must be a list")
-        if not isinstance(policy.get("time_marker_rules"), dict) or not policy["time_marker_rules"]:
-            raise ValueError("semantic policy time_marker_rules must be a non-empty dict")
+        if not isinstance(policy.get("time_marker_rules"), dict):
+            raise ValueError("semantic policy time_marker_rules must be a dict")
 
     def _refresh_semantic_policy(self) -> None:
-        self.semantic_policy = self.semantic_policy_store.load_runtime_policy()
+        self.semantic_policy = self._deep_merge_dicts(
+            self.default_semantic_policy(),
+            self.semantic_policy_store.load_runtime_policy(),
+        )
         self._validate_semantic_policy(self.semantic_policy)
+
+    def _deep_merge_dicts(self, left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+        merged = json.loads(json.dumps(left, ensure_ascii=False))
+        for key, value in right.items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key] = self._deep_merge_dicts(merged[key], value)
+                continue
+            if isinstance(value, list) and isinstance(merged.get(key), list):
+                items = list(merged[key])
+                for item in value:
+                    if item not in items:
+                        items.append(item)
+                merged[key] = items
+                continue
+            merged[key] = value
+        return merged
 
     def _require_semantic_value(self, key: str, expected_type: type[Any]) -> Any:
         value = self.semantic_policy.get(key)
@@ -1153,7 +1249,11 @@ class ExecutionCoordinator:
                 "group_by_aliases": self.semantic_policy.get("group_by_aliases", {}),
                 "entity_aliases": self.semantic_policy.get("entity_aliases", {}),
                 "ignored_query_tokens": self.semantic_policy.get("ignored_query_tokens", []),
-                "time_markers": self.intent_policy.get("time_markers", []),
+                "time_marker_rules": self.semantic_policy.get("time_marker_rules", {}),
+                "actor_extract_patterns": self.semantic_policy.get("actor_extract_patterns", []),
+                "explicit_date_patterns": self.semantic_policy.get("explicit_date_patterns", []),
+                "relative_week_rules": self.semantic_policy.get("relative_week_rules", []),
+                "boolean_aliases": self.semantic_policy.get("boolean_aliases", {}),
                 "record_type_rules": self.semantic_policy.get("record_type_rules", {}),
                 "query_metric_rules": self.semantic_policy.get("query_metric_rules", {}),
             },

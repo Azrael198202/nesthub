@@ -5,7 +5,7 @@ from nethub_runtime.core.main import app
 
 client = TestClient(app)
 
-def test_core_handle_budget(isolated_generated_artifacts):
+def test_core_handle_budget(isolated_generated_artifacts, budget_semantic_runtime):
     payload = {
         "input_text": "吃饭花了3000日元，两个人，在博多一兰拉面。今天买了咖啡500日元，还有买了书1200日元",
         "context": {},

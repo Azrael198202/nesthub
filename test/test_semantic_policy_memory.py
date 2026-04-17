@@ -60,11 +60,11 @@ def _write_policy(path, overrides=None):
     path.write_text(json.dumps(policy, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def test_semantic_policy_requires_configured_business_keys(tmp_path) -> None:
+def test_semantic_policy_rejects_invalid_required_key_shape(tmp_path) -> None:
     policy_path = tmp_path / "semantic_policy.json"
     _write_policy(policy_path)
     broken = json.loads(policy_path.read_text(encoding="utf-8"))
-    broken.pop("location_markers")
+    broken["location_markers"] = "at"
     policy_path.write_text(json.dumps(broken, ensure_ascii=False), encoding="utf-8")
 
     with pytest.raises(ValueError, match="location_markers"):
@@ -222,3 +222,73 @@ def test_learning_candidate_flattening_handles_nested_rule_values(tmp_path) -> N
     assert "安排" in flattened
     assert "会议" in flattened
     assert "requires_record_type" in flattened
+
+
+def test_semantic_policy_runtime_overlay_supports_parser_rule_families(tmp_path) -> None:
+    policy_path = tmp_path / "semantic_policy.json"
+    db_path = tmp_path / "semantic_policy_memory.sqlite3"
+    _write_policy(
+        policy_path,
+        {
+            "actor_extract_patterns": [],
+            "explicit_date_patterns": [],
+            "relative_week_rules": [],
+            "boolean_aliases": {"truthy": ["yes"], "falsy": ["no"]},
+            "time_marker_rules": {"today": {"aliases": ["today"], "match_mode": "same_day", "record_aliases": ["today"]}},
+        },
+    )
+    store = SemanticPolicyStore(policy_path=policy_path, db_path=db_path)
+
+    store.record_candidate("actor_extract_patterns", r"^([\u4e00-\u9fff]{2,4})(?=今天)", confidence=0.9, source="test", evidence="爸爸今天")
+    store.record_candidate("actor_extract_patterns", r"^([\u4e00-\u9fff]{2,4})(?=今天)", confidence=0.95, source="test", evidence="妈妈今天")
+    store.record_candidate(
+        "explicit_date_patterns",
+        {"pattern": r"(\d{1,2})月(\d{1,2})号", "month_group": 1, "day_group": 2},
+        confidence=0.9,
+        source="test",
+        evidence="4月21号",
+    )
+    store.record_candidate(
+        "explicit_date_patterns",
+        {"pattern": r"(\d{1,2})月(\d{1,2})号", "month_group": 1, "day_group": 2},
+        confidence=0.95,
+        source="test",
+        evidence="4月22号",
+    )
+    store.record_candidate(
+        "relative_week_rules",
+        {"pattern": "下周([一二三四五六日天])", "weekday_group": 1, "weekday_map": {"一": 0, "二": 1}, "week_start": "monday"},
+        confidence=0.9,
+        source="test",
+        evidence="下周一",
+    )
+    store.record_candidate(
+        "relative_week_rules",
+        {"pattern": "下周([一二三四五六日天])", "weekday_group": 1, "weekday_map": {"一": 0, "二": 1}, "week_start": "monday"},
+        confidence=0.95,
+        source="test",
+        evidence="下周二",
+    )
+    store.record_candidate("boolean_aliases", {"truthy": ["参与"], "falsy": ["不参与"]}, confidence=0.9, source="test", evidence="参与")
+    store.record_candidate("boolean_aliases", {"truthy": ["参与"], "falsy": ["不参与"]}, confidence=0.95, source="test", evidence="不参与")
+    store.record_candidate(
+        "time_marker_rules",
+        {"next_week": {"aliases": ["下周"], "match_mode": "prefix", "prefixes": ["下周"]}},
+        confidence=0.9,
+        source="test",
+        evidence="下周安排",
+    )
+    store.record_candidate(
+        "time_marker_rules",
+        {"next_week": {"aliases": ["下周"], "match_mode": "prefix", "prefixes": ["下周"]}},
+        confidence=0.95,
+        source="test",
+        evidence="下周计划",
+    )
+
+    runtime_policy = store.load_runtime_policy()
+    assert r"^([\u4e00-\u9fff]{2,4})(?=今天)" in runtime_policy["actor_extract_patterns"]
+    assert any(item.get("pattern") == r"(\d{1,2})月(\d{1,2})号" for item in runtime_policy["explicit_date_patterns"])
+    assert any(item.get("pattern") == "下周([一二三四五六日天])" for item in runtime_policy["relative_week_rules"])
+    assert "参与" in runtime_policy["boolean_aliases"]["truthy"]
+    assert "next_week" in runtime_policy["time_marker_rules"]

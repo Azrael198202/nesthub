@@ -41,3 +41,12 @@ python_env.json
 # Editor backups
 *~
 .DS_Store
+
+# NestHub runtime local state and generated artifacts
+nethub_runtime/core/config/semantic_policy_memory.sqlite3
+nethub_runtime/generated/agents/*.json
+nethub_runtime/generated/blueprints/*.json
+nethub_runtime/generated/code/*
+nethub_runtime/generated/features/*
+nethub_runtime/generated/local_models/*
+nethub_runtime/generated/traces/*.json
