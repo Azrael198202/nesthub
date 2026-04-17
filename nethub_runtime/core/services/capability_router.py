@@ -33,6 +33,9 @@ class CapabilityRouter:
             "persist_records": "planning",
             "manage_information_agent": "planning",
             "query_information_knowledge": "planning",
+            "analyze_workflow_context": "planning",
+            "generate_workflow_artifact": "file_generation",
+            "persist_workflow_output": "planning",
             "ocr_extract": "ocr",
             "stt_transcribe": "stt",
             "tts_synthesize": "tts",
@@ -52,6 +55,8 @@ class CapabilityRouter:
             return "agent"
         if step_name == "query_information_knowledge" or tool_name == "vector_store":
             return "knowledge_retrieval"
+        if step_name in {"generate_workflow_artifact", "persist_workflow_output"}:
+            return "tool"
         if tool_name not in {"", "none"}:
             return "tool"
         if service_name in {"generic", "knowledge_memory"}:
@@ -104,6 +109,11 @@ class CapabilityRouter:
             },
             "query_agent_knowledge": {
                 "query_information_knowledge": {"model": "general-llm", "tool": "vector_store", "service": "knowledge_memory"},
+            },
+            "default_analysis": {
+                "analyze_workflow_context": {"model": "general-llm", "tool": "none", "service": "generic"},
+                "generate_workflow_artifact": {"model": "general-llm", "tool": "file_builder", "service": "artifact_builder"},
+                "persist_workflow_output": {"model": "state-store", "tool": "session_store", "service": "memory"},
             },
             "default": {"model": "general-llm", "tool": "none", "service": "generic"},
         }
@@ -160,10 +170,11 @@ class CapabilityRouter:
     def route_workflow(self, task: TaskSchema, workflow: WorkflowSchema) -> list[dict[str, Any]]:
         self._maybe_reload()
         intent_routes = self._route_config.get(task.intent, {})
+        analysis_routes = self._route_config.get("default_analysis", {})
         default_route = self._route_config.get("default", {})
         plan: list[dict[str, Any]] = []
         for step in workflow.steps:
-            route = intent_routes.get(step.name, default_route)
+            route = intent_routes.get(step.name, analysis_routes.get(step.name, default_route))
             model_choice = self.model_router.route(self._task_kind_from_step(step.name))
             availability = self.model_router.ensure_available(model_choice["provider"], model_choice["model"])
             executor_type = self._executor_type_for_step(step.name, route)

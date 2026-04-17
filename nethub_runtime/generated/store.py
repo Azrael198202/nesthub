@@ -27,7 +27,7 @@ class GeneratedArtifactStore:
     def persist(self, category: str, artifact_id: str, payload: Any, *, extension: str = ".json") -> Path:
         directory = self._paths()[self.CATEGORY_TO_DIR[category]]
         path = directory / f"{artifact_id}{extension}"
-        if extension == ".py" and isinstance(payload, str):
+        if extension in {".py", ".md", ".txt", ".yaml", ".yml"} and isinstance(payload, str):
             path.write_text(payload, encoding="utf-8")
             return path
         serializable = self._serialize(payload)

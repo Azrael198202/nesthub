@@ -6,5 +6,6 @@
   "shell_tools": [
     "bash"
   ],
-  "auto_install": false
+  "shell_tool_installers": {},
+  "auto_install": true
 }

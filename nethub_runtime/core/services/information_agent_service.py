@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from nethub_runtime.core.services.agent_framework_service import AgentFrameworkService
 from nethub_runtime.core.schemas.context_schema import CoreContextSchema
 from nethub_runtime.core.schemas.task_schema import TaskSchema
 
@@ -11,6 +12,7 @@ class InformationAgentService:
     def __init__(self, session_store: Any, vector_store: Any) -> None:
         self.session_store = session_store
         self.vector_store = vector_store
+        self.agent_framework_service = AgentFrameworkService()
 
     def default_information_field_definitions(self) -> list[dict[str, str]]:
         return [
@@ -20,7 +22,7 @@ class InformationAgentService:
             {"key": "details", "prompt": "还有什么需要记录的？如果没有了，请回答 完成添加。"},
         ]
 
-    def family_member_field_definitions(self) -> list[dict[str, str]]:
+    def directory_field_definitions(self) -> list[dict[str, str]]:
         return [
             {"key": "member_name", "prompt": "好的，请问成员姓名？"},
             {"key": "role", "prompt": "角色是什么呢？例如 爸爸 / 妈妈 / 孩子。"},
@@ -34,43 +36,203 @@ class InformationAgentService:
             {"key": "extra_notes", "prompt": "还有什么需要记录的？如果没有了，请回答 完成添加。"},
         ]
 
-    def normalize_slug(self, text: str) -> str:
-        normalized = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "_", text.lower()).strip("_")
-        return normalized or "information_agent"
+    def timeline_field_definitions(self) -> list[dict[str, str]]:
+        return [
+            {"key": "actor", "prompt": "这是谁的日程安排？"},
+            {"key": "time", "prompt": "时间是什么时候？"},
+            {"key": "content", "prompt": "具体安排是什么？"},
+            {"key": "location", "prompt": "地点在哪里？如果没有可回答 无。"},
+            {"key": "details", "prompt": "还有什么补充说明？如果没有了，请回答 完成添加。"},
+        ]
 
-    def infer_agent_blueprint(self, purpose: str, specification: str = "") -> dict[str, Any]:
+    def infer_requirement_signals(self, purpose: str, specification: str = "") -> dict[str, Any]:
         combined = f"{purpose} {specification}".strip()
-        if any(keyword in combined for keyword in ("家庭成员", "成员信息", "家庭信息", "爸爸", "妈妈", "孩子")):
-            return {
-                "agent_id": "family_member_info_agent",
-                "name": "family_member_info_agent",
-                "role": "家庭成员信息管理智能体",
-                "description": purpose or "主要记录家庭成员的信息。",
-                "knowledge_namespace": "agent_knowledge/family_member_info_agent",
-                "knowledge_entity_label": "家庭成员",
-                "knowledge_schema": self.family_member_field_definitions(),
-                "query_aliases": {
+        return {
+            "combined_text": combined,
+            "is_directory": any(keyword in combined for keyword in ("家庭成员", "成员信息", "家庭信息", "联系人", "通讯录", "爸爸", "妈妈", "孩子")),
+            "is_timeline": any(keyword in combined for keyword in ("日程", "安排", "行程", "出差", "远足", "提醒", "计划", "会议")),
+            "needs_contact_fields": any(keyword in combined for keyword in ("家庭成员", "成员信息", "联系人", "通讯录", "电话", "邮箱")),
+            "needs_expense_flags": any(keyword in combined for keyword in ("家庭成员", "消费", "币种", "统计")),
+            "needs_schedule_flags": any(keyword in combined for keyword in ("家庭成员", "提醒", "日程")),
+        }
+
+    def build_field_definitions(self, signals: dict[str, Any]) -> list[dict[str, str]]:
+        if signals.get("is_timeline"):
+            return self.timeline_field_definitions()
+        if signals.get("is_directory"):
+            return self.directory_field_definitions()
+        return self.default_information_field_definitions()
+
+    def build_query_aliases(self, signals: dict[str, Any]) -> dict[str, str]:
+        aliases: dict[str, str] = {}
+        if signals.get("is_timeline"):
+            aliases.update(
+                {
+                    "时间": "time",
+                    "日期": "time",
+                    "安排": "content",
+                    "行程": "content",
+                    "地点": "location",
+                    "位置": "location",
+                    "说明": "details",
+                }
+            )
+        if signals.get("needs_contact_fields"):
+            aliases.update(
+                {
                     "手机号": "phone",
                     "电话": "phone",
                     "邮箱": "email",
                     "line": "extra_notes",
                     "公司": "extra_notes",
                     "联系电话": "extra_notes",
-                },
-                "completion_phrase": "完成添加",
-            }
-        slug = self.normalize_slug(purpose or specification or "information_agent")
+                }
+            )
+        return aliases
+
+    def infer_profile_name(self, signals: dict[str, Any]) -> str:
+        if signals.get("is_timeline"):
+            return "structured_timeline"
+        if signals.get("is_directory"):
+            return "entity_directory"
+        return "generic_information"
+
+    def infer_entity_label(self, signals: dict[str, Any]) -> str:
+        profile = self.agent_framework_service.infer_information_profile(
+            purpose=str(signals.get("combined_text") or ""),
+            signals=signals,
+        )
+        return profile.entity_label
+
+    def infer_role_name(self, signals: dict[str, Any]) -> str:
+        profile = self.agent_framework_service.infer_information_profile(
+            purpose=str(signals.get("combined_text") or ""),
+            signals=signals,
+        )
+        if profile.profile_name == "structured_timeline":
+            return "日程信息智能体"
+        if profile.entity_label == "外部联系人":
+            return "外部联系人信息智能体"
+        if profile.profile_name == "entity_directory":
+            return "家庭成员信息管理智能体"
+        return "信息管理智能体"
+
+    def infer_capture_mode(self, signals: dict[str, Any]) -> str:
+        profile = self.agent_framework_service.infer_information_profile(
+            purpose=str(signals.get("combined_text") or ""),
+            signals=signals,
+        )
+        return profile.preferred_capture_mode
+
+    def infer_knowledge_added_message(self, signals: dict[str, Any]) -> str:
+        if signals.get("is_timeline"):
+            return "已经将此信息记录到日程信息智能体。"
+        if signals.get("is_directory") and "联系人" in str(signals.get("combined_text") or ""):
+            return "已完成添加，并已记录该外部联系人信息。"
+        if signals.get("is_directory"):
+            return "已完成添加，并已记录该家庭成员信息。"
+        return "已完成添加，并已记录该信息。"
+
+    def normalize_slug(self, text: str) -> str:
+        normalized = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "_", text.lower()).strip("_")
+        return normalized or "information_agent"
+
+    def infer_requirement_profile(self, purpose: str, specification: str = "") -> dict[str, Any]:
+        signals = self.infer_requirement_signals(purpose, specification)
+        framework_profile = self.agent_framework_service.infer_information_profile(purpose=purpose, signals=signals)
         return {
-            "agent_id": slug,
-            "name": slug,
-            "role": "信息管理智能体",
-            "description": purpose or "用于记录和查询结构化信息。",
-            "knowledge_namespace": f"agent_knowledge/{slug}",
-            "knowledge_entity_label": "信息条目",
-            "knowledge_schema": self.default_information_field_definitions(),
-            "query_aliases": {},
+            "profile": framework_profile.profile_name,
+            "entity_label": framework_profile.entity_label,
+            "role": self.infer_role_name(signals),
+            "knowledge_schema": self.build_field_definitions(signals),
+            "query_aliases": self.build_query_aliases(signals),
             "completion_phrase": "完成添加",
+            "capture_mode": framework_profile.preferred_capture_mode,
+            "knowledge_added_message": self.infer_knowledge_added_message(signals),
+            "signals": signals,
+            "agent_class": framework_profile.agent_class.value,
+            "agent_layer": framework_profile.agent_layer.value,
+            "workflow_roles": framework_profile.workflow_roles,
+            "framework_metadata": framework_profile.metadata,
         }
+
+    def build_agent_identity(self, purpose: str, profile: dict[str, Any]) -> dict[str, str]:
+        base_slug = self.normalize_slug(purpose or str(profile.get("entity_label") or "information_agent"))
+        profile_slug = str(profile.get("profile") or "information")
+        agent_id = f"{profile_slug}_{base_slug}"
+        return {
+            "agent_id": agent_id,
+            "name": agent_id,
+            "knowledge_namespace": f"agent_knowledge/{agent_id}",
+        }
+
+    def infer_agent_blueprint(self, purpose: str, specification: str = "") -> dict[str, Any]:
+        profile = self.infer_requirement_profile(purpose, specification)
+        identity = self.build_agent_identity(purpose or specification, profile)
+        return {
+            **identity,
+            "profile": profile.get("profile", "generic_information"),
+            "role": profile.get("role", "信息管理智能体"),
+            "description": purpose or "用于记录和查询结构化信息。",
+            "knowledge_entity_label": profile.get("entity_label", "信息条目"),
+            "knowledge_schema": profile.get("knowledge_schema", self.default_information_field_definitions()),
+            "query_aliases": profile.get("query_aliases", {}),
+            "completion_phrase": profile.get("completion_phrase", "完成添加"),
+            "capture_mode": profile.get("capture_mode", "guided_collection"),
+            "knowledge_added_message": profile.get("knowledge_added_message", "已完成添加，并已记录该信息。"),
+            "agent_class": profile.get("agent_class", "information"),
+            "agent_layer": profile.get("agent_layer", "knowledge"),
+            "workflow_roles": profile.get("workflow_roles", ["knowledge_base"]),
+            "framework_metadata": profile.get("framework_metadata", {}),
+        }
+
+    def _persist_knowledge_records(self, configured_agent: dict[str, Any], records_to_add: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        existing_records = dict(configured_agent.get("knowledge_records") or {})
+        field_defs = configured_agent.get("knowledge_schema") or self.default_information_field_definitions()
+        vector_records: list[dict[str, Any]] = []
+
+        for record in records_to_add:
+            record_id = f"knowledge_{len(existing_records) + 1}"
+            complete_record = {"record_id": record_id, **record}
+            existing_records[record_id] = complete_record
+            content = "\n".join(f"{item['key']}: {complete_record.get(item['key'], '')}" for item in field_defs)
+            vector_records.append(
+                self.vector_store.add_knowledge(
+                    namespace=str(configured_agent.get("knowledge_namespace") or "agent_knowledge/information_agent"),
+                    content=content,
+                    metadata={
+                        "agent_id": configured_agent.get("agent_id"),
+                        "record_id": record_id,
+                        "record": complete_record,
+                        "entity_label": configured_agent.get("knowledge_entity_label", "信息条目"),
+                    },
+                    item_id=record_id,
+                )
+            )
+
+        return existing_records, vector_records
+
+    def _extract_schedule_knowledge_records(self, text: str, extract_records: Any) -> list[dict[str, Any]]:
+        extracted = extract_records(text) or []
+        schedule_records: list[dict[str, Any]] = []
+        for item in extracted:
+            if item.get("record_type") != "schedule":
+                continue
+            location = item.get("location")
+            if not location:
+                fallback_match = re.search(r"(?:去|到|前往|出差)([\u4e00-\u9fffA-Za-z0-9]{2,})", str(item.get("raw_text") or text))
+                if fallback_match:
+                    location = fallback_match.group(1)
+            schedule_records.append(
+                {
+                    "actor": item.get("actor") or "未指定",
+                    "time": item.get("time") or "",
+                    "content": item.get("content") or item.get("raw_text") or text,
+                    "location": location or "无",
+                    "details": item.get("raw_text") or text,
+                }
+            )
+        return schedule_records
 
     def find_record_by_text(self, text: str, records: dict[str, Any], schema_fields: list[dict[str, str]]) -> dict[str, Any] | None:
         candidate_keys = [item.get("key", "") for item in schema_fields]
@@ -114,7 +276,17 @@ class InformationAgentService:
             "schema_fields": [item.get("key") for item in configured_agent.get("knowledge_schema", self.default_information_field_definitions())],
             "knowledge_records": list((configured_agent.get("knowledge_records") or {}).values()),
             "status": configured_agent.get("status", "draft"),
+            "profile": configured_agent.get("profile", "generic_information"),
+            "agent_class": configured_agent.get("agent_class", "information"),
+            "agent_layer": configured_agent.get("agent_layer", "knowledge"),
+            "workflow_roles": configured_agent.get("workflow_roles", ["knowledge_base"]),
         }
+
+    def _setup_completion_hint(self, draft: dict[str, Any]) -> str:
+        purpose = str(draft.get("purpose") or "").strip()
+        if purpose:
+            return f"如果没有，请回答：没有了，完成创建。系统会根据“{purpose}”自动补全采集结构。"
+        return "如果没有，请回答：没有了，完成创建。系统会自动补全采集结构。"
 
     def manage_information_agent(
         self,
@@ -124,6 +296,7 @@ class InformationAgentService:
         context: CoreContextSchema,
         normalize_yes_no: Any,
         sanitize_member_value: Any,
+        extract_records: Any,
     ) -> dict[str, Any]:
         state = self.session_store.get(context.session_id)
         configured_agent = state.get("configured_agent") or {}
@@ -156,7 +329,7 @@ class InformationAgentService:
                     },
                 )
                 return {
-                    "message": "好的，还有什么需要特别指定的。如果没有，请回答：完成创建家庭成员信息智能体。",
+                    "message": f"好的，还有什么需要特别指定的。{self._setup_completion_hint(updated.get('agent_setup', {}).get('draft', {}))}",
                     "dialog_state": {"stage": "awaiting_confirmation"},
                     "agent": self.build_configured_agent_payload(updated),
                 }
@@ -173,7 +346,7 @@ class InformationAgentService:
                     },
                 )
                 return {
-                    "message": "好的。如果已经没有补充要求，请回答：完成创建家庭成员信息智能体。",
+                    "message": self._setup_completion_hint(updated.get('agent_setup', {}).get('draft', {})),
                     "dialog_state": {"stage": "awaiting_confirmation"},
                     "agent": self.build_configured_agent_payload(updated),
                 }
@@ -209,6 +382,27 @@ class InformationAgentService:
 
             field_defs = configured_agent.get("knowledge_schema") or self.default_information_field_definitions()
             completion_phrase = str(configured_agent.get("completion_phrase") or "完成添加")
+            if not collection.get("active") and configured_agent.get("capture_mode") == "direct_record_extraction":
+                schedule_records = self._extract_schedule_knowledge_records(text, extract_records)
+                if schedule_records:
+                    records, vector_records = self._persist_knowledge_records(configured_agent, schedule_records)
+                    updated = self.session_store.patch(
+                        context.session_id,
+                        {
+                            "configured_agent": {**configured_agent, "knowledge_records": records, "status": "active"},
+                            "knowledge_collection": {"active": False, "field_index": 0, "fields": field_defs, "data": {}},
+                        },
+                    )
+                    base_message = str(configured_agent.get("knowledge_added_message") or "已完成添加，并已记录该信息。")
+                    message = base_message if len(schedule_records) == 1 else f"已完成添加，并记录了{len(schedule_records)}条{configured_agent.get('knowledge_entity_label', '信息')}。"
+                    return {
+                        "message": message,
+                        "dialog_state": {"stage": "knowledge_added"},
+                        "knowledge": schedule_records[0] if len(schedule_records) == 1 else schedule_records,
+                        "knowledge_vector_record": vector_records[0] if len(vector_records) == 1 else vector_records,
+                        "agent": self.build_configured_agent_payload(updated),
+                    }
+
             if not collection.get("active"):
                 updated = self.session_store.patch(
                     context.session_id,
@@ -234,21 +428,8 @@ class InformationAgentService:
             if current_field["key"] == field_defs[-1]["key"] and completion_phrase in text:
                 if value:
                     data[current_field["key"]] = value
-                record_id = f"knowledge_{len((configured_agent.get('knowledge_records') or {})) + 1}"
-                record = {"record_id": record_id, **data}
-                records = {**(configured_agent.get("knowledge_records") or {}), record_id: record}
-                content = "\n".join(f"{item['key']}: {record.get(item['key'], '')}" for item in field_defs)
-                vector_record = self.vector_store.add_knowledge(
-                    namespace=str(configured_agent.get("knowledge_namespace") or "agent_knowledge/information_agent"),
-                    content=content,
-                    metadata={
-                        "agent_id": configured_agent.get("agent_id"),
-                        "record_id": record_id,
-                        "record": record,
-                        "entity_label": configured_agent.get("knowledge_entity_label", "信息条目"),
-                    },
-                    item_id=record_id,
-                )
+                records, vector_records = self._persist_knowledge_records(configured_agent, [data])
+                record = list(records.values())[-1]
                 updated = self.session_store.patch(
                     context.session_id,
                     {
@@ -257,31 +438,18 @@ class InformationAgentService:
                     },
                 )
                 return {
-                    "message": "已完成添加，并已记录该家庭成员信息。",
+                    "message": str(configured_agent.get("knowledge_added_message") or "已完成添加，并已记录该信息。"),
                     "dialog_state": {"stage": "knowledge_added"},
                     "knowledge": record,
-                    "knowledge_vector_record": vector_record,
+                    "knowledge_vector_record": vector_records[0],
                     "agent": self.build_configured_agent_payload(updated),
                 }
 
             data[current_field["key"]] = value
             next_index = current_index + 1
             if next_index >= len(field_defs):
-                record_id = f"knowledge_{len((configured_agent.get('knowledge_records') or {})) + 1}"
-                record = {"record_id": record_id, **data}
-                records = {**(configured_agent.get("knowledge_records") or {}), record_id: record}
-                content = "\n".join(f"{item['key']}: {record.get(item['key'], '')}" for item in field_defs)
-                vector_record = self.vector_store.add_knowledge(
-                    namespace=str(configured_agent.get("knowledge_namespace") or "agent_knowledge/information_agent"),
-                    content=content,
-                    metadata={
-                        "agent_id": configured_agent.get("agent_id"),
-                        "record_id": record_id,
-                        "record": record,
-                        "entity_label": configured_agent.get("knowledge_entity_label", "信息条目"),
-                    },
-                    item_id=record_id,
-                )
+                records, vector_records = self._persist_knowledge_records(configured_agent, [data])
+                record = list(records.values())[-1]
                 updated = self.session_store.patch(
                     context.session_id,
                     {
@@ -290,10 +458,10 @@ class InformationAgentService:
                     },
                 )
                 return {
-                    "message": "已完成添加，并已记录该家庭成员信息。",
+                    "message": str(configured_agent.get("knowledge_added_message") or "已完成添加，并已记录该信息。"),
                     "dialog_state": {"stage": "knowledge_added"},
                     "knowledge": record,
-                    "knowledge_vector_record": vector_record,
+                    "knowledge_vector_record": vector_records[0],
                     "agent": self.build_configured_agent_payload(updated),
                 }
 

@@ -18,5 +18,14 @@
     "summarizer",
     "session_store",
     "none"
+  ],
+  "allow_runtime_auto_install": true,
+  "allowed_runtime_installers": [
+    "pip",
+    "apt-get",
+    "apt",
+    "dnf",
+    "yum",
+    "brew"
   ]
 }

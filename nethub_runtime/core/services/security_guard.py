@@ -16,7 +16,7 @@ class SecurityGuard:
 
     def _load_policy(self) -> dict:
         if not self.policy_path.exists():
-            return {"allowed_output_formats": ["dict"], "allowed_tool_names": ["none"]}
+            return {"allowed_output_formats": ["dict"], "allowed_tool_names": ["none"], "allow_runtime_auto_install": False, "allowed_runtime_installers": []}
         return json.loads(self.policy_path.read_text(encoding="utf-8"))
 
     def validate_output_format(self, fmt: str) -> None:
@@ -30,3 +30,12 @@ class SecurityGuard:
             tool_name = (step.get("capability") or {}).get("tool", "none")
             if tool_name not in allowed_tools:
                 raise PermissionError(f"Tool '{tool_name}' is not allowed by security policy.")
+
+    def allow_runtime_auto_install(self) -> bool:
+        return bool(self.policy.get("allow_runtime_auto_install", False))
+
+    def allowed_runtime_installers(self) -> list[str]:
+        installers = self.policy.get("allowed_runtime_installers", [])
+        if not isinstance(installers, list):
+            return []
+        return [str(item).strip() for item in installers if str(item).strip()]

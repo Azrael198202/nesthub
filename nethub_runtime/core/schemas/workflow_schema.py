@@ -22,3 +22,4 @@ class WorkflowSchema(BaseModel):
     task_id: str
     mode: str = "normal"
     steps: list[WorkflowStepSchema] = Field(default_factory=list)
+    composition: dict[str, Any] = Field(default_factory=dict)

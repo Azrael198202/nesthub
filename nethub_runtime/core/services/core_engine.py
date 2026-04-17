@@ -20,6 +20,9 @@ from nethub_runtime.core.services.execution_coordinator import ExecutionCoordina
 from nethub_runtime.core.services.intent_analyzer import IntentAnalyzer
 from nethub_runtime.core.services.registry import JsonRegistry
 from nethub_runtime.core.services.result_integrator import ResultIntegrator
+from nethub_runtime.core.services.runtime_failure_classifier import RuntimeFailureClassifier
+from nethub_runtime.core.services.runtime_outcome_evaluator import RuntimeOutcomeEvaluator
+from nethub_runtime.core.services.runtime_repair_service import RuntimeRepairService
 from nethub_runtime.core.services.security_guard import SecurityGuard
 from nethub_runtime.core.services.task_decomposer import TaskDecomposer
 from nethub_runtime.core.services.workflow_planner import WorkflowPlanner
@@ -29,6 +32,7 @@ from nethub_runtime.core.workflows.executor import WorkflowExecutor
 from nethub_runtime.core.workflows.base_workflow import SimpleWorkflow
 from nethub_runtime.core.agents.agent_builder import AgentBuilder
 from nethub_runtime.core.tools.registry import ToolRegistry
+from nethub_runtime.core.services.user_goal_evaluator import UserGoalEvaluator
 from nethub_runtime.generated.store import GeneratedArtifactStore
 
 
@@ -74,8 +78,13 @@ class AICore:
         self.execution_coordinator = ExecutionCoordinator(
             session_store=self.context_manager.session_store,
             vector_store=self.vector_store,
+            generated_artifact_store=self.generated_artifact_store,
         )
         self.result_integrator = ResultIntegrator()
+        self.runtime_failure_classifier = RuntimeFailureClassifier()
+        self.runtime_outcome_evaluator = RuntimeOutcomeEvaluator()
+        self.runtime_repair_service = RuntimeRepairService()
+        self.user_goal_evaluator = UserGoalEvaluator()
         
         # ========== 新增：LiteLLM 模型路由 ==========
         # 参考: docs/02_router/litellm_routing_design.md
@@ -117,6 +126,8 @@ class AICore:
         capability_gap_detected: bool,
         trigger_reason: str | None = None,
         generated_artifact: str | None = None,
+        runtime_repair_triggered: bool = False,
+        runtime_repair_reason: str | None = None,
     ) -> dict[str, Any]:
         capability = self._autonomous_implementation_capability()
         enabled = bool(capability.get("enabled", False))
@@ -128,6 +139,8 @@ class AICore:
             "generated_patch_registered": bool(generated_artifact),
             "generated_artifact_type": generated_artifact,
             "trigger_reason": trigger_reason,
+            "runtime_repair_triggered": runtime_repair_triggered,
+            "runtime_repair_reason": runtime_repair_reason,
             "supports": capability.get("supports", []),
         }
 
@@ -154,6 +167,10 @@ class AICore:
             },
         )
         return str(trace_path)
+
+    def _max_runtime_repair_iterations(self) -> int:
+        capability = self._autonomous_implementation_capability()
+        return int(capability.get("max_runtime_repair_iterations", 2) or 2)
 
 
     def reload_plugins(self) -> dict[str, Any]:
@@ -312,6 +329,88 @@ class AICore:
                 execution_result["execution_type"] = "workflow"
                 execution_result["execution_plan"] = execution_plan
                 execution_result["autonomous_implementation_trace"] = autonomous_trace
+                outcome_evaluation = self.runtime_outcome_evaluator.evaluate(
+                    task=task,
+                    workflow=workflow,
+                    execution_result=execution_result,
+                )
+                goal_evaluation = self.user_goal_evaluator.evaluate(
+                    task=task,
+                    execution_result=execution_result,
+                )
+                if not goal_evaluation.get("satisfied", False):
+                    outcome_evaluation["should_repair"] = True
+                    unmet_requirements = list(outcome_evaluation.get("unmet_requirements", []))
+                    if "goal_alignment" not in unmet_requirements:
+                        unmet_requirements.append("goal_alignment")
+                    outcome_evaluation["unmet_requirements"] = unmet_requirements
+                execution_result["outcome_evaluation"] = outcome_evaluation
+                execution_result["goal_evaluation"] = goal_evaluation
+                repair_history: list[dict[str, Any]] = []
+                current_workflow = workflow
+                max_iterations = self._max_runtime_repair_iterations()
+                repair_iteration = 0
+                while outcome_evaluation.get("should_repair") and repair_iteration < max_iterations:
+                    repair_classification = self.runtime_failure_classifier.classify(
+                        workflow=current_workflow,
+                        evaluation=outcome_evaluation,
+                        dependency_status=dependency_status if isinstance(dependency_status, dict) else {},
+                        execution_result=execution_result,
+                    )
+                    repaired_workflow = self.runtime_repair_service.build_repair_workflow(
+                        task=task,
+                        workflow=current_workflow,
+                        repair_classification=repair_classification,
+                    )
+                    repaired_plan = self.capability_router.route_workflow(task, repaired_workflow)
+                    self.security_guard.validate_plan(repaired_plan)
+                    repaired_execution_result = self.execution_coordinator.execute(repaired_plan, task, ctx)
+                    repair_iteration += 1
+                    repaired_execution_result["execution_type"] = "workflow"
+                    repaired_execution_result["execution_plan"] = repaired_plan
+                    repaired_execution_result["repair_iteration"] = repair_iteration
+                    repaired_execution_result["repair_source_evaluation"] = outcome_evaluation
+                    repaired_execution_result["repair_classification"] = repair_classification
+                    repaired_execution_result["autonomous_implementation_trace"] = self._build_autonomous_trace(
+                        capability_gap_detected=autonomous_trace.get("capability_gap_detected", False),
+                        trigger_reason=autonomous_trace.get("trigger_reason"),
+                        generated_artifact=autonomous_trace.get("generated_artifact_type"),
+                        runtime_repair_triggered=True,
+                        runtime_repair_reason="unmet_requirements_or_failed_steps",
+                    )
+                    outcome_evaluation = self.runtime_outcome_evaluator.evaluate(
+                        task=task,
+                        workflow=repaired_workflow,
+                        execution_result=repaired_execution_result,
+                    )
+                    goal_evaluation = self.user_goal_evaluator.evaluate(
+                        task=task,
+                        execution_result=repaired_execution_result,
+                    )
+                    if not goal_evaluation.get("satisfied", False):
+                        outcome_evaluation["should_repair"] = True
+                        unmet_requirements = list(outcome_evaluation.get("unmet_requirements", []))
+                        if "goal_alignment" not in unmet_requirements:
+                            unmet_requirements.append("goal_alignment")
+                        outcome_evaluation["unmet_requirements"] = unmet_requirements
+                    repaired_execution_result["outcome_evaluation"] = outcome_evaluation
+                    repaired_execution_result["goal_evaluation"] = goal_evaluation
+                    repair_history.append(
+                        {
+                            "iteration": repair_iteration,
+                            "repair_classification": repair_classification,
+                            "outcome_evaluation": outcome_evaluation,
+                            "workflow_id": repaired_workflow.workflow_id,
+                        }
+                    )
+                    execution_result = repaired_execution_result
+                    current_workflow = repaired_workflow
+                    workflow_payload = repaired_workflow
+
+                execution_result["repair_history"] = repair_history
+                execution_result["repair_stop_reason"] = (
+                    "requirements_satisfied" if not outcome_evaluation.get("should_repair") else "max_iterations_reached"
+                )
                 configured_agent_output = execution_result.get("final_output", {}).get("manage_information_agent", {}).get("agent")
                 if configured_agent_output:
                     agent_payload = {

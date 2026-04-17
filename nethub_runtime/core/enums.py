@@ -26,3 +26,25 @@ class ToolType(str, Enum):
     SHELL = "shell"
     PYTHON = "python"
     HTTP = "http"
+
+
+class AgentClass(str, Enum):
+    INFORMATION = "information"
+    EXECUTION = "execution"
+    ANALYSIS = "analysis"
+    ORCHESTRATION = "orchestration"
+
+
+class AgentLayer(str, Enum):
+    KNOWLEDGE = "knowledge"
+    EXECUTION = "execution"
+    ANALYSIS = "analysis"
+    WORKFLOW = "workflow"
+
+
+class WorkflowComponentType(str, Enum):
+    AGENT = "agent"
+    TOOL = "tool"
+    ANALYZER = "analyzer"
+    IO = "io"
+    WORKFLOW = "workflow"

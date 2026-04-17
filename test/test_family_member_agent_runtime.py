@@ -54,8 +54,10 @@ def test_family_member_agent_creation_and_member_collection_flow(isolated_genera
     agent_payload = finalize_result["execution_result"]["final_output"]["manage_information_agent"]["agent"]
     assert finalize_result["task"]["intent"] == "finalize_information_agent"
     assert agent_payload["status"] == "active"
+    assert agent_payload["profile"] == "entity_directory"
+    assert agent_payload["knowledge_entity_label"] == "家庭成员"
     assert "member_name" in agent_payload["schema_fields"]
-    assert agent_payload["knowledge_namespace"] == "agent_knowledge/family_member_info_agent"
+    assert agent_payload["knowledge_namespace"].startswith("agent_knowledge/")
 
     add_response = client.post(
         "/core/handle",

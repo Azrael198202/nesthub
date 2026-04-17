@@ -16,6 +16,8 @@ from nethub_runtime.core.memory.session_store import SessionStore
 from nethub_runtime.core.memory.vector_store import VectorStore
 from nethub_runtime.core.schemas.context_schema import CoreContextSchema
 from nethub_runtime.core.schemas.task_schema import TaskSchema
+from nethub_runtime.core.services.dependency_manager import DependencyManager
+from nethub_runtime.core.services.security_guard import SecurityGuard
 from nethub_runtime.core.services.execution_handler_registry import build_execution_handler_registry
 from nethub_runtime.core.services.information_agent_service import InformationAgentService
 
@@ -30,14 +32,18 @@ class ExecutionCoordinator:
         self,
         session_store: SessionStore | None = None,
         vector_store: VectorStore | None = None,
+        generated_artifact_store: Any | None = None,
         intent_policy_path: Path | None = None,
         semantic_policy_path: Path | None = None,
     ) -> None:
         self.session_store = session_store or SessionStore()
         self.vector_store = vector_store or VectorStore()
+        self.generated_artifact_store = generated_artifact_store
         self.intent_policy_path = intent_policy_path or INTENT_POLICY_PATH
         self.semantic_policy_path = semantic_policy_path or SEMANTIC_POLICY_PATH
         self.semantic_policy_store = SemanticPolicyStore(policy_path=self.semantic_policy_path)
+        self.dependency_manager = DependencyManager()
+        self.security_guard = SecurityGuard()
         self.intent_policy = self._load_intent_policy()
         self.semantic_policy = self._load_semantic_policy()
         self._embedding_model = self._init_embedding_model()
@@ -277,10 +283,23 @@ class ExecutionCoordinator:
             context=context,
             normalize_yes_no=self._normalize_yes_no,
             sanitize_member_value=self._sanitize_member_value,
+            extract_records=self._extract_records,
         )
 
     def _query_information_knowledge(self, text: str, context: CoreContextSchema) -> dict[str, Any]:
         return self.information_agent_service.query_information_knowledge(text=text, context=context)
+
+    def _build_runtime_install_plan(self, missing_items: list[str]) -> dict[str, Any]:
+        return self.dependency_manager.build_install_plan(missing_items)
+
+    def _execute_runtime_install_plan(self, install_plan: dict[str, Any]) -> dict[str, Any]:
+        return self.dependency_manager.execute_install_plan(
+            install_plan,
+            allowed_installers=self.security_guard.allowed_runtime_installers(),
+        )
+
+    def _allow_runtime_auto_install(self) -> bool:
+        return self.security_guard.allow_runtime_auto_install()
 
     def _extract_records(self, text: str) -> list[dict[str, Any]]:
         model_records = self._model_parse_records(text)
@@ -392,13 +411,13 @@ class ExecutionCoordinator:
         return "self"
 
     def _extract_named_actor(self, text: str) -> str | None:
-        match = re.match(r"^([\u4e00-\u9fffA-Za-z]{2,4})(?=今天|昨天|本周|下周|\d{1,2}月\d{1,2}号|去|开会|远足|安排)", text.strip())
+        match = re.match(r"^(?:记录|添加|保存)?([\u4e00-\u9fffA-Za-z]{2,4})(?=今天|昨天|本周|下周|\d{1,2}月\d{1,2}[号日]|去|开会|远足|安排|出差)", text.strip())
         if match:
             return match.group(1)
         return None
 
     def _extract_explicit_date(self, text: str) -> str | None:
-        match = re.search(r"(\d{1,2})月(\d{1,2})号", text)
+        match = re.search(r"(\d{1,2})月(\d{1,2})[号日]", text)
         if not match:
             return None
         now = datetime.now(UTC)

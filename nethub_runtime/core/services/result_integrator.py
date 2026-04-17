@@ -98,6 +98,24 @@ class ResultIntegrator:
                 )
             )
 
+        final_output = execution_result.get("final_output") or {}
+        artifact_output = final_output.get("generate_workflow_artifact") or {}
+        artifact_path = artifact_output.get("artifact_path")
+        if artifact_path:
+            artifact_id = str(Path(str(artifact_path)).stem)
+            artifacts.append(
+                self._artifact_record(
+                    artifact_type=str(artifact_output.get("artifact_type") or "document"),
+                    artifact_id=artifact_id,
+                    path=str(artifact_path),
+                    source="workflow_generated_artifact",
+                    metadata={
+                        "status": artifact_output.get("status", "generated"),
+                        "summary": artifact_output.get("summary", ""),
+                    },
+                )
+            )
+
         return artifacts
 
     def build_artifact_index(self, artifacts: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:

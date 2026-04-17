@@ -12,6 +12,18 @@
 
 ### 2. 当前可手动执行的回归入口
 
+### 2.4 测试结果存放位置
+
+测试结果、回归报告、单测过程记录，统一放在：
+
+- `test/reports/`
+
+这次家庭成员智能体测试报告的正式位置是：
+
+- `test/reports/20260417_family_member_agent_test_report.md`
+
+`docs/99_homework/` 只保留操作说明、回归策略和手动执行方法，不再存放测试结果正文。
+
 #### 2.1 基础 focused runtime 回归
 
 命令：
