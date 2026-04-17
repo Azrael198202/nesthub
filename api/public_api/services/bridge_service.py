@@ -1,15 +1,18 @@
 import os
 import uuid
+from pathlib import Path
 from typing import Any
 
 import httpx
 
 from api.public_api.models.bridge_message import BridgeMessage
 from api.public_api.storage.memory_store import MemoryStore
+from api.public_api.storage.temp_file_store import TempFileStore
 
 class BridgeService:
-    def __init__(self, store: MemoryStore):
+    def __init__(self, store: MemoryStore, temp_file_store: TempFileStore):
         self.store = store
+        self.temp_file_store = temp_file_store
 
     def create_message(self, source_im: str, external_user_id: str, external_chat_id: str, external_message_id: str, text: str, raw_payload: dict) -> BridgeMessage:
         msg = BridgeMessage(
@@ -94,6 +97,58 @@ class BridgeService:
             "artifacts": result.get("artifacts", []),
         }
 
+    def build_public_download_url(self, file_id: str, file_name: str, base_url: str | None = None) -> str:
+        root = (base_url or os.getenv("NESTHUB_PUBLIC_API_BASE_URL") or "").strip().rstrip("/")
+        path = f"/api/temp-files/{file_id}/{file_name}"
+        return f"{root}{path}" if root else path
+
+    def stage_artifact_bytes(
+        self,
+        *,
+        file_name: str,
+        content: bytes,
+        content_type: str | None = None,
+        base_url: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        record = self.temp_file_store.save_bytes(
+            file_name=file_name,
+            content=content,
+            content_type=content_type,
+            metadata=metadata,
+        )
+        return {
+            "file_id": record.file_id,
+            "file_name": record.file_name,
+            "content_type": record.content_type,
+            "expires_at": record.expires_at.isoformat(),
+            "download_url": self.build_public_download_url(record.file_id, record.file_name, base_url=base_url),
+            "metadata": record.metadata,
+        }
+
+    def stage_local_result_artifacts(self, artifacts: list[dict[str, Any]], base_url: str | None = None) -> list[dict[str, Any]]:
+        downloads: list[dict[str, Any]] = []
+        for artifact in artifacts or []:
+            path_value = str(artifact.get("path") or "").strip()
+            if not path_value:
+                continue
+            path = Path(path_value)
+            if not path.exists() or not path.is_file():
+                continue
+            downloads.append(
+                self.stage_artifact_bytes(
+                    file_name=str(artifact.get("name") or path.name),
+                    content=path.read_bytes(),
+                    base_url=base_url,
+                    metadata={
+                        "artifact_type": artifact.get("artifact_type", "file"),
+                        "artifact_id": artifact.get("artifact_id", path.stem),
+                        "source": artifact.get("source", "runtime"),
+                    },
+                )
+            )
+        return downloads
+
     def _extract_reply_text(self, result: dict[str, Any]) -> str:
         execution_result = result.get("execution_result") or {}
         if execution_result.get("execution_type") == "agent":
@@ -103,7 +158,7 @@ class BridgeService:
                 return final_answer
 
         final_output = execution_result.get("final_output") or {}
-        for key in ("manage_information_agent", "query_information_knowledge", "file_generate", "generate_workflow_artifact", "single_step"):
+        for key in ("manage_information_agent", "query_information_knowledge", "file_read", "file_generate", "generate_workflow_artifact", "single_step"):
             payload = final_output.get(key) or {}
             for field in ("message", "answer", "summary", "artifact_path"):
                 value = str(payload.get(field) or "").strip()
@@ -119,7 +174,7 @@ class BridgeService:
             return
 
         event = msg.raw_payload or {}
-        reply_text = str(result.get("reply") or "收到您的消息！")[:5000]
+        reply_text = self._compose_line_reply_text(result)[:5000]
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
@@ -147,3 +202,16 @@ class BridgeService:
                         "messages": [{"type": "text", "text": reply_text}],
                     },
                 )
+
+    def _compose_line_reply_text(self, result: dict[str, Any]) -> str:
+        reply_text = str(result.get("reply") or "收到您的消息！").strip()
+        downloads = result.get("downloads") or []
+        if not isinstance(downloads, list) or not downloads:
+            return reply_text or "收到您的消息！"
+        lines = [reply_text or "已为您准备下载链接：", ""]
+        for item in downloads:
+            url = str(item.get("download_url") or "").strip()
+            name = str(item.get("file_name") or "download").strip()
+            if url:
+                lines.append(f"{name}: {url}")
+        return "\n".join(line for line in lines if line).strip()

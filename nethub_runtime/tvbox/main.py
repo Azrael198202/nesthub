@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import base64
 from datetime import UTC, datetime
 import asyncio
 from typing import Any
@@ -299,9 +300,37 @@ def _create_app() -> Any:
                 use_langraph=True,
             )
             runtime_response = _record_runtime_result(text, result if isinstance(result, dict) else {})
+            raw_artifacts = list((result or {}).get("artifacts") or []) if isinstance(result, dict) else []
+            downloads: list[dict[str, Any]] = []
+            for artifact in raw_artifacts:
+                path_value = str(artifact.get("path") or "").strip()
+                if not path_value:
+                    continue
+                from pathlib import Path
+
+                artifact_path = Path(path_value)
+                if not artifact_path.exists() or not artifact_path.is_file():
+                    continue
+                upload_resp = await client.post(
+                    f"{bridge_api}/hub/artifact",
+                    json={
+                        "bridge_message_id": bridge_message_id,
+                        "file_name": str(artifact.get("name") or artifact_path.name),
+                        "artifact_type": str(artifact.get("artifact_type") or "file"),
+                        "artifact_id": str(artifact.get("artifact_id") or artifact_path.stem),
+                        "source": str(artifact.get("source") or "runtime"),
+                        "content_base64": base64.b64encode(artifact_path.read_bytes()).decode("utf-8"),
+                    },
+                    headers=headers,
+                )
+                if upload_resp.status_code < 400:
+                    payload = upload_resp.json()
+                    download = payload.get("download") if isinstance(payload, dict) else None
+                    if isinstance(download, dict):
+                        downloads.append(download)
             await client.post(
                 f"{bridge_api}/hub/result",
-                json={"bridge_message_id": bridge_message_id, "result": {"reply": runtime_response["reply"], "artifacts": runtime_response["artifacts"]}},
+                json={"bridge_message_id": bridge_message_id, "result": {"reply": runtime_response["reply"], "artifacts": raw_artifacts, "downloads": downloads}},
                 headers=headers,
             )
 
