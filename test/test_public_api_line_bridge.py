@@ -34,6 +34,7 @@ def test_line_webhook_is_processed_through_public_api(monkeypatch) -> None:
         delivered.append({"msg": msg, "result": result})
 
     monkeypatch.delenv("LINE_CHANNEL_SECRET", raising=False)
+    monkeypatch.setenv("NESTHUB_PUBLIC_API_PROCESS_INLINE", "true")
     monkeypatch.setattr(app.state.bridge_service, "_invoke_nesthub", fake_invoke)
     monkeypatch.setattr(app.state.bridge_service, "_deliver_line_response", fake_deliver)
 
@@ -50,6 +51,25 @@ def test_line_webhook_is_processed_through_public_api(monkeypatch) -> None:
     assert message.status == "completed"
     assert delivered
     assert delivered[0]["result"]["reply"] == "NestHub handled: 你好，NestHub"
+
+
+def test_line_webhook_is_queued_by_default_without_inline_processing(monkeypatch) -> None:
+    monkeypatch.delenv("LINE_CHANNEL_SECRET", raising=False)
+    monkeypatch.delenv("NESTHUB_PUBLIC_API_PROCESS_INLINE", raising=False)
+    monkeypatch.delenv("NESTHUB_CORE_HANDLE_URL", raising=False)
+
+    client = TestClient(app)
+    response = client.post("/api/bridge/im/inbound", json=_line_payload("进入队列"))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["processed"] == 1
+    assert payload["results"][0]["status"] == "pending"
+    assert payload["results"][0]["reply"] == ""
+    message = app.state.bridge_service.get_message(payload["results"][0]["bridge_message_id"])
+    assert message is not None
+    assert message.status == "pending"
 
 
 def test_line_webhook_rejects_invalid_signature(monkeypatch) -> None:
@@ -76,6 +96,7 @@ def test_line_webhook_accepts_valid_signature(monkeypatch) -> None:
     async def fake_deliver(msg, result):
         delivered.append({"msg": msg.bridge_message_id, "reply": result["reply"]})
 
+    monkeypatch.setenv("NESTHUB_PUBLIC_API_PROCESS_INLINE", "true")
     monkeypatch.setattr(app.state.bridge_service, "_invoke_nesthub", fake_invoke)
     monkeypatch.setattr(app.state.bridge_service, "_deliver_line_response", fake_deliver)
 

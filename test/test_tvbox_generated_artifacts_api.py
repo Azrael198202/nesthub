@@ -92,3 +92,18 @@ def test_tvbox_voice_chat_uses_runtime_core(monkeypatch) -> None:
     assert "Generated artifact" in payload["reply"]
     assert payload["conversation"][-1]["speaker"] == "HomeHub"
     assert payload["artifacts"][0]["url"].endswith("/api/generated-artifacts/open/file/hello_world_button")
+
+
+def test_tvbox_app_starts_with_bridge_worker_when_configured(monkeypatch) -> None:
+    class FakeCore:
+        async def handle(self, *args, **kwargs):
+            return {"task": {"intent": "general_task"}, "execution_result": {"final_output": {"single_step": {"message": "ok"}}}, "artifacts": []}
+
+    monkeypatch.setattr(tvbox_main, "_create_core_engine", lambda: FakeCore())
+    monkeypatch.setattr(tvbox_main, "_load_bridge_config", lambda: ("https://bridge.example/api/bridge", "token-123", 5))
+
+    app = _create_app()
+
+    with TestClient(app) as client:
+        response = client.get("/api/dashboard")
+        assert response.status_code == 200
