@@ -33,8 +33,8 @@ LOGGER = logging.getLogger("nethub_runtime.core.image_generation_service")
 # huggingface_auto sits between local_diffusion (which needs a cached model)
 # and pillow (pure placeholder), so it can autonomously acquire a real model
 # from HuggingFace when no local model is present.
-# Priority: local first (free), then pillow placeholder, finally external paid API
-_BACKENDS = ["local_diffusion", "huggingface_auto", "pillow", "openai_api"]
+# Priority: local first (free) → paid API (real quality) → pillow placeholder (absolute last resort)
+_BACKENDS = ["local_diffusion", "huggingface_auto", "openai_api", "pillow"]
 
 # Packages needed per backend (import spec → pip name)
 _BACKEND_PACKAGES: dict[str, list[tuple[str, str]]] = {
