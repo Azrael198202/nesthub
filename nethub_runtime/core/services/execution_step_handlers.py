@@ -207,17 +207,19 @@ def handle_image_generate_step(
     target_path = _resolve_requested_image_path(task.input_text)
     if target_path is None:
         artifact_id = _artifact_id_from_trace(context.trace_id, ".png")
-        store_path = (
-            coordinator.generated_artifact_store.persist(
-                "image", artifact_id, b"", extension=".png"
-            )
-            if hasattr(coordinator, "generated_artifact_store")
-            else None
-        )
-        target_path = Path(str(store_path)) if store_path else Path(f"generated/{artifact_id}.png")
+        # Use generated/ dir directly so the path is always on disk
+        target_path = Path(f"generated/{artifact_id}.png")
+        target_path.parent.mkdir(parents=True, exist_ok=True)
 
     service = ImageGenerationService(coordinator)
-    return service.generate(task, target_path)
+    result = service.generate(task, target_path)
+
+    # Always ensure artifact_path is present so bridge can stage the file
+    if result.get("status") in ("generated", "invalid_output") and "artifact_path" not in result:
+        result["artifact_path"] = str(target_path)
+    if "file_name" not in result and target_path:
+        result["file_name"] = target_path.name
+    return result
 
 
 def handle_video_generate_step(

@@ -192,21 +192,30 @@ class BridgeService:
             img_path_str = str(img_payload.get("artifact_path") or "").strip()
             if img_path_str:
                 img_path = Path(img_path_str)
-                if img_path.exists() and img_path.is_file():
-                    content_type = mimetypes.guess_type(img_path.name)[0] or "image/png"
-                    downloads.append(
-                        self.stage_artifact_bytes(
-                            file_name=img_path.name,
-                            content=img_path.read_bytes(),
-                            content_type=content_type,
-                            base_url=base_url,
-                            metadata={
-                                "artifact_type": "image",
-                                "artifact_id": img_path.stem,
-                                "source": "image_generate",
-                            },
+                # Try as-is, then relative to workspace root
+                candidates = [img_path]
+                if not img_path.is_absolute():
+                    candidates.append(Path(os.getcwd()) / img_path)
+                    workspace = os.getenv("NESTHUB_WORKSPACE_PATH", "").strip()
+                    if workspace:
+                        candidates.append(Path(workspace) / img_path)
+                for candidate in candidates:
+                    if candidate.exists() and candidate.is_file():
+                        content_type = mimetypes.guess_type(candidate.name)[0] or "image/png"
+                        downloads.append(
+                            self.stage_artifact_bytes(
+                                file_name=candidate.name,
+                                content=candidate.read_bytes(),
+                                content_type=content_type,
+                                base_url=base_url,
+                                metadata={
+                                    "artifact_type": "image",
+                                    "artifact_id": candidate.stem,
+                                    "source": "image_generate",
+                                },
+                            )
                         )
-                    )
+                        break
 
         return downloads
 

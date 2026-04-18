@@ -33,7 +33,8 @@ LOGGER = logging.getLogger("nethub_runtime.core.image_generation_service")
 # huggingface_auto sits between local_diffusion (which needs a cached model)
 # and pillow (pure placeholder), so it can autonomously acquire a real model
 # from HuggingFace when no local model is present.
-_BACKENDS = ["model_api", "local_diffusion", "huggingface_auto", "pillow"]
+# Priority: local first (free), then pillow placeholder, finally external paid API
+_BACKENDS = ["local_diffusion", "huggingface_auto", "pillow", "openai_api"]
 
 # Packages needed per backend (import spec → pip name)
 _BACKEND_PACKAGES: dict[str, list[tuple[str, str]]] = {
@@ -248,26 +249,85 @@ class ImageGenerationService:
 
     def _try_backend(self, backend: str, task: TaskSchema) -> bytes | None:
         try:
-            if backend == "model_api":
-                return self._try_model_api(task)
             if backend == "local_diffusion":
                 return self._try_local_diffusion(task)
             if backend == "huggingface_auto":
                 return self._try_huggingface_auto(task)
             if backend == "pillow":
                 return self._try_pillow(task.input_text)
+            if backend == "openai_api":
+                return self._try_model_api(task)
         except Exception as exc:
             LOGGER.debug("backend %s failed: %s", backend, exc)
         return None
 
     def _try_model_api(self, task: TaskSchema) -> bytes | None:
-        """Try external model API (e.g. OpenAI DALL-E) via model_router."""
-        router = self.coordinator.model_router
-        if router is None:
-            return None
-        if not hasattr(router, "invoke_image"):
-            return None
-        return router.invoke_image(prompt=task.input_text, task_type="image_generation")
+        """Try external image API: OpenAI DALL-E 3 → Stability AI → Replicate.
+
+        Reads keys from environment; skips silently when no key is present.
+        """
+        import os, urllib.request, urllib.error, json as _json, base64 as _b64
+
+        prompt = task.input_text or ""
+
+        # --- OpenAI DALL-E 3 ---
+        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+        if openai_key:
+            try:
+                body = _json.dumps({
+                    "model": "dall-e-3",
+                    "prompt": prompt,
+                    "n": 1,
+                    "size": "1024x1024",
+                    "response_format": "b64_json",
+                }).encode()
+                req = urllib.request.Request(
+                    "https://api.openai.com/v1/images/generations",
+                    data=body,
+                    headers={
+                        "Authorization": f"Bearer {openai_key}",
+                        "Content-Type": "application/json",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    data = _json.loads(resp.read())
+                b64 = (data.get("data") or [{}])[0].get("b64_json", "")
+                if b64:
+                    LOGGER.info("_try_model_api: OpenAI DALL-E 3 success")
+                    return _b64.b64decode(b64)
+            except urllib.error.HTTPError as e:
+                LOGGER.warning("_try_model_api: OpenAI error %s: %s", e.code, e.read()[:200])
+            except Exception as exc:
+                LOGGER.debug("_try_model_api: OpenAI failed: %s", exc)
+
+        # --- Stability AI ---
+        stability_key = os.getenv("STABILITY_API_KEY", "").strip()
+        if stability_key:
+            try:
+                body = _json.dumps({
+                    "text_prompts": [{"text": prompt}],
+                    "cfg_scale": 7, "height": 1024, "width": 1024,
+                    "samples": 1, "steps": 30,
+                }).encode()
+                req = urllib.request.Request(
+                    "https://api.stability.ai/v1/generation/stable-diffusion-xl-1024-v1-0/text-to-image",
+                    data=body,
+                    headers={
+                        "Authorization": f"Bearer {stability_key}",
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    data = _json.loads(resp.read())
+                b64 = ((data.get("artifacts") or [{}])[0]).get("base64", "")
+                if b64:
+                    LOGGER.info("_try_model_api: Stability AI success")
+                    return _b64.b64decode(b64)
+            except Exception as exc:
+                LOGGER.debug("_try_model_api: Stability AI failed: %s", exc)
+
+        return None
 
     def _try_local_diffusion(self, task: TaskSchema) -> bytes | None:
         """
