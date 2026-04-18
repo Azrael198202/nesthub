@@ -14,12 +14,97 @@ from nethub_runtime.core.schemas.task_schema import TaskSchema
 
 
 class InformationAgentService:
+    CONTEXT_WINDOW_MESSAGES = 20
+
     def __init__(self, session_store: Any, vector_store: Any, model_router: Any | None = None, semantic_policy_store: SemanticPolicyStore | None = None) -> None:
         self.session_store = session_store
         self.vector_store = vector_store
         self.model_router = model_router
         self.agent_framework_service = AgentFrameworkService()
         self.profile_signal_analyzer = InformationProfileSignalAnalyzer(model_router=model_router, semantic_policy_store=semantic_policy_store)
+
+    def _trim_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if len(messages) <= self.CONTEXT_WINDOW_MESSAGES:
+            return messages
+        return messages[-self.CONTEXT_WINDOW_MESSAGES :]
+
+    def _normalize_task_session_state(self, payload: dict[str, Any] | None) -> dict[str, Any]:
+        payload = payload or {}
+        return {
+            "configured_agent": payload.get("configured_agent") if isinstance(payload.get("configured_agent"), dict) else {},
+            "agent_setup": payload.get("agent_setup") if isinstance(payload.get("agent_setup"), dict) else {},
+            "knowledge_collection": payload.get("knowledge_collection") if isinstance(payload.get("knowledge_collection"), dict) else {},
+            "conversation": self._trim_messages([item for item in (payload.get("conversation") or []) if isinstance(item, dict)]),
+        }
+
+    def _detect_topic_from_text(self, text: str, task_sessions: dict[str, Any]) -> str | None:
+        normalized = text.strip()
+        if not normalized:
+            return None
+        for topic, payload in task_sessions.items():
+            if not isinstance(payload, dict):
+                continue
+            configured_agent = payload.get("configured_agent") if isinstance(payload.get("configured_agent"), dict) else {}
+            query_aliases = [str(item) for item in dict(configured_agent.get("query_aliases") or {}).keys()]
+            activation_keywords = [str(item) for item in list(configured_agent.get("activation_keywords") or [])]
+            identity_terms = [
+                str(configured_agent.get("name") or ""),
+                str(configured_agent.get("role") or ""),
+                str(configured_agent.get("knowledge_entity_label") or ""),
+            ]
+            for term in [*query_aliases, *activation_keywords, *identity_terms]:
+                if term and term in normalized:
+                    return topic
+        return None
+
+    def _select_task_topic(self, state: dict[str, Any], task: TaskSchema, text: str) -> str:
+        main_session = state.get("main_session") if isinstance(state.get("main_session"), dict) else {}
+        task_sessions = state.get("task_sessions") if isinstance(state.get("task_sessions"), dict) else {}
+        active_topic = str(main_session.get("active_topic") or "").strip()
+        matched_topic = self._detect_topic_from_text(text, task_sessions)
+        if matched_topic:
+            return matched_topic
+        if task.intent == "create_information_agent":
+            return self.normalize_slug(text)[:64] or "information_agent_task"
+        if active_topic:
+            return active_topic
+        return "information_agent_task"
+
+    def _build_task_session_patch(self, state: dict[str, Any], topic: str, task_session: dict[str, Any]) -> dict[str, Any]:
+        task_sessions = dict(state.get("task_sessions") or {})
+        task_sessions[topic] = self._normalize_task_session_state(task_session)
+        main_session = dict(state.get("main_session") or {})
+        known_topics = [item for item in list(main_session.get("topics") or []) if isinstance(item, str) and item.strip()]
+        if topic not in known_topics:
+            known_topics.append(topic)
+        main_session["topics"] = known_topics
+        main_session["active_topic"] = topic
+        active_session = task_sessions[topic]
+        return {
+            "main_session": main_session,
+            "task_sessions": task_sessions,
+            "configured_agent": active_session.get("configured_agent", {}),
+            "agent_setup": active_session.get("agent_setup", {}),
+            "knowledge_collection": active_session.get("knowledge_collection", {}),
+        }
+
+    def _resolve_task_session(self, state: dict[str, Any], task: TaskSchema, text: str) -> tuple[str, dict[str, Any]]:
+        topic = self._select_task_topic(state, task, text)
+        task_sessions = state.get("task_sessions") if isinstance(state.get("task_sessions"), dict) else {}
+        selected = task_sessions.get(topic) if isinstance(task_sessions.get(topic), dict) else None
+        if selected is None:
+            selected = {
+                "configured_agent": state.get("configured_agent") if isinstance(state.get("configured_agent"), dict) else {},
+                "agent_setup": state.get("agent_setup") if isinstance(state.get("agent_setup"), dict) else {},
+                "knowledge_collection": state.get("knowledge_collection") if isinstance(state.get("knowledge_collection"), dict) else {},
+                "conversation": [],
+            }
+        task_session = self._normalize_task_session_state(selected)
+        if text.strip():
+            task_session["conversation"] = self._trim_messages(
+                [*task_session.get("conversation", []), {"role": "user", "content": text.strip()}]
+            )
+        return topic, task_session
 
     def default_information_field_definitions(self) -> list[dict[str, str]]:
         return [
@@ -46,7 +131,7 @@ class InformationAgentService:
             "next_question": "这个智能体需要收集什么信息？如果你已经描述完整，也可以直接说明完成条件。",
             "summary": user_text.strip(),
             "completion_ready": False,
-            "conversation": [{"role": "user", "content": user_text}] if user_text.strip() else [],
+            "conversation": self._trim_messages([{"role": "user", "content": user_text}] if user_text.strip() else []),
         }
 
     def _normalize_schema_fields(self, schema_fields: Any) -> list[dict[str, str]]:
@@ -94,7 +179,7 @@ class InformationAgentService:
             "next_question": next_question,
             "summary": summary,
             "completion_ready": bool(payload.get("completion_ready", previous.get("completion_ready", False))),
-            "conversation": [item for item in conversation if isinstance(item, dict)],
+            "conversation": self._trim_messages([item for item in conversation if isinstance(item, dict)]),
         }
 
     def _fallback_agent_workflow_update(self, previous: dict[str, Any], user_text: str, *, finalize_requested: bool = False) -> dict[str, Any]:
@@ -102,6 +187,7 @@ class InformationAgentService:
         conversation = list(state.get("conversation", []))
         if user_text.strip():
             conversation.append({"role": "user", "content": user_text.strip()})
+        conversation = self._trim_messages(conversation)
         purpose = state.get("purpose") or user_text.strip()
         entity_label = state.get("entity_label") or self.normalize_slug(purpose).replace("_", " ") or "信息条目"
         completion_requested = finalize_requested or state.get("completion_phrase", "完成添加") in user_text or "完成创建" in user_text
@@ -203,7 +289,9 @@ class InformationAgentService:
         merged = self._normalize_agent_workflow_state(payload, previous)
         if user_text.strip():
             merged.setdefault("conversation", list(previous.get("conversation", [])))
-            merged["conversation"] = [*list(previous.get("conversation", [])), {"role": "user", "content": user_text.strip()}]
+            merged["conversation"] = self._trim_messages(
+                [*list(previous.get("conversation", [])), {"role": "user", "content": user_text.strip()}]
+            )
         return merged
 
     def _build_blueprint_from_workflow_state(self, workflow_state: dict[str, Any]) -> dict[str, Any]:
@@ -482,22 +570,22 @@ class InformationAgentService:
         extract_records: Any,
     ) -> dict[str, Any]:
         state = self.session_store.get(context.session_id)
-        configured_agent = state.get("configured_agent") or {}
-        setup = state.get("agent_setup") or {}
-        collection = state.get("knowledge_collection") or {}
+        task_topic, task_session = self._resolve_task_session(state, task, text)
+        configured_agent = task_session.get("configured_agent") or {}
+        setup = task_session.get("agent_setup") or {}
+        collection = task_session.get("knowledge_collection") or {}
 
         if task.intent == "create_information_agent" and not setup.get("active") and configured_agent.get("status") != "active":
             workflow_state = self._advance_agent_creation_workflow(self._default_agent_workflow_state(text), text)
+            task_session["agent_setup"] = {
+                "active": True,
+                "stage": "ai_workflow",
+                "draft": {"name": "information_agent"},
+                "workflow_state": workflow_state,
+            }
             updated = self.session_store.patch(
                 context.session_id,
-                {
-                    "agent_setup": {
-                        "active": True,
-                        "stage": "ai_workflow",
-                        "draft": {"name": "information_agent"},
-                        "workflow_state": workflow_state,
-                    },
-                },
+                self._build_task_session_patch(state, task_topic, task_session),
             )
             return {
                 "message": str(workflow_state.get("next_question") or "这个智能体需要收集什么信息？"),
@@ -516,27 +604,26 @@ class InformationAgentService:
 
             if workflow_state.get("completion_ready"):
                 blueprint = self._build_blueprint_from_workflow_state(workflow_state)
+                task_session["configured_agent"] = {
+                    **blueprint,
+                    "purpose": workflow_state.get("purpose", blueprint.get("description", "")),
+                    "specification": workflow_state.get("summary", ""),
+                    "status": "active",
+                    "knowledge_records": configured_agent.get("knowledge_records", {}),
+                }
+                task_session["agent_setup"] = {
+                    "active": False,
+                    "stage": "completed",
+                    "draft": {
+                        **(setup.get("draft") or {}),
+                        "purpose": workflow_state.get("purpose", ""),
+                        "specification": workflow_state.get("summary", ""),
+                    },
+                    "workflow_state": workflow_state,
+                }
                 updated = self.session_store.patch(
                     context.session_id,
-                    {
-                        "configured_agent": {
-                            **blueprint,
-                            "purpose": workflow_state.get("purpose", blueprint.get("description", "")),
-                            "specification": workflow_state.get("summary", ""),
-                            "status": "active",
-                            "knowledge_records": configured_agent.get("knowledge_records", {}),
-                        },
-                        "agent_setup": {
-                            "active": False,
-                            "stage": "completed",
-                            "draft": {
-                                **(setup.get("draft") or {}),
-                                "purpose": workflow_state.get("purpose", ""),
-                                "specification": workflow_state.get("summary", ""),
-                            },
-                            "workflow_state": workflow_state,
-                        },
-                    },
+                    self._build_task_session_patch(state, task_topic, task_session),
                 )
                 return {
                     "message": f"已完成创建{blueprint['role']}。启动关键字：{', '.join(blueprint.get('activation_keywords', []))}",
@@ -545,20 +632,19 @@ class InformationAgentService:
                     "workflow_state": workflow_state,
                 }
 
+            task_session["agent_setup"] = {
+                "active": True,
+                "stage": "ai_workflow",
+                "draft": {
+                    **(setup.get("draft") or {}),
+                    "purpose": workflow_state.get("purpose", ""),
+                    "specification": workflow_state.get("summary", ""),
+                },
+                "workflow_state": workflow_state,
+            }
             updated = self.session_store.patch(
                 context.session_id,
-                {
-                    "agent_setup": {
-                        "active": True,
-                        "stage": "ai_workflow",
-                        "draft": {
-                            **(setup.get("draft") or {}),
-                            "purpose": workflow_state.get("purpose", ""),
-                            "specification": workflow_state.get("summary", ""),
-                        },
-                        "workflow_state": workflow_state,
-                    }
-                },
+                self._build_task_session_patch(state, task_topic, task_session),
             )
             return {
                 "message": str(workflow_state.get("next_question") or self._setup_completion_hint(updated.get('agent_setup', {}).get('draft', {}))),
@@ -580,12 +666,11 @@ class InformationAgentService:
                 direct_records = self._extract_direct_knowledge_records(text, extract_records, configured_agent)
                 if direct_records:
                     records, vector_records = self._persist_knowledge_records(configured_agent, direct_records)
+                    task_session["configured_agent"] = {**configured_agent, "knowledge_records": records, "status": "active"}
+                    task_session["knowledge_collection"] = {"active": False, "field_index": 0, "fields": field_defs, "data": {}}
                     updated = self.session_store.patch(
                         context.session_id,
-                        {
-                            "configured_agent": {**configured_agent, "knowledge_records": records, "status": "active"},
-                            "knowledge_collection": {"active": False, "field_index": 0, "fields": field_defs, "data": {}},
-                        },
+                        self._build_task_session_patch(state, task_topic, task_session),
                     )
                     base_message = str(configured_agent.get("knowledge_added_message") or "已完成添加，并已记录该信息。")
                     message = base_message if len(direct_records) == 1 else f"已完成添加，并记录了{len(direct_records)}条{configured_agent.get('knowledge_entity_label', '信息')}。"
@@ -598,16 +683,15 @@ class InformationAgentService:
                     }
 
             if not collection.get("active"):
+                task_session["knowledge_collection"] = {
+                    "active": True,
+                    "field_index": 0,
+                    "fields": field_defs,
+                    "data": {},
+                }
                 updated = self.session_store.patch(
                     context.session_id,
-                    {
-                        "knowledge_collection": {
-                            "active": True,
-                            "field_index": 0,
-                            "fields": field_defs,
-                            "data": {},
-                        }
-                    },
+                    self._build_task_session_patch(state, task_topic, task_session),
                 )
                 return {
                     "message": field_defs[0]["prompt"],
@@ -624,12 +708,11 @@ class InformationAgentService:
                     data[current_field["key"]] = value
                 records, vector_records = self._persist_knowledge_records(configured_agent, [data])
                 record = list(records.values())[-1]
+                task_session["configured_agent"] = {**configured_agent, "knowledge_records": records, "status": "active"}
+                task_session["knowledge_collection"] = {"active": False, "field_index": 0, "fields": field_defs, "data": {}}
                 updated = self.session_store.patch(
                     context.session_id,
-                    {
-                        "configured_agent": {**configured_agent, "knowledge_records": records, "status": "active"},
-                        "knowledge_collection": {"active": False, "field_index": 0, "fields": field_defs, "data": {}},
-                    },
+                    self._build_task_session_patch(state, task_topic, task_session),
                 )
                 return {
                     "message": str(configured_agent.get("knowledge_added_message") or "已完成添加，并已记录该信息。"),
@@ -644,12 +727,11 @@ class InformationAgentService:
             if next_index >= len(field_defs):
                 records, vector_records = self._persist_knowledge_records(configured_agent, [data])
                 record = list(records.values())[-1]
+                task_session["configured_agent"] = {**configured_agent, "knowledge_records": records, "status": "active"}
+                task_session["knowledge_collection"] = {"active": False, "field_index": 0, "fields": field_defs, "data": {}}
                 updated = self.session_store.patch(
                     context.session_id,
-                    {
-                        "configured_agent": {**configured_agent, "knowledge_records": records, "status": "active"},
-                        "knowledge_collection": {"active": False, "field_index": 0, "fields": field_defs, "data": {}},
-                    },
+                    self._build_task_session_patch(state, task_topic, task_session),
                 )
                 return {
                     "message": str(configured_agent.get("knowledge_added_message") or "已完成添加，并已记录该信息。"),
@@ -659,16 +741,15 @@ class InformationAgentService:
                     "agent": self.build_configured_agent_payload(updated),
                 }
 
+            task_session["knowledge_collection"] = {
+                "active": True,
+                "field_index": next_index,
+                "fields": field_defs,
+                "data": data,
+            }
             updated = self.session_store.patch(
                 context.session_id,
-                {
-                    "knowledge_collection": {
-                        "active": True,
-                        "field_index": next_index,
-                        "fields": field_defs,
-                        "data": data,
-                    }
-                },
+                self._build_task_session_patch(state, task_topic, task_session),
             )
             next_field = field_defs[next_index]
             return {
@@ -682,7 +763,9 @@ class InformationAgentService:
 
     def query_information_knowledge(self, *, text: str, context: CoreContextSchema) -> dict[str, Any]:
         state = self.session_store.get(context.session_id)
-        configured_agent = state.get("configured_agent") or {}
+        probe_task = TaskSchema(task_id="query_information_knowledge", intent="query_agent_knowledge", input_text=text, domain="knowledge_ops")
+        _task_topic, task_session = self._resolve_task_session(state, probe_task, text)
+        configured_agent = task_session.get("configured_agent") or {}
         records = configured_agent.get("knowledge_records") or {}
         if configured_agent.get("status") != "active":
             return {"message": "当前还没有完成信息型智能体的创建。", "answer": None, "knowledge_hits": []}

@@ -124,9 +124,39 @@ class SemanticIntentPlugin:
 
     def _infer_agent_management_intent(self, text: str, context: CoreContextSchema, keyword_signals: dict[str, Any]) -> tuple[str, str, list[str], dict[str, Any]] | None:
         state = context.session_state or {}
-        configured_agent = state.get("configured_agent") or {}
-        setup = state.get("agent_setup") or {}
-        collection = state.get("knowledge_collection") or {}
+        task_sessions = state.get("task_sessions") if isinstance(state.get("task_sessions"), dict) else {}
+        main_session = state.get("main_session") if isinstance(state.get("main_session"), dict) else {}
+        active_topic = str(main_session.get("active_topic") or "").strip()
+
+        selected_session = None
+        if active_topic and isinstance(task_sessions.get(active_topic), dict):
+            selected_session = task_sessions.get(active_topic)
+
+        for _topic, payload in task_sessions.items():
+            if not isinstance(payload, dict):
+                continue
+            candidate_agent = payload.get("configured_agent") if isinstance(payload.get("configured_agent"), dict) else {}
+            query_aliases = [str(item) for item in dict(candidate_agent.get("query_aliases") or {}).keys()]
+            activation_keywords = [str(item) for item in list(candidate_agent.get("activation_keywords") or [])]
+            identity_terms = [
+                str(candidate_agent.get("name") or ""),
+                str(candidate_agent.get("role") or ""),
+                str(candidate_agent.get("knowledge_entity_label") or ""),
+            ]
+            if any(term and term in text for term in [*query_aliases, *activation_keywords, *identity_terms]):
+                selected_session = payload
+                break
+
+        if selected_session is None:
+            selected_session = {
+                "configured_agent": state.get("configured_agent") or {},
+                "agent_setup": state.get("agent_setup") or {},
+                "knowledge_collection": state.get("knowledge_collection") or {},
+            }
+
+        configured_agent = selected_session.get("configured_agent") or {}
+        setup = selected_session.get("agent_setup") or {}
+        collection = selected_session.get("knowledge_collection") or {}
         query_aliases = [str(item) for item in dict(configured_agent.get("query_aliases") or {}).keys()]
         activation_keywords = [str(item) for item in list(configured_agent.get("activation_keywords") or [])]
         agent_identity_terms = [
