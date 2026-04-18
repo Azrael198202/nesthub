@@ -3,8 +3,8 @@ from __future__ import annotations
 import base64
 
 from fastapi import APIRouter, Request, Header, HTTPException
-import httpx
 import os
+
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 
 router = APIRouter()
@@ -83,23 +83,8 @@ async def hub_result(request: Request, authorization: str = Header(None)):
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found or not claimed")
 
-    # 如果是 LINE 消息，主动推送
-    if msg.source_im == "line" and msg.external_user_id != "unknown":
-        push_text = request.app.state.bridge_service._compose_line_reply_text(result)
-        if LINE_CHANNEL_ACCESS_TOKEN:
-            async with httpx.AsyncClient() as client:
-                await client.post(
-                    "https://api.line.me/v2/bot/message/push",
-                    headers={
-                        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "to": msg.external_user_id,
-                        "messages": [{"type": "text", "text": push_text}]
-                    }
-                )
-        else:
-            print("[WARN] LINE_CHANNEL_ACCESS_TOKEN 未设置，无法主动推送 LINE 消息。")
+    # 如果是 LINE 消息，主动推送（使用 _deliver_line_response 支持图片消息）
+    if msg.source_im == "line":
+        await request.app.state.bridge_service._deliver_line_response(msg, result)
 
     return msg.dict()

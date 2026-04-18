@@ -80,34 +80,15 @@ class ImageGenerationService:
     # ------------------------------------------------------------------
 
     def generate(self, task: TaskSchema, target_path: Path) -> dict[str, Any]:
-        """Generate image at target_path, with intent + result verification and self-healing."""
+        """Generate image at target_path, with result verification and self-healing."""
         import asyncio
         import concurrent.futures
 
-        # ---- Step 1: Verify intent before doing any generation ----
-        intent_verdict = self._verifier.verify_intent(task)
-        if not intent_verdict.ok:
-            LOGGER.warning(
-                "intent_verification_failed task=%s reason=%s",
-                task.task_id, intent_verdict.reason,
-            )
-            return {
-                "artifact_type": "image",
-                "status": "intent_mismatch",
-                "task": task.intent,
-                "intent_verdict": {
-                    "ok": False,
-                    "intent": intent_verdict.intent,
-                    "reason": intent_verdict.reason,
-                },
-                "message": (
-                    f"Intent was understood as '{intent_verdict.intent}' — "
-                    "please rephrase your request to make clear you want an image."
-                ),
-            }
-        LOGGER.info("intent_verification OK intent=%s task=%s", task.intent, task.task_id)
+        # Intent has already been resolved by the workflow planner before reaching
+        # this service — no need to re-verify it here.
+        LOGGER.info("image_generate start task=%s intent=%s", task.task_id, task.intent)
 
-        # ---- Step 2: Attempt generation ----
+        # ---- Step 1: Attempt generation ----
         result = self._try_all_backends(task, target_path)
 
         if result["status"] == "generated":

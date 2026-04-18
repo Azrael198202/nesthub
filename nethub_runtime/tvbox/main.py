@@ -301,6 +301,19 @@ def _create_app() -> Any:
             )
             runtime_response = _record_runtime_result(text, result if isinstance(result, dict) else {})
             raw_artifacts = list((result or {}).get("artifacts") or []) if isinstance(result, dict) else []
+
+            # Also include the image_generate step output as an artifact
+            _img_payload = (((result or {}).get("execution_result") or {}).get("final_output") or {}).get("image_generate") or {}
+            _img_path_str = str(_img_payload.get("artifact_path") or "").strip()
+            if _img_path_str and _img_path_str not in {str(a.get("path") or "") for a in raw_artifacts}:
+                raw_artifacts = list(raw_artifacts) + [{
+                    "path": _img_path_str,
+                    "name": _img_payload.get("file_name") or Path(_img_path_str).name,
+                    "artifact_type": "image",
+                    "artifact_id": Path(_img_path_str).stem,
+                    "source": "image_generate",
+                }]
+
             downloads: list[dict[str, Any]] = []
             for artifact in raw_artifacts:
                 path_value = str(artifact.get("path") or "").strip()

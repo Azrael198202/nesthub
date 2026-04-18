@@ -89,10 +89,12 @@ class ModelCooldownTracker:
 
 
 def _running_under_pytest() -> bool:
+    # Only use env var and argv — sys.modules check is too broad and
+    # triggers false positives in VS Code debugpy sessions after test runs.
     if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("PYTEST_VERSION"):
         return True
     argv = " ".join(sys.argv).lower()
-    if "pytest" in argv or any("pytest" in str(name).lower() for name in sys.modules):
+    if "pytest" in argv or "-m pytest" in argv or "/pytest" in argv:
         return True
     return False
 
