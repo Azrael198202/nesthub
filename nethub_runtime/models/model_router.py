@@ -13,6 +13,7 @@ import sys
 import time
 from typing import Any, Optional
 from pathlib import Path
+from threading import Lock
 
 import httpx
 import yaml
@@ -21,6 +22,70 @@ from nethub_runtime.config.secrets import _maybe_load_dotenv
 from nethub_runtime.models.local_model_manager import LocalModelManager
 
 LOGGER = logging.getLogger("nethub_runtime.models")
+
+
+# ---------------------------------------------------------------------------
+# Model Cooldown Tracker
+# Inspired by OpenClaw's auth-profile rotation + exponential backoff:
+#   1 min → 5 min → 25 min → 1 hr
+# Records per-model failure counts and blocks re-use until cooldown expires.
+# ---------------------------------------------------------------------------
+
+_COOLDOWN_BACKOFF_SECONDS = [60, 300, 1500, 3600]
+
+
+class ModelCooldownTracker:
+    """Thread-safe per-model exponential backoff cooldown tracker.
+
+    When a model fails, ``record_failure`` increments its error count and
+    sets a cooldown until = now + backoff[min(error_count-1, max)].
+    ``is_in_cooldown`` returns True while that window has not expired.
+    ``reset`` clears the record after a successful call.
+    """
+
+    def __init__(self, backoff_seconds: list[int] | None = None) -> None:
+        self._backoff = backoff_seconds or _COOLDOWN_BACKOFF_SECONDS
+        # model_id -> {"cooldown_until": float, "error_count": int}
+        self._state: dict[str, dict[str, Any]] = {}
+        self._lock = Lock()
+
+    def is_in_cooldown(self, model_id: str) -> bool:
+        with self._lock:
+            entry = self._state.get(model_id)
+            if not entry:
+                return False
+            return time.monotonic() < entry.get("cooldown_until", 0.0)
+
+    def record_failure(self, model_id: str) -> float:
+        """Record a failure for *model_id* and return cooldown seconds applied."""
+        with self._lock:
+            entry = self._state.setdefault(model_id, {"cooldown_until": 0.0, "error_count": 0})
+            count = entry["error_count"]
+            backoff = self._backoff[min(count, len(self._backoff) - 1)]
+            entry["cooldown_until"] = time.monotonic() + backoff
+            entry["error_count"] = count + 1
+            LOGGER.warning(
+                "Model %s failed (error_count=%d); cooldown %.0fs",
+                model_id, entry["error_count"], backoff,
+            )
+            return float(backoff)
+
+    def reset(self, model_id: str) -> None:
+        """Clear cooldown after a successful call."""
+        with self._lock:
+            self._state.pop(model_id, None)
+
+    def status(self) -> dict[str, Any]:
+        """Return a snapshot of all tracked models for observability."""
+        now = time.monotonic()
+        with self._lock:
+            return {
+                mid: {
+                    "error_count": s["error_count"],
+                    "remaining_seconds": max(0.0, round(s["cooldown_until"] - now, 1)),
+                }
+                for mid, s in self._state.items()
+            }
 
 
 def _running_under_pytest() -> bool:
@@ -58,6 +123,7 @@ class ModelRouter:
         self._ollama_models: set[str] | None = None
         self._ollama_health_cache: tuple[float, bool] | None = None
         self.local_model_manager = LocalModelManager()
+        self.cooldown_tracker = ModelCooldownTracker()
 
         _maybe_load_dotenv()
         
@@ -459,6 +525,10 @@ class ModelRouter:
 
         last_exc: Exception | None = None
         for model in candidates:
+            if self.cooldown_tracker.is_in_cooldown(model):
+                remaining = self.cooldown_tracker.status().get(model, {}).get("remaining_seconds", "?")
+                LOGGER.info("Skipping model %s — in cooldown (%.0fs remaining)", model, remaining)
+                continue
             model_config = self.get_model_config(model)
             provider_policy = self._get_provider_policy(model)
             max_retries = int(provider_policy.get("max_retries", 1))
@@ -486,6 +556,7 @@ class ModelRouter:
                         api_key=model_config.get("api_key"),
                         **merged_params,
                     )
+                    self.cooldown_tracker.reset(model)
                     return response.choices[0].message.content or ""
                 except Exception as exc:
                     last_exc = exc
@@ -500,6 +571,7 @@ class ModelRouter:
                         )
                         await asyncio.sleep(wait_sec)
                         continue
+                    self.cooldown_tracker.record_failure(model)
                     LOGGER.warning("Model invoke failed for candidate %s: %s", litellm_model, exc)
                     break
 

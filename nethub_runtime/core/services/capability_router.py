@@ -8,6 +8,7 @@ from nethub_runtime.core.adapters.model_adapter import ModelRouter
 from nethub_runtime.core.config.settings import MODEL_ROUTES_PATH, RUNTIME_CAPABILITIES_PATH, ensure_core_config_dir
 from nethub_runtime.core.schemas.task_schema import TaskSchema
 from nethub_runtime.core.schemas.workflow_schema import WorkflowSchema
+from nethub_runtime.core.tools.registry import get_skill, list_skills
 
 
 class CapabilityRouter:
@@ -186,6 +187,18 @@ class CapabilityRouter:
                 model_choice=model_choice,
                 executor_type=executor_type,
             )
+
+            # Annotate with any @skill-registered skill that matches this step name
+            # or supports the task intent — makes registered skills discoverable
+            # without requiring an explicit JSON route entry.
+            registered_skill: dict[str, Any] | None = get_skill(step.name)
+            if registered_skill is None:
+                # Fall back: check if any skill lists this intent as supported
+                for s in list_skills():
+                    if task.intent in s.get("supported_intents", []):
+                        registered_skill = s
+                        break
+
             plan.append(
                 {
                     "step_id": step.step_id,
@@ -200,6 +213,8 @@ class CapabilityRouter:
                     "selector": selector,
                     "workflow_step_metadata": step.metadata,
                     "runtime_capabilities": self._capabilities,
+                    # None when no @skill matches; present when one does
+                    "registered_skill": registered_skill,
                 }
             )
         return plan

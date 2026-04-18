@@ -150,6 +150,24 @@ class ResultIntegrator:
                 )
             )
 
+        image_output = final_output.get("image_generate") or {}
+        image_path = image_output.get("artifact_path")
+        if image_path:
+            artifact_id = str(Path(str(image_path)).stem)
+            artifacts.append(
+                self._artifact_record(
+                    artifact_type="image",
+                    artifact_id=artifact_id,
+                    path=str(image_path),
+                    source="workflow_image_generation",
+                    metadata={
+                        "status": image_output.get("status", "generated"),
+                        "method": image_output.get("method", "unknown"),
+                        "storage": image_output.get("storage", "workspace"),
+                    },
+                )
+            )
+
         return artifacts
 
     def build_artifact_index(self, artifacts: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:

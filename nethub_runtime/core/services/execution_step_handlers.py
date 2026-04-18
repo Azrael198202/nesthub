@@ -89,11 +89,32 @@ def handle_tts_synthesize_step(
 def handle_image_generate_step(
     coordinator: Any,
     _step: dict[str, Any],
-    _task: TaskSchema,
-    _context: CoreContextSchema,
+    task: TaskSchema,
+    context: CoreContextSchema,
     _step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
-    return {"artifact_type": "image", "status": "dispatched", "task": "image_generation"}
+    """Generate an image using the self-healing ImageGenerationService.
+
+    The service tries available backends in order, and when none succeed
+    it autonomously installs missing packages and retries — including a
+    final fallback that generates and executes Python code in a subprocess.
+    """
+    from nethub_runtime.core.services.image_generation_service import ImageGenerationService
+
+    target_path = _resolve_requested_image_path(task.input_text)
+    if target_path is None:
+        artifact_id = _artifact_id_from_trace(context.trace_id, ".png")
+        store_path = (
+            coordinator.generated_artifact_store.persist(
+                "image", artifact_id, b"", extension=".png"
+            )
+            if hasattr(coordinator, "generated_artifact_store")
+            else None
+        )
+        target_path = Path(str(store_path)) if store_path else Path(f"generated/{artifact_id}.png")
+
+    service = ImageGenerationService(coordinator)
+    return service.generate(task, target_path)
 
 
 def handle_video_generate_step(
@@ -171,20 +192,29 @@ def handle_file_read_step(
     }
 
 
+def _resolve_requested_image_path(text: str) -> Path | None:
+    match = re.search(
+        r"([A-Za-z0-9_./\\-]+\.(?:png|jpe?g|gif|webp|bmp|svg))",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    candidate = match.group(1).strip().strip("\"'")
+    return Path(candidate).expanduser() if candidate else None
+
+
 def _resolve_requested_file_path(text: str) -> Path | None:
-    patterns = [
-        r"(?:保存到|保存为|写入到|写到|输出到)\s*[:：]?\s*([A-Za-z0-9_./\\-]+\.[A-Za-z0-9]+)",
+    match = re.search(
         r"([A-Za-z0-9_./\\-]+\.(?:html?|js|css|json|md|txt|py|ya?ml))",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE)
-        if not match:
-            continue
-        candidate = match.group(1).strip().strip("\"'")
-        if not candidate:
-            continue
-        return Path(candidate).expanduser()
-    return None
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    candidate = match.group(1).strip().strip("\"'")
+    return Path(candidate).expanduser() if candidate else None
+
 
 
 def _resolve_existing_file_path(text: str) -> Path | None:

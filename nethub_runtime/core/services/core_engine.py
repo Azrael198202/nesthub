@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, AsyncGenerator
 from pathlib import Path
 
 from nethub_runtime.core.config.settings import (
@@ -10,6 +10,7 @@ from nethub_runtime.core.config.settings import (
     load_local_env,
 )
 from nethub_runtime.core.memory.vector_store import VectorStore
+from nethub_runtime.core.memory.runtime_learning_store import RuntimeLearningStore
 from nethub_runtime.core.services.agent_designer import AgentDesigner
 from nethub_runtime.core.services.blueprint_generator import BlueprintGenerator
 from nethub_runtime.core.services.blueprint_resolver import BlueprintResolver
@@ -24,6 +25,7 @@ from nethub_runtime.core.services.runtime_failure_classifier import RuntimeFailu
 from nethub_runtime.core.services.runtime_outcome_evaluator import RuntimeOutcomeEvaluator
 from nethub_runtime.core.services.runtime_repair_service import RuntimeRepairService
 from nethub_runtime.core.services.security_guard import SecurityGuard
+from nethub_runtime.core.services.capability_acquisition_service import CapabilityAcquisitionService
 from nethub_runtime.core.services.runtime_design_synthesizer import RuntimeDesignSynthesizer
 from nethub_runtime.core.services.task_decomposer import TaskDecomposer
 from nethub_runtime.core.services.workflow_planner import WorkflowPlanner
@@ -33,9 +35,14 @@ from nethub_runtime.core.workflows.executor import WorkflowExecutor
 from nethub_runtime.core.workflows.base_workflow import SimpleWorkflow
 from nethub_runtime.core.agents.agent_builder import AgentBuilder
 from nethub_runtime.core.tools.registry import ToolRegistry
+from nethub_runtime.core.tools.registry import load_skills_from_dirs as _load_skills_from_dirs
 from nethub_runtime.core.services.user_goal_evaluator import UserGoalEvaluator
 from nethub_runtime.core.services.runtime_keyword_signal_analyzer import RuntimeKeywordSignalAnalyzer
 from nethub_runtime.generated.store import GeneratedArtifactStore
+from nethub_runtime.core.hooks.registry import get_hook_registry
+from nethub_runtime.core.services.bootstrap_loader import BootstrapLoader
+from nethub_runtime.core.memory.session_store import SessionCompactor
+from nethub_runtime.core.services.session_queue import SessionQueueManager
 
 
 class AICore:
@@ -112,6 +119,59 @@ class AICore:
         self.runtime_outcome_evaluator = RuntimeOutcomeEvaluator()
         self.runtime_repair_service = RuntimeRepairService()
         self.user_goal_evaluator = UserGoalEvaluator(keyword_analyzer=keyword_signal_analyzer)
+
+        # ========== 自我意识：能力获取 + 运行时学习 ==========
+        self.runtime_learning_store = RuntimeLearningStore(
+            semantic_policy_store=self.execution_coordinator.semantic_policy_store
+        )
+        self.capability_acquisition_service = CapabilityAcquisitionService(
+            security_guard=self.security_guard,
+            learning_store=self.runtime_learning_store,
+        )
+        self.logger.info("✓ Capability Acquisition + Runtime Learning initialized")
+
+        # ========== Hook Registry (pre/post step interception) ==========
+        self.hook_registry = get_hook_registry()
+        self.execution_coordinator.hook_registry = self.hook_registry
+        self.logger.info("✓ Hook Registry wired into ExecutionCoordinator")
+
+        # ========== Bootstrap Loader (AGENTS.md / SOUL.md injection) ==========
+        _bootstrap_cfg = self.execution_coordinator.semantic_policy_store.load_runtime_policy().get(
+            "runtime_behavior", {}
+        ).get("bootstrap", {})
+        self.bootstrap_loader = BootstrapLoader.from_policy(_bootstrap_cfg)
+        self.logger.info("✓ Bootstrap Loader initialized (workspace=%s)", self.bootstrap_loader.workspace_path)
+
+        # ========== Session Compaction ==========
+        _compaction_cfg = self.execution_coordinator.semantic_policy_store.load_runtime_policy().get(
+            "runtime_behavior", {}
+        ).get("session", {}).get("compaction", {})
+        if _compaction_cfg.get("enabled", True):
+            _compactor = SessionCompactor(
+                max_records=int(_compaction_cfg.get("max_records", 50)),
+                compact_to=int(_compaction_cfg.get("compact_to_records", 5)),
+            )
+            self.context_manager.session_store._compactor = _compactor
+            self.logger.info(
+                "✓ Session Compactor enabled (max_records=%d compact_to=%d)",
+                _compactor.max_records, _compactor.compact_to,
+            )
+
+        # ========== Session Queue (concurrency control) ==========
+        _queue_cfg = self.execution_coordinator.semantic_policy_store.load_runtime_policy().get(
+            "runtime_behavior", {}
+        ).get("session", {}).get("queue", {})
+        self.session_queue = SessionQueueManager.from_policy(_queue_cfg)
+        self.logger.info("✓ Session Queue initialized (mode=%s)", self.session_queue.mode)
+
+        # ========== Skill Directory Loading (tiered precedence) ==========
+        _skill_dirs = self.execution_coordinator.semantic_policy_store.load_runtime_policy().get(
+            "runtime_behavior", {}
+        ).get("skill_dirs", [])
+        if _skill_dirs:
+            _workspace = str(self.bootstrap_loader.workspace_path)
+            _n = _load_skills_from_dirs(_skill_dirs, workspace_path=_workspace)
+            self.logger.info("✓ Skill dirs scanned: %d skill(s) loaded", _n)
         
         # ========== 新增：工具注册表 ==========
         self.tool_registry = ToolRegistry()
@@ -182,6 +242,13 @@ class AICore:
         return str(trace_path)
 
     def _max_runtime_repair_iterations(self) -> int:
+        # Prefer runtime_behavior config; fall back to capability setting.
+        runtime_behavior = self.execution_coordinator.semantic_policy_store.load_runtime_policy().get(
+            "runtime_behavior", {}
+        )
+        policy_max = runtime_behavior.get("max_repair_iterations")
+        if policy_max is not None:
+            return int(policy_max)
         capability = self._autonomous_implementation_capability()
         return int(capability.get("max_runtime_repair_iterations", 2) or 2)
 
@@ -247,6 +314,17 @@ class AICore:
         agent_payload = None
         execution_plan: list[dict[str, Any]] = []
         autonomous_trace = self._build_autonomous_trace(capability_gap_detected=False)
+
+        # Inject bootstrap context into metadata (picked up by model service layers).
+        bootstrap_context = self.bootstrap_loader.load()
+        if bootstrap_context:
+            ctx.metadata["bootstrap_context"] = bootstrap_context
+
+        async with self.session_queue.run_slot(ctx.session_id, input_text) as _slot:
+            self.logger.debug(
+                "Session slot acquired (mode=%s queued=%d)",
+                _slot.mode, len(_slot.queued_inputs),
+            )
         
         try:
             # ========== Step 1: 意图分析 ==========
@@ -375,6 +453,26 @@ class AICore:
                         dependency_status=dependency_status if isinstance(dependency_status, dict) else {},
                         execution_result=execution_result,
                     )
+
+                    # ---- Self-aware capability acquisition ----
+                    # When the classifier detects missing tools/models, delegate to
+                    # CapabilityAcquisitionService to autonomously acquire them before
+                    # retrying.  The acquisition result is recorded to the learning
+                    # store regardless of outcome so future runs benefit from it.
+                    missing_tools = repair_classification.get("missing_tools") or []
+                    if missing_tools:
+                        for missing_tool in missing_tools:
+                            acq_result = self.capability_acquisition_service.acquire(
+                                task_type=task.intent,
+                                gap=missing_tool,
+                                context={"trace_id": ctx.trace_id, "session_id": ctx.session_id},
+                            )
+                            self.logger.info(
+                                "capability_acquisition %s/%s: success=%s strategy=%s",
+                                task.intent, missing_tool,
+                                acq_result.success, acq_result.strategy,
+                            )
+
                     repaired_workflow = self.runtime_repair_service.build_repair_workflow(
                         task=task,
                         workflow=current_workflow,
@@ -428,6 +526,18 @@ class AICore:
                 execution_result["repair_history"] = repair_history
                 execution_result["repair_stop_reason"] = (
                     "requirements_satisfied" if not outcome_evaluation.get("should_repair") else "max_iterations_reached"
+                )
+
+                # ---- Record execution outcome to learning store ----
+                final_outcome = "success" if not outcome_evaluation.get("should_repair") else "partial"
+                self.runtime_learning_store.record_execution_outcome(
+                    task_type=task.intent,
+                    intent=task.intent,
+                    input_summary=input_text[:200],
+                    outcome=final_outcome,
+                    repair_iterations=repair_iteration,
+                    unmet_requirements=list(outcome_evaluation.get("unmet_requirements") or []),
+                    solution_summary=execution_result.get("repair_stop_reason", ""),
                 )
                 configured_agent_output = execution_result.get("final_output", {}).get("manage_information_agent", {}).get("agent")
                 if configured_agent_output:
@@ -495,3 +605,180 @@ class AICore:
             self.logger.error(f"❌ Core handle failed trace={ctx.trace_id} error={exc}")
             raise
 
+    async def handle_stream(
+        self,
+        input_text: str,
+        context: dict[str, Any] | None = None,
+        fmt: str = "dict",
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Async generator variant of handle() that yields StreamEvent dicts.
+
+        Inspired by claude-agent-sdk-python's ``query()`` async-iterator pattern —
+        callers can react to each pipeline stage before the full result is ready.
+
+        Event shapes::
+
+            {"event": "lifecycle_start",   "run_id": str, "session_id": str}
+            {"event": "intent_analyzed",   "intent": str, "domain": str, "trace_id": str, "run_id": str}
+            {"event": "workflow_planned",  "step_count": int, "steps": [str, ...], "trace_id": str, "run_id": str}
+            {"event": "step_completed",    "step_name": str, "status": str,
+                                           "executor_type": str, "output": dict | None,
+                                           "repair_iteration": int, "run_id": str}
+            {"event": "repair_started",    "iteration": int, "reason": str, "run_id": str}
+            {"event": "final",             "result": dict, "trace_id": str, "run_id": str}
+            {"event": "lifecycle_end",     "run_id": str, "status": "ok"}
+            {"event": "lifecycle_error",   "run_id": str, "error": str}
+
+        Usage::
+
+            async for event in core.handle_stream("your input"):
+                if event["event"] == "intent_analyzed":
+                    print("Intent:", event["intent"])
+                elif event["event"] == "step_completed":
+                    print("Step done:", event["step_name"], event["status"])
+                elif event["event"] == "final":
+                    result = event["result"]
+        """
+        self.security_guard.validate_output_format(fmt)
+        self.static_model_registry.hot_reload()
+        self.static_blueprint_registry.hot_reload()
+        self.static_agent_registry.hot_reload()
+        dependency_status = self.dependency_manager.check()
+
+        ctx = self.context_manager.load(context)
+        ctx = self.context_manager.enrich(ctx)
+        run_id: str = ctx.trace_id
+
+        # Inject bootstrap context into session metadata for first turn.
+        bootstrap_context = self.bootstrap_loader.load()
+        if bootstrap_context:
+            ctx.metadata["bootstrap_context"] = bootstrap_context
+            self.logger.debug("Bootstrap context injected (%d chars)", len(bootstrap_context))
+
+        yield {"event": "lifecycle_start", "run_id": run_id, "session_id": ctx.session_id}
+
+        try:
+            # --- Stage 1: Intent analysis ---
+            task = await self.intent_analyzer.analyze(input_text, ctx)
+            yield {
+                "event": "intent_analyzed",
+                "intent": task.intent,
+                "domain": task.domain,
+                "trace_id": ctx.trace_id,
+                "run_id": run_id,
+            }
+
+            # --- Stage 2: Workflow planning ---
+            subtasks = await self.task_decomposer.decompose(task)
+            workflow = await self.workflow_planner.plan(task, subtasks)
+            blueprints = self.blueprint_resolver.resolve(task, workflow)
+            if not blueprints:
+                blueprints = [self.blueprint_generator.generate(task, workflow)]
+            for bp in blueprints:
+                self.blueprint_registry.register(bp.name, bp)
+            blueprints_payload = [bp.model_dump() for bp in blueprints]
+            execution_plan = self.capability_router.route_workflow(task, workflow)
+            self.security_guard.validate_plan(execution_plan)
+            yield {
+                "event": "workflow_planned",
+                "step_count": len(workflow.steps),
+                "steps": [s.name for s in workflow.steps],
+                "trace_id": ctx.trace_id,
+                "run_id": run_id,
+            }
+
+            # --- Stage 3: Execution ---
+            execution_result = self.execution_coordinator.execute(execution_plan, task, ctx)
+            execution_result["execution_type"] = "workflow"
+            execution_result["execution_plan"] = execution_plan
+            for step_result in execution_result.get("steps", []):
+                yield {
+                    "event": "step_completed",
+                    "step_name": step_result["name"],
+                    "status": step_result.get("status", "unknown"),
+                    "executor_type": step_result.get("executor_type", ""),
+                    "output": step_result.get("output"),
+                    "repair_iteration": 0,
+                    "run_id": run_id,
+                }
+
+            # --- Stage 4: Repair loop ---
+            outcome_evaluation = self.runtime_outcome_evaluator.evaluate(
+                task=task, workflow=workflow, execution_result=execution_result
+            )
+            goal_evaluation = self.user_goal_evaluator.evaluate(
+                task=task, execution_result=execution_result
+            )
+            if self._should_apply_goal_repair(task) and not goal_evaluation.get("satisfied", False):
+                outcome_evaluation["should_repair"] = True
+            repair_iteration = 0
+            max_iterations = self._max_runtime_repair_iterations()
+            current_workflow = workflow
+            while outcome_evaluation.get("should_repair") and repair_iteration < max_iterations:
+                repair_classification = self.runtime_failure_classifier.classify(
+                    workflow=current_workflow,
+                    evaluation=outcome_evaluation,
+                    dependency_status=dependency_status if isinstance(dependency_status, dict) else {},
+                    execution_result=execution_result,
+                )
+                yield {
+                    "event": "repair_started",
+                    "iteration": repair_iteration + 1,
+                    "reason": repair_classification.get("reason", ""),
+                    "run_id": run_id,
+                }
+                for missing_tool in (repair_classification.get("missing_tools") or []):
+                    self.capability_acquisition_service.acquire(
+                        task_type=task.intent,
+                        gap=missing_tool,
+                        context={"trace_id": ctx.trace_id, "session_id": ctx.session_id},
+                    )
+                repaired_workflow = self.runtime_repair_service.build_repair_workflow(
+                    task=task, workflow=current_workflow, repair_classification=repair_classification
+                )
+                repaired_plan = self.capability_router.route_workflow(task, repaired_workflow)
+                self.security_guard.validate_plan(repaired_plan)
+                execution_result = self.execution_coordinator.execute(repaired_plan, task, ctx)
+                repair_iteration += 1
+                execution_result["execution_type"] = "workflow"
+                execution_result["repair_iteration"] = repair_iteration
+                for step_result in execution_result.get("steps", []):
+                    yield {
+                        "event": "step_completed",
+                        "step_name": step_result["name"],
+                        "status": step_result.get("status", "unknown"),
+                        "executor_type": step_result.get("executor_type", ""),
+                        "output": step_result.get("output"),
+                        "repair_iteration": repair_iteration,
+                        "run_id": run_id,
+                    }
+                outcome_evaluation = self.runtime_outcome_evaluator.evaluate(
+                    task=task, workflow=repaired_workflow, execution_result=execution_result
+                )
+                goal_evaluation = self.user_goal_evaluator.evaluate(
+                    task=task, execution_result=execution_result
+                )
+                if self._should_apply_goal_repair(task) and not goal_evaluation.get("satisfied", False):
+                    outcome_evaluation["should_repair"] = True
+                current_workflow = repaired_workflow
+
+            # --- Stage 5: Final result ---
+            final_result = self.result_integrator.build_response(
+                task=task,
+                workflow=workflow,
+                blueprints=blueprints_payload,
+                agent=None,
+                execution_result={
+                    **execution_result,
+                    "vector_store": self.vector_store.active_store(),
+                    "dependency_status": dependency_status,
+                },
+                context=ctx,
+                fmt=fmt,
+            )
+            yield {"event": "final", "result": final_result, "trace_id": ctx.trace_id, "run_id": run_id}
+            yield {"event": "lifecycle_end", "run_id": run_id, "status": "ok"}
+
+        except Exception as exc:
+            self.logger.error("handle_stream error run_id=%s: %s", run_id, exc)
+            yield {"event": "lifecycle_error", "run_id": run_id, "error": str(exc)}

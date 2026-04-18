@@ -6,12 +6,28 @@ model_providers:
     type: "ollama"
     base_url: "http://localhost:11434"
     models:
+      # LLM — reasoning / analysis (local-first)
+      - name: "deepseek-r1:7b"
+        enabled: true
+        task_tags: ["reasoning", "analysis", "document_analysis", "agent_reasoning"]
+      - name: "deepseek-r1:1.5b"
+        enabled: true
+        task_tags: ["reasoning", "fast_extraction"]
+      # LLM — multilingual / fast (local-first)
       - name: "qwen2.5:7b-instruct"
         enabled: true
+        task_tags: ["general_chat", "semantic_parsing", "semantic_labeling", "llm_execution"]
       - name: "qwen2.5:3b-instruct"
         enabled: true
+        task_tags: ["semantic_labeling", "fast_extraction"]
+      # Multimodal (local-first)
+      - name: "qwen2.5vl:7b"
+        enabled: true
+        task_tags: ["multimodal", "ocr", "image_understanding"]
+      # Code (local-first)
       - name: "qwen3-coder:30b"
         enabled: true
+        task_tags: ["code_generation"]
 
   openai:
     type: "openai"
@@ -57,100 +73,168 @@ model_providers:
         latency_ms: 150
 
 routing_policies:
+  # ----------------------------------------------------------------
+  # Local-first priority:
+  #   1. Ollama local (DeepSeek-R1 / Qwen2.5 — free, private, fast)
+  #   2. Free remote API (Groq / Gemini free-tier)
+  #   3. Paid remote API (OpenAI / Anthropic) — last resort
+  # ----------------------------------------------------------------
+
   intent_analysis:
-    primary: "groq:llama-3.3-70b-versatile"
+    primary: "ollama:qwen2.5:7b-instruct"
     fallback:
+      - "groq:llama-3.3-70b-versatile"
       - "groq:llama-3.1-8b-instant"
-      - "ollama:qwen2.5:7b-instruct"
       - "gemini:gemini-2.0-flash"
+      - "openai:gpt-4o-mini"
     timeout_sec: 15
 
   task_planning:
-    primary: "groq:llama-3.1-8b-instant"
-    fallback:
-      - "openai:gpt-4o-mini"
-      - "claude:claude-3-5-sonnet-latest"
-      - "ollama:qwen2.5:7b-instruct"
-    timeout_sec: 30
-
-  code_generation:
-    primary: "openai:gpt-4o"
+    primary: "ollama:qwen2.5:7b-instruct"
     fallback:
       - "groq:llama-3.1-8b-instant"
-      - "ollama:qwen3-coder:30b"
+      - "gemini:gemini-2.0-flash"
+      - "openai:gpt-4o-mini"
+      - "claude:claude-3-5-sonnet-latest"
+    timeout_sec: 30
+
+  reasoning:
+    # DeepSeek-R1 is the recommended local reasoning model
+    primary: "ollama:deepseek-r1:7b"
+    fallback:
+      - "ollama:deepseek-r1:1.5b"
+      - "groq:llama-3.3-70b-versatile"
+      - "gemini:gemini-2.0-flash"
+      - "openai:gpt-4o"
+    timeout_sec: 60
+
+  document_analysis:
+    # DeepSeek-R1 for deep analysis; Qwen2.5 for multilingual fast path
+    primary: "ollama:deepseek-r1:7b"
+    fallback:
+      - "ollama:qwen2.5:7b-instruct"
+      - "groq:llama-3.3-70b-versatile"
+      - "gemini:gemini-2.0-flash"
+      - "openai:gpt-4o"
+    timeout_sec: 90
+
+  agent_reasoning:
+    primary: "ollama:deepseek-r1:7b"
+    fallback:
+      - "ollama:qwen2.5:7b-instruct"
+      - "groq:llama-3.3-70b-versatile"
+      - "openai:gpt-4o"
+    timeout_sec: 120
+
+  code_generation:
+    primary: "ollama:qwen3-coder:30b"
+    fallback:
+      - "ollama:qwen2.5:7b-instruct"
+      - "groq:llama-3.1-8b-instant"
+      - "openai:gpt-4o"
     timeout_sec: 60
 
   document_generation:
-    primary: "gemini:gemini-2.0-flash"
+    primary: "ollama:qwen2.5:7b-instruct"
     fallback:
+      - "ollama:deepseek-r1:7b"
+      - "gemini:gemini-2.0-flash"
       - "gemini:gemini-2.0-flash-lite"
       - "openai:gpt-4o-mini"
-      - "ollama:qwen2.5:7b-instruct"
       - "claude:claude-3-5-sonnet-latest"
     timeout_sec: 45
 
   long_context_analysis:
-    primary: "gemini:gemini-2.0-flash"
+    primary: "ollama:deepseek-r1:7b"
     fallback:
+      - "gemini:gemini-2.0-flash"
       - "gemini:gemini-2.0-flash-lite"
       - "openai:gpt-4o"
-      - "ollama:qwen2.5:7b-instruct"
     timeout_sec: 60
 
   fast_extraction:
-    primary: "groq:llama-3.1-8b-instant"
+    primary: "ollama:qwen2.5:3b-instruct"
     fallback:
+      - "ollama:deepseek-r1:1.5b"
+      - "groq:llama-3.1-8b-instant"
       - "groq:llama-3.3-70b-versatile"
       - "gemini:gemini-2.0-flash"
     timeout_sec: 20
 
   semantic_parsing:
-    primary: "groq:llama-3.1-8b-instant"
+    primary: "ollama:qwen2.5:7b-instruct"
     fallback:
+      - "groq:llama-3.1-8b-instant"
       - "gemini:gemini-2.0-flash"
-      - "ollama:qwen2.5:7b-instruct"
     timeout_sec: 20
 
   semantic_aggregation:
-    primary: "gemini:gemini-2.0-flash"
+    primary: "ollama:qwen2.5:7b-instruct"
     fallback:
+      - "gemini:gemini-2.0-flash"
       - "groq:llama-3.3-70b-versatile"
-      - "ollama:qwen2.5:7b-instruct"
     timeout_sec: 30
 
   semantic_learning:
-    primary: "groq:llama-3.3-70b-versatile"
+    primary: "ollama:deepseek-r1:7b"
     fallback:
+      - "groq:llama-3.3-70b-versatile"
       - "gemini:gemini-2.0-flash"
-      - "ollama:qwen2.5:7b-instruct"
     timeout_sec: 20
 
   semantic_labeling:
-    primary: "groq:llama-3.1-8b-instant"
+    primary: "ollama:qwen2.5:3b-instruct"
     fallback:
-      - "ollama:qwen2.5:3b-instruct"
+      - "ollama:deepseek-r1:1.5b"
+      - "groq:llama-3.1-8b-instant"
       - "gemini:gemini-2.0-flash"
     timeout_sec: 15
 
   llm_execution:
-    primary: "groq:llama-3.3-70b-versatile"
+    primary: "ollama:qwen2.5:7b-instruct"
+    fallback:
+      - "ollama:deepseek-r1:7b"
+      - "groq:llama-3.3-70b-versatile"
+      - "gemini:gemini-2.0-flash"
+    timeout_sec: 30
+
+  general_chat:
+    primary: "ollama:qwen2.5:7b-instruct"
+    fallback:
+      - "ollama:deepseek-r1:7b"
+      - "groq:llama-3.3-70b-versatile"
+      - "gemini:gemini-2.0-flash"
+    timeout_sec: 20
+
+  ocr:
+    # Qwen2.5-VL is multimodal; PaddleOCR acquired via CapabilityAcquisitionService
+    primary: "ollama:qwen2.5vl:7b"
     fallback:
       - "ollama:qwen2.5:7b-instruct"
       - "gemini:gemini-2.0-flash"
     timeout_sec: 30
 
-  general_chat:
-    primary: "groq:llama-3.3-70b-versatile"
+  web_summarize:
+    primary: "ollama:qwen2.5:7b-instruct"
+    fallback:
+      - "ollama:deepseek-r1:7b"
+      - "groq:llama-3.1-8b-instant"
+      - "gemini:gemini-2.0-flash"
+    timeout_sec: 30
+
+  content_filter:
+    primary: "ollama:qwen2.5:3b-instruct"
     fallback:
       - "ollama:qwen2.5:7b-instruct"
-      - "gemini:gemini-2.0-flash"
-    timeout_sec: 20
+      - "groq:llama-3.1-8b-instant"
+    timeout_sec: 15
 
   default:
-    primary: "groq:llama-3.3-70b-versatile"
+    primary: "ollama:qwen2.5:7b-instruct"
     fallback:
+      - "ollama:deepseek-r1:7b"
+      - "groq:llama-3.3-70b-versatile"
       - "openai:gpt-4o-mini"
-      - "ollama:qwen2.5:7b-instruct"
     timeout_sec: 30
 
 model_params:

@@ -125,5 +125,347 @@
       "api_env": "ANTHROPIC_API_KEY"
     },
     "generic_endpoint_env": "NETHUB_LLM_ROUTER_ENDPOINT"
+  },
+  "multimodal_intent_rules": [
+    {
+      "intent": "ocr_task",
+      "domain": "multimodal_ops",
+      "input_types": ["image", "screenshot"],
+      "keywords": ["ocr", "识别图片", "图像文字", "票据识别"],
+      "patterns": []
+    },
+    {
+      "intent": "stt_task",
+      "domain": "multimodal_ops",
+      "input_types": ["audio", "voice"],
+      "keywords": ["stt", "语音转文字", "转写"],
+      "patterns": []
+    },
+    {
+      "intent": "tts_task",
+      "domain": "multimodal_ops",
+      "input_types": [],
+      "keywords": ["tts", "文字转语音", "语音合成"],
+      "patterns": []
+    },
+    {
+      "intent": "image_generation_task",
+      "domain": "multimodal_ops",
+      "input_types": [],
+      "keywords": ["生成图片", "图像生成", "海报", "插图", "画图", "画一张", "生成一张"],
+      "patterns": ["生成.{0,10}图片", "画.{0,10}图"],
+      "image_file_extensions": ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"],
+      "image_generation_verbs": ["生成", "画", "制作", "create", "generate", "draw"]
+    },
+    {
+      "intent": "video_generation_task",
+      "domain": "multimodal_ops",
+      "input_types": [],
+      "keywords": ["生成视频", "动画生成", "短视频"],
+      "patterns": []
+    },
+    {
+      "intent": "file_delivery_task",
+      "domain": "multimodal_ops",
+      "input_types": [],
+      "keywords": [],
+      "patterns": [],
+      "file_extensions": ["html", "htm", "js", "css", "json", "md", "txt", "py", "yaml", "yml"],
+      "delivery_markers": ["发给我", "发送给我", "给我看", "读取", "打开", "查看", "展示", "show me", "send me", "open file", "read file"]
+    },
+    {
+      "intent": "file_generation_task",
+      "domain": "multimodal_ops",
+      "input_types": ["file"],
+      "keywords": ["生成pdf", "生成word", "生成ppt", "文件生成", "写代码", "写一个html", "写个html", "生成html", "生成代码", "保存到", "保存为"],
+      "patterns": [],
+      "file_extensions": ["html", "htm", "js", "css", "json", "py", "yaml", "yml", "md", "txt"]
+    },
+    {
+      "intent": "web_research_task",
+      "domain": "multimodal_ops",
+      "input_types": [],
+      "keywords": ["web检索", "网页抓取", "自动查询", "联网查询"],
+      "patterns": []
+    }
+  ],
+  "huggingface_image_models": [
+    {
+      "model_id": "hf-internal-testing/tiny-stable-diffusion-pipe",
+      "description": "Minimal SD pipe for testing and CI — fast download, no GPU needed",
+      "priority": 1,
+      "requires_gpu": false,
+      "inference_steps": 1
+    },
+    {
+      "model_id": "nota-ai/bk-sdm-tiny",
+      "description": "Tiny knowledge-distilled SD — small footprint, CPU-capable",
+      "priority": 2,
+      "requires_gpu": false,
+      "inference_steps": 20
+    },
+    {
+      "model_id": "OFA-Sys/small-stable-diffusion-v0",
+      "description": "Compressed SD v1.4 variant — small enough for RAM-limited machines",
+      "priority": 3,
+      "requires_gpu": false,
+      "inference_steps": 20
+    },
+    {
+      "model_id": "runwayml/stable-diffusion-v1-5",
+      "description": "Standard SD v1.5 — full quality, 4 GB download, prefers GPU",
+      "priority": 4,
+      "requires_gpu": false,
+      "inference_steps": 20
+    }
+  ],
+  "huggingface_image_packages": ["diffusers", "transformers", "accelerate", "huggingface_hub", "torch", "pillow"],
+  "capability_acquisition_strategies": {
+    "image_generation": {
+      "description": "Local-first image generation: SDXL → SD1.5 → FLUX → paid API",
+      "pypi_packages": ["pillow"],
+      "ollama_models": [],
+      "huggingface_pipeline_tag": "text-to-image",
+      "huggingface_model_filter": {"sort": "downloads", "limit": 5},
+      "huggingface_candidates": [
+        {"model_id": "stabilityai/stable-diffusion-xl-base-1.0", "priority": 1, "inference_steps": 20, "label": "SDXL"},
+        {"model_id": "runwayml/stable-diffusion-v1-5", "priority": 2, "inference_steps": 20, "label": "SD1.5"},
+        {"model_id": "black-forest-labs/FLUX.1-schnell", "priority": 3, "inference_steps": 4, "label": "FLUX.1 Schnell"},
+        {"model_id": "hf-internal-testing/tiny-stable-diffusion-pipe", "priority": 4, "inference_steps": 1, "label": "tiny-test"},
+        {"model_id": "OFA-Sys/small-stable-diffusion-v0", "priority": 5, "inference_steps": 20, "label": "small-sd"}
+      ]
+    },
+    "video_generation": {
+      "description": "Local-first video/animation: AnimateDiff → Stable Video Diffusion",
+      "pypi_packages": ["pillow", "imageio", "imageio-ffmpeg"],
+      "ollama_models": [],
+      "huggingface_pipeline_tag": "text-to-video",
+      "huggingface_model_filter": {"sort": "downloads", "limit": 3},
+      "huggingface_candidates": [
+        {"model_id": "guoyww/animatediff-motion-adapter-v1-5-2", "priority": 1, "inference_steps": 25, "label": "AnimateDiff"},
+        {"model_id": "stabilityai/stable-video-diffusion-img2vid-xt", "priority": 2, "inference_steps": 25, "label": "SVD-XT"}
+      ]
+    },
+    "document_analysis": {
+      "description": "Local-first doc analysis: Unstructured + PyMuPDF parsing, DeepSeek-R1 reasoning",
+      "pypi_packages": ["unstructured", "pymupdf", "python-docx", "pdfplumber"],
+      "ollama_models": [
+        {"model_name": "deepseek-r1:7b", "priority": 1, "label": "DeepSeek-R1 reasoning"},
+        {"model_name": "qwen2.5:7b-instruct", "priority": 2, "label": "Qwen2.5 multilingual"}
+      ],
+      "huggingface_pipeline_tag": null,
+      "huggingface_candidates": []
+    },
+    "ocr": {
+      "description": "Local-first OCR: PaddleOCR best-free → Qwen2.5VL multimodal → EasyOCR",
+      "pypi_packages": ["paddlepaddle", "paddleocr"],
+      "ollama_models": [
+        {"model_name": "qwen2.5vl:7b", "priority": 1, "label": "Qwen2.5-VL multimodal OCR"}
+      ],
+      "huggingface_pipeline_tag": "image-to-text",
+      "huggingface_model_filter": {"sort": "downloads", "limit": 3},
+      "huggingface_candidates": [
+        {"model_id": "microsoft/trocr-base-printed", "priority": 1, "inference_steps": 1, "label": "TrOCR printed"},
+        {"model_id": "microsoft/trocr-small-printed", "priority": 2, "inference_steps": 1, "label": "TrOCR small"}
+      ],
+      "fallback_pypi_packages": ["easyocr"]
+    },
+    "speech_recognition": {
+      "description": "Local-first STT: Whisper → HuggingFace ASR",
+      "pypi_packages": ["openai-whisper"],
+      "ollama_models": [],
+      "huggingface_pipeline_tag": "automatic-speech-recognition",
+      "huggingface_model_filter": {"sort": "downloads", "limit": 3},
+      "huggingface_candidates": [
+        {"model_id": "openai/whisper-small", "priority": 1, "inference_steps": 1, "label": "Whisper small"},
+        {"model_id": "openai/whisper-tiny", "priority": 2, "inference_steps": 1, "label": "Whisper tiny"}
+      ]
+    },
+    "audio_generation": {
+      "description": "Local-first TTS: pyttsx3 → HuggingFace TTS",
+      "pypi_packages": ["pyttsx3"],
+      "ollama_models": [],
+      "huggingface_pipeline_tag": "text-to-audio",
+      "huggingface_model_filter": {"sort": "downloads", "limit": 3},
+      "huggingface_candidates": [
+        {"model_id": "facebook/mms-tts-eng", "priority": 1, "inference_steps": 1, "label": "MMS-TTS"},
+        {"model_id": "suno/bark-small", "priority": 2, "inference_steps": 1, "label": "Bark-small"}
+      ]
+    },
+    "web_research": {
+      "description": "Web retrieval: Playwright crawl → Readability filter → local LLM summarise",
+      "pypi_packages": ["playwright", "readability-lxml", "lxml", "requests", "beautifulsoup4"],
+      "ollama_models": [
+        {"model_name": "qwen2.5:7b-instruct", "priority": 1, "label": "Qwen2.5 summarisation"},
+        {"model_name": "deepseek-r1:7b", "priority": 2, "label": "DeepSeek-R1 analysis"}
+      ],
+      "huggingface_pipeline_tag": null,
+      "huggingface_candidates": [],
+      "post_install_commands": ["playwright install chromium"]
+    },
+    "content_filter": {
+      "description": "Content safety / cleaning: local LLM classification",
+      "pypi_packages": [],
+      "ollama_models": [
+        {"model_name": "qwen2.5:3b-instruct", "priority": 1, "label": "Qwen2.5 3B fast filter"},
+        {"model_name": "qwen2.5:7b-instruct", "priority": 2, "label": "Qwen2.5 7B accurate"}
+      ],
+      "huggingface_pipeline_tag": "text-classification",
+      "huggingface_model_filter": {"sort": "downloads", "limit": 3},
+      "huggingface_candidates": []
+    },
+    "file_generation": {
+      "description": "File/document generation with local LLMs",
+      "pypi_packages": ["jinja2", "markdown"],
+      "ollama_models": [
+        {"model_name": "qwen2.5:7b-instruct", "priority": 1, "label": "Qwen2.5 general"},
+        {"model_name": "qwen3-coder:30b", "priority": 2, "label": "Qwen-Coder for code files"}
+      ],
+      "huggingface_pipeline_tag": null,
+      "huggingface_candidates": []
+    },
+    "reasoning": {
+      "description": "Complex reasoning / agent inference with local DeepSeek-R1",
+      "pypi_packages": [],
+      "ollama_models": [
+        {"model_name": "deepseek-r1:7b", "priority": 1, "label": "DeepSeek-R1 7B"},
+        {"model_name": "deepseek-r1:1.5b", "priority": 2, "label": "DeepSeek-R1 1.5B compact"}
+      ],
+      "huggingface_pipeline_tag": null,
+      "huggingface_candidates": []
+    }
+  },
+  "local_model_priority": {
+    "description": "Three-tier resolution: local Ollama → free remote API → paid API",
+    "tiers": [
+      {
+        "tier": 1,
+        "name": "local_ollama",
+        "label": "Local Ollama (free, private)",
+        "healthcheck_url": "http://localhost:11434/api/tags",
+        "healthcheck_timeout_sec": 2,
+        "preferred_models": {
+          "reasoning":        "deepseek-r1:7b",
+          "analysis":         "deepseek-r1:7b",
+          "document_analysis":"deepseek-r1:7b",
+          "agent_reasoning":  "deepseek-r1:7b",
+          "general_chat":     "qwen2.5:7b-instruct",
+          "semantic_parsing": "qwen2.5:7b-instruct",
+          "llm_execution":    "qwen2.5:7b-instruct",
+          "code_generation":  "qwen3-coder:30b",
+          "ocr":              "qwen2.5vl:7b",
+          "content_filter":   "qwen2.5:3b-instruct",
+          "fast_extraction":  "qwen2.5:3b-instruct"
+        }
+      },
+      {
+        "tier": 2,
+        "name": "free_remote_api",
+        "label": "Free remote API (Groq / Gemini free-tier)",
+        "providers": ["groq", "gemini"]
+      },
+      {
+        "tier": 3,
+        "name": "paid_remote_api",
+        "label": "Paid remote API (OpenAI / Anthropic) — last resort",
+        "providers": ["openai", "claude"],
+        "require_user_confirmation": false
+      }
+    ]
+  },
+  "runtime_behavior": {
+    "max_repair_iterations": 2,
+    "session": {
+      "compaction": {
+        "enabled": true,
+        "max_records": 50,
+        "compact_to_records": 5,
+        "summary_model_task": "reasoning",
+        "summary_prompt": "Summarize the following conversation history into a compact form that preserves key decisions, facts, and context. Be concise."
+      },
+      "queue": {
+        "mode": "collect",
+        "debounce_ms": 300,
+        "max_queued": 10
+      }
+    },
+    "bootstrap": {
+      "enabled": true,
+      "workspace_path": "~/.nesthub/workspace",
+      "files": ["AGENTS.md", "SOUL.md", "TOOLS.md", "IDENTITY.md", "USER.md"],
+      "max_tokens_per_file": 2000,
+      "skip_missing": true
+    },
+    "model_cooldown": {
+      "backoff_seconds": [60, 300, 1500, 3600],
+      "max_error_count": 4,
+      "reset_after_success": true
+    },
+    "skill_dirs": [
+      {"path": "{workspace}/skills", "source": "workspace", "priority": 1},
+      {"path": "{workspace}/.agents/skills", "source": "project", "priority": 2},
+      {"path": "~/.agents/skills", "source": "personal", "priority": 3},
+      {"path": "~/.nesthub/skills", "source": "managed", "priority": 4},
+      {"path": "nethub_runtime/tools/skills", "source": "bundled", "priority": 5}
+    ],
+    "result_verification": {
+      "max_retries": 2,
+      "diagnosis_model_task": "reasoning",
+      "acquire_capability_on_repair": true,
+      "always_diagnose": false,
+      "ok_statuses": [
+        "generated", "read", "saved", "completed", "ok", "success",
+        "summarized", "retrieved", "transcribed", "repaired"
+      ],
+      "failed_statuses": [
+        "failed", "error", "invalid_output", "intent_mismatch", "not_found"
+      ],
+      "escalate_statuses": [
+        "needs_api_key"
+      ],
+      "fire_and_forget_steps": [
+        "ocr_extract", "stt_transcribe", "tts_synthesize", "video_generate"
+      ],
+      "degraded_message_patterns": [
+        "unsupported", "placeholder", "not implemented", "stub"
+      ]
+    },
+    "image_verification": {
+      "paid_providers": [
+        {
+          "name": "openai",
+          "display_name": "OpenAI DALL-E 3",
+          "model_name": "dall-e-3",
+          "model_id": "openai:dall-e-3",
+          "endpoint": "https://api.openai.com/v1/images/generations",
+          "key_env": "OPENAI_API_KEY",
+          "key_format": "sk-...",
+          "docs_url": "https://platform.openai.com/api-keys",
+          "pricing_note": "~$0.04 per image (1024×1024)"
+        },
+        {
+          "name": "stability",
+          "display_name": "Stability AI (Stable Diffusion XL)",
+          "model_name": "stable-diffusion-xl-1024-v1-0",
+          "model_id": "stability:stable-diffusion-xl-1024-v1-0",
+          "endpoint": "https://api.stability.ai/v1/generation/stable-diffusion-xl-1024-v1-0/text-to-image",
+          "key_env": "STABILITY_API_KEY",
+          "key_format": "sk-...",
+          "docs_url": "https://platform.stability.ai/account/keys",
+          "pricing_note": "~$0.002 per step (pay-as-you-go)"
+        },
+        {
+          "name": "replicate",
+          "display_name": "Replicate (SDXL / Flux)",
+          "model_name": "black-forest-labs/flux-schnell",
+          "model_id": "replicate:black-forest-labs/flux-schnell",
+          "endpoint": "https://api.replicate.com/v1/predictions",
+          "key_env": "REPLICATE_API_TOKEN",
+          "key_format": "r8_...",
+          "docs_url": "https://replicate.com/account/api-tokens",
+          "pricing_note": "pay-per-prediction (~$0.003)"
+        }
+      ]
+    }
   }
 }

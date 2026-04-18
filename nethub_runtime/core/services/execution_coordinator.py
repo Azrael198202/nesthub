@@ -21,7 +21,9 @@ from nethub_runtime.core.schemas.task_schema import TaskSchema
 from nethub_runtime.core.services.dependency_manager import DependencyManager
 from nethub_runtime.core.services.security_guard import SecurityGuard
 from nethub_runtime.core.services.execution_handler_registry import build_execution_handler_registry
+from nethub_runtime.core.services.execution_repair_loop import ExecutionRepairLoop
 from nethub_runtime.core.services.information_agent_service import InformationAgentService
+from nethub_runtime.core.hooks.registry import HookContext, HookRegistry
 
 
 LOGGER = logging.getLogger("nethub_runtime.core.execution_coordinator")
@@ -129,6 +131,7 @@ class ExecutionCoordinator:
         model_router: Any | None = None,
         intent_policy_path: Path | None = None,
         semantic_policy_path: Path | None = None,
+        hook_registry: HookRegistry | None = None,
     ) -> None:
         self.session_store = session_store or SessionStore()
         self.vector_store = vector_store or VectorStore()
@@ -151,6 +154,8 @@ class ExecutionCoordinator:
         self._handler_registry = build_execution_handler_registry(self)
         self._executor_handlers = self._handler_registry.get_executor_handlers()
         self._step_handlers = self._handler_registry.get_step_handlers()
+        self._repair_loop = ExecutionRepairLoop.from_policy(coordinator=self)
+        self.hook_registry = hook_registry
 
     def _load_intent_policy(self) -> dict[str, Any]:
         if self.intent_policy_path.exists():
@@ -251,7 +256,51 @@ class ExecutionCoordinator:
             last_error: str | None = None
             while attempt <= retries:
                 try:
-                    output = self._run_step(step, task, context, step_outputs)
+                    # pre_step hook — returning {"deny": True} skips the step
+                    if self.hook_registry is not None:
+                        pre_ctx = HookContext(
+                            event="pre_step",
+                            step_name=step["name"],
+                            step=step,
+                            task_intent=task.intent,
+                            session_id=context.session_id,
+                        )
+                        pre_result = self.hook_registry.run("pre_step", pre_ctx)
+                        if pre_result and pre_result.get("deny"):
+                            output = {"status": "skipped", "reason": pre_result.get("reason", "hook_denied")}
+                            step_outputs[step["name"]] = output
+                            results["steps"].append({
+                                "step_id": step["step_id"],
+                                "name": step["name"],
+                                "executor_type": step.get("executor_type", "unknown"),
+                                "status": "skipped",
+                                "inputs": step.get("inputs", []),
+                                "outputs": step.get("outputs", []),
+                                "selector": step.get("selector", {}),
+                                "output": output,
+                            })
+                            break
+
+                    output = self._repair_loop.run(
+                        step=step,
+                        task=task,
+                        context=context,
+                        step_outputs=step_outputs,
+                        run_step_fn=self._run_step,
+                    )
+
+                    # post_step hook — receives step output for logging/auditing
+                    if self.hook_registry is not None:
+                        post_ctx = HookContext(
+                            event="post_step",
+                            step_name=step["name"],
+                            step=step,
+                            task_intent=task.intent,
+                            session_id=context.session_id,
+                            output=output,
+                        )
+                        self.hook_registry.run("post_step", post_ctx)
+
                     step_outputs[step["name"]] = output
                     results["steps"].append(
                         {

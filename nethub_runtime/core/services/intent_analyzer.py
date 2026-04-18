@@ -7,6 +7,7 @@ from typing import Any
 
 from nethub_runtime.core.config.settings import INTENT_POLICY_PATH, PLUGIN_CONFIG_PATH, SEMANTIC_POLICY_PATH, ensure_core_config_dir
 from nethub_runtime.core.memory.semantic_policy_store import SemanticPolicyStore
+from nethub_runtime.core.memory.obsidian_memory import ObsidianMemoryStore
 from nethub_runtime.core.schemas.context_schema import CoreContextSchema
 from nethub_runtime.core.schemas.task_schema import TaskSchema
 from nethub_runtime.core.services.intent_policy_manager import IntentPolicyManager
@@ -25,12 +26,15 @@ class SemanticIntentPlugin:
         policy_manager: IntentPolicyManager | None = None,
         keyword_analyzer: RuntimeKeywordSignalAnalyzer | None = None,
         semantic_policy_store: SemanticPolicyStore | None = None,
+        obsidian_memory: ObsidianMemoryStore | None = None,
     ) -> None:
         ensure_core_config_dir()
         self.policy_path = policy_path or INTENT_POLICY_PATH
         self.semantic_policy_store = semantic_policy_store or SemanticPolicyStore(policy_path=SEMANTIC_POLICY_PATH)
         self.policy_manager = policy_manager or IntentPolicyManager(policy_path=self.policy_path)
         self.keyword_analyzer = keyword_analyzer or RuntimeKeywordSignalAnalyzer(semantic_policy_store=self.semantic_policy_store)
+        # Obsidian vault as AI Memory / RAG source (no-op when vault not configured)
+        self.obsidian_memory: ObsidianMemoryStore = obsidian_memory or ObsidianMemoryStore()
         self.policy = self._load_policy()
 
     def _default_policy(self) -> dict[str, Any]:
@@ -65,61 +69,66 @@ class SemanticIntentPlugin:
         return False
 
     def _infer_multimodal_intent(self, text: str, context: CoreContextSchema) -> tuple[str, str] | None:
+        """
+        Match multimodal intent from the policy store's ``multimodal_intent_rules``.
+
+        All keyword lists and patterns live in semantic_policy.json — no
+        business vocabulary is hardcoded here.  The method only encodes
+        the structural matching logic (how to apply a rule).
+        """
         metadata = context.metadata or {}
         input_type = str(metadata.get("input_type", "")).lower()
         lowered = text.lower()
-        file_delivery_markers = (
-            "发给我",
-            "发送给我",
-            "给我看",
-            "读取",
-            "打开",
-            "查看",
-            "展示",
-            "show me",
-            "send me",
-            "open file",
-            "read file",
-        )
-        code_file_markers = (
-            ".html",
-            ".htm",
-            ".js",
-            ".css",
-            ".json",
-            ".py",
-            "html文件",
-            "js文件",
-            "javascript文件",
-            "代码文件",
-            "写一个html",
-            "写个html",
-            "生成html",
-            "生成代码",
-            "写代码",
-            "保存到",
-            "保存为",
-        )
-        explicit_path = re.search(r"([A-Za-z0-9_./\\-]+\.(?:html?|js|css|json|md|txt|py|ya?ml))", text, flags=re.IGNORECASE)
-        if explicit_path and any(marker in lowered for marker in file_delivery_markers):
-            return ("file_delivery_task", "multimodal_ops")
 
-        if input_type in {"image", "screenshot"} or any(k in lowered for k in ("ocr", "识别图片", "图像文字", "票据识别")):
-            return ("ocr_task", "multimodal_ops")
-        if input_type in {"audio", "voice"} or any(k in lowered for k in ("stt", "语音转文字", "转写")):
-            return ("stt_task", "multimodal_ops")
-        if any(k in lowered for k in ("tts", "文字转语音", "语音合成")):
-            return ("tts_task", "multimodal_ops")
-        if any(k in lowered for k in ("生成图片", "图像生成", "海报", "插图")):
-            return ("image_generation_task", "multimodal_ops")
-        if any(k in lowered for k in ("生成视频", "动画生成", "短视频")):
-            return ("video_generation_task", "multimodal_ops")
-        if any(k in lowered for k in code_file_markers):
-            return ("file_generation_task", "multimodal_ops")
-        if input_type == "file" or any(k in lowered for k in ("生成pdf", "生成word", "生成ppt", "文件生成")):
-            return ("file_generation_task", "multimodal_ops")
-        if any(k in lowered for k in ("web检索", "网页抓取", "自动查询", "联网查询")):
-            return ("web_research_task", "multimodal_ops")
+        rules: list[dict[str, Any]] = (
+            self.semantic_policy_store.load_runtime_policy().get("multimodal_intent_rules") or []
+        )
+
+        for rule in rules:
+            intent = str(rule.get("intent", ""))
+            domain = str(rule.get("domain", "multimodal_ops"))
+
+            # 1. Structural: input_type metadata match
+            if input_type and input_type in (rule.get("input_types") or []):
+                return (intent, domain)
+
+            # 2. Keyword match (loaded from policy, never hardcoded here)
+            if any(kw.lower() in lowered for kw in (rule.get("keywords") or [])):
+                return (intent, domain)
+
+            # 3. Regex pattern match (loaded from policy)
+            if any(re.search(p, lowered) for p in (rule.get("patterns") or [])):
+                return (intent, domain)
+
+            # 4. Structural: text contains a file-extension path + delivery markers
+            delivery_markers: list[str] = rule.get("delivery_markers") or []
+            file_exts: list[str] = rule.get("file_extensions") or []
+            if delivery_markers and file_exts:
+                ext_pattern = "|".join(re.escape(e) for e in file_exts)
+                if (
+                    re.search(rf"[A-Za-z0-9_./\\-]+\.(?:{ext_pattern})", text, flags=re.IGNORECASE)
+                    and any(dm.lower() in lowered for dm in delivery_markers)
+                ):
+                    return (intent, domain)
+
+            # 5. Structural: image-extension path present + generation verb
+            img_exts: list[str] = rule.get("image_file_extensions") or []
+            gen_verbs: list[str] = rule.get("image_generation_verbs") or []
+            if img_exts and gen_verbs:
+                ext_pattern = "|".join(re.escape(e) for e in img_exts)
+                verb_pattern = "|".join(re.escape(v) for v in gen_verbs)
+                if (
+                    re.search(rf"[A-Za-z0-9_./\\-]+\.(?:{ext_pattern})", text, flags=re.IGNORECASE)
+                    and re.search(verb_pattern, lowered)
+                ):
+                    return (intent, domain)
+
+            # 6. Structural: file-extension path present with no delivery markers (file generation)
+            if file_exts and not delivery_markers and not img_exts:
+                ext_pattern = "|".join(re.escape(e) for e in file_exts)
+                if re.search(rf"[A-Za-z0-9_./\\-]+\.(?:{ext_pattern})", text, flags=re.IGNORECASE):
+                    return (intent, domain)
+
         return None
 
     def _infer_agent_management_intent(self, text: str, context: CoreContextSchema, keyword_signals: dict[str, Any]) -> tuple[str, str, list[str], dict[str, Any]] | None:
@@ -199,7 +208,36 @@ class SemanticIntentPlugin:
                 evidence=text,
             )
         except Exception:
+            pass
+        # Mirror to Obsidian vault as auto-recorded memory note
+        try:
+            self.obsidian_memory.record_interaction(
+                text,
+                intent=intent,
+                domain=domain,
+                extra={"output_requirements": output_requirements, "constraints": constraints},
+            )
+        except Exception:
             return
+
+    def _infer_obsidian_intent(self, text: str) -> tuple[str, str] | None:
+        """
+        Query the Obsidian vault for a high-confidence intent match.
+
+        Obsidian notes act as an AI memory layer: past interactions that were
+        recorded as notes (with intent/domain frontmatter) can directly
+        resolve future requests without requiring pattern matching.
+        Returns (intent, domain) or None.
+        """
+        if not self.obsidian_memory.is_configured:
+            return None
+        try:
+            match = self.obsidian_memory.match_intent(text)
+            if match and float(match.get("confidence", 0)) >= 0.7:
+                return (str(match["intent"]), str(match["domain"]))
+        except Exception:
+            pass
+        return None
 
     def run(self, text: str, _context: CoreContextSchema) -> dict[str, Any]:
         dynamic_policy = self.policy_manager.synthesize(text, persist=False)
@@ -226,11 +264,20 @@ class SemanticIntentPlugin:
         multimodal_intent = self._infer_multimodal_intent(text, _context)
         if multimodal_intent:
             intent, domain = multimodal_intent
-            output_requirements = ["artifact"]
-            if intent == "file_generation_task":
-                output_requirements = ["artifact", "file"]
-            elif intent == "file_delivery_task":
-                output_requirements = ["text", "file"]
+            # Use intent-specific output types so the workflow planner does NOT
+            # inject generic generate_workflow_artifact / persist_workflow_output
+            # steps on top of dedicated native handlers.
+            _output_req_map = {
+                "image_generation_task": ["image"],
+                "video_generation_task": ["video"],
+                "ocr_task": ["text"],
+                "stt_task": ["text"],
+                "tts_task": ["audio"],
+                "file_generation_task": ["artifact", "file"],
+                "file_delivery_task": ["text", "file"],
+                "web_research_task": ["text"],
+            }
+            output_requirements = _output_req_map.get(intent, ["text"])
             self._remember_runtime_intent(
                 text,
                 intent=intent,
@@ -266,6 +313,32 @@ class SemanticIntentPlugin:
                 "output_requirements": outputs,
                 "constraints": constraints,
                 "analysis": {"model_routing": analysis_meta, "agent_management": True},
+            }
+
+        # --- Obsidian Memory as AI-memory RAG fallback ---
+        # Consult vault notes before defaulting to generic data_query/data_record.
+        # High-confidence Obsidian matches override the generic classifier so that
+        # user-defined knowledge (recorded as .md notes) refines intent resolution.
+        obsidian_intent = self._infer_obsidian_intent(text)
+        if obsidian_intent:
+            intent, domain = obsidian_intent
+            outputs = ["text"]
+            constraints = {"need_agent": False}
+            self._remember_runtime_intent(
+                text,
+                intent=intent,
+                domain=domain,
+                output_requirements=outputs,
+                constraints=constraints,
+                keyword_signals=keyword_signals,
+                analysis_meta=analysis_meta,
+            )
+            return {
+                "intent": intent,
+                "domain": domain,
+                "output_requirements": outputs,
+                "constraints": constraints,
+                "analysis": {"model_routing": analysis_meta, "obsidian_memory": True},
             }
 
         action_flags = keyword_signals.get("action_flags", {}) if isinstance(keyword_signals, dict) else {}
