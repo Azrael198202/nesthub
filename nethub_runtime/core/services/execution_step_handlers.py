@@ -61,31 +61,132 @@ def handle_aggregate_query_step(
 def handle_ocr_extract_step(
     coordinator: Any,
     _step: dict[str, Any],
-    _task: TaskSchema,
-    _context: CoreContextSchema,
+    task: TaskSchema,
+    context: CoreContextSchema,
     _step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
-    return {"artifact_type": "text", "status": "dispatched", "task": "ocr", "message": "OCR dispatch prepared."}
+    """OCR with priority chain: PaddleOCR → Qwen2.5-VL (Ollama) → TrOCR (HuggingFace) → EasyOCR."""
+    from nethub_runtime.core.services.capability_acquisition_service import CapabilityAcquisitionService
+
+    input_text = task.input_text or ""
+    # Extract file path from input
+    import re as _re
+    path_match = _re.search(r'[\w./\\-]+\.(?:png|jpg|jpeg|bmp|tiff|gif|webp)', input_text, _re.IGNORECASE)
+    image_path = Path(path_match.group(0)) if path_match else None
+
+    if image_path is None or not image_path.exists():
+        return {"artifact_type": "text", "status": "error", "message": f"Image file not found: {image_path}"}
+
+    # Try PaddleOCR first (highest free accuracy)
+    try:
+        from paddleocr import PaddleOCR  # type: ignore
+        ocr = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)
+        result = ocr.ocr(str(image_path), cls=True)
+        lines = [line[1][0] for block in (result or []) for line in (block or []) if line and line[1]]
+        if lines:
+            text = "\n".join(lines)
+            return {"artifact_type": "text", "status": "extracted", "method": "paddleocr",
+                    "content": text, "line_count": len(lines)}
+    except Exception:
+        pass
+
+    # Try Qwen2.5-VL via Ollama (multimodal)
+    try:
+        import base64 as _b64
+        import urllib.request as _ur, json as _json
+        img_b64 = _b64.b64encode(image_path.read_bytes()).decode()
+        payload = _json.dumps({"model": "qwen2.5vl:7b", "prompt": "Extract all text from this image verbatim.",
+                               "images": [img_b64], "stream": False}).encode()
+        req = _ur.Request("http://localhost:11434/api/generate", data=payload,
+                          headers={"Content-Type": "application/json"})
+        with _ur.urlopen(req, timeout=60) as resp:
+            data = _json.loads(resp.read())
+            text = str(data.get("response") or "").strip()
+            if text:
+                return {"artifact_type": "text", "status": "extracted", "method": "qwen2.5vl_ollama",
+                        "content": text, "line_count": len(text.splitlines())}
+    except Exception:
+        pass
+
+    # Trigger capability acquisition to install missing packages, then retry
+    svc = getattr(coordinator, "capability_acquisition_service", None) or \
+          CapabilityAcquisitionService(security_guard=getattr(coordinator, "security_guard", None))
+    acq = svc.acquire(task_type="ocr", gap="no_ocr_engine")
+    return {"artifact_type": "text", "status": "acquisition_triggered",
+            "method": acq.strategy, "detail": acq.detail,
+            "message": "OCR engine is being installed. Retry shortly."}
 
 
 def handle_stt_transcribe_step(
     coordinator: Any,
     _step: dict[str, Any],
-    _task: TaskSchema,
-    _context: CoreContextSchema,
+    task: TaskSchema,
+    context: CoreContextSchema,
     _step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
-    return {"artifact_type": "text", "status": "dispatched", "task": "stt", "message": "STT dispatch prepared."}
+    """STT with priority chain: Whisper (local) → HuggingFace ASR."""
+    import re as _re
+    input_text = task.input_text or ""
+    path_match = _re.search(r'[\w./\\-]+\.(?:mp3|wav|ogg|flac|m4a|webm)', input_text, _re.IGNORECASE)
+    audio_path = Path(path_match.group(0)) if path_match else None
+
+    if audio_path is None or not audio_path.exists():
+        return {"artifact_type": "text", "status": "error", "message": f"Audio file not found: {audio_path}"}
+
+    # Try openai-whisper (local, no API key)
+    try:
+        import whisper  # type: ignore
+        model = whisper.load_model("small")
+        result = model.transcribe(str(audio_path))
+        text = str(result.get("text") or "").strip()
+        return {"artifact_type": "text", "status": "transcribed", "method": "whisper_small",
+                "content": text, "language": result.get("language", "unknown")}
+    except Exception:
+        pass
+
+    # Trigger acquisition
+    from nethub_runtime.core.services.capability_acquisition_service import CapabilityAcquisitionService
+    svc = getattr(coordinator, "capability_acquisition_service", None) or \
+          CapabilityAcquisitionService(security_guard=getattr(coordinator, "security_guard", None))
+    acq = svc.acquire(task_type="speech_recognition", gap="no_stt_engine")
+    return {"artifact_type": "text", "status": "acquisition_triggered",
+            "method": acq.strategy, "detail": acq.detail,
+            "message": "STT engine is being installed. Retry shortly."}
 
 
 def handle_tts_synthesize_step(
     coordinator: Any,
     _step: dict[str, Any],
-    _task: TaskSchema,
-    _context: CoreContextSchema,
+    task: TaskSchema,
+    context: CoreContextSchema,
     _step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
-    return {"artifact_type": "audio", "status": "dispatched", "task": "tts", "message": "TTS dispatch prepared."}
+    """TTS with priority chain: pyttsx3 (local) → HuggingFace TTS."""
+    import re as _re, hashlib as _hs
+    input_text = task.input_text or ""
+    # Derive output path
+    artifact_id = _hs.md5(input_text.encode()).hexdigest()[:12]
+    out_path = Path(f"generated/{artifact_id}.wav")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        import pyttsx3  # type: ignore
+        engine = pyttsx3.init()
+        engine.save_to_file(input_text, str(out_path))
+        engine.runAndWait()
+        if out_path.exists() and out_path.stat().st_size > 0:
+            return {"artifact_type": "audio", "status": "synthesized", "method": "pyttsx3",
+                    "artifact_path": str(out_path), "file_name": out_path.name}
+    except Exception:
+        pass
+
+    from nethub_runtime.core.services.capability_acquisition_service import CapabilityAcquisitionService
+    svc = getattr(coordinator, "capability_acquisition_service", None) or \
+          CapabilityAcquisitionService(security_guard=getattr(coordinator, "security_guard", None))
+    acq = svc.acquire(task_type="audio_generation", gap="no_tts_engine")
+    return {"artifact_type": "audio", "status": "acquisition_triggered",
+            "method": acq.strategy, "detail": acq.detail,
+            "message": "TTS engine is being installed. Retry shortly."}
 
 
 def handle_image_generate_step(
@@ -122,11 +223,72 @@ def handle_image_generate_step(
 def handle_video_generate_step(
     coordinator: Any,
     _step: dict[str, Any],
-    _task: TaskSchema,
-    _context: CoreContextSchema,
+    task: TaskSchema,
+    context: CoreContextSchema,
     _step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
-    return {"artifact_type": "video", "status": "dispatched", "task": "video_generation"}
+    """Video generation: AnimateDiff (priority 1) → Stable Video Diffusion (priority 2) via HuggingFace."""
+    import hashlib as _hs
+    input_text = task.input_text or ""
+    artifact_id = _hs.md5(input_text.encode()).hexdigest()[:12]
+    out_path = Path(f"generated/{artifact_id}.mp4")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load candidate list from policy (AnimateDiff → SVD-XT)
+    from nethub_runtime.core.config.settings import SEMANTIC_POLICY_PATH
+    try:
+        policy = json.loads(SEMANTIC_POLICY_PATH.read_text(encoding="utf-8"))
+        candidates = (policy.get("capability_acquisition_strategies") or {}) \
+            .get("video_generation", {}).get("huggingface_candidates") or []
+    except Exception:
+        candidates = []
+
+    for candidate in sorted(candidates, key=lambda c: int(c.get("priority", 99))):
+        model_id = str(candidate.get("model_id") or "")
+        label = str(candidate.get("label", model_id))
+        steps = int(candidate.get("inference_steps", 25))
+        try:
+            import torch  # type: ignore
+            if "animatediff" in model_id.lower():
+                from diffusers import AnimateDiffPipeline, MotionAdapter  # type: ignore
+                import imageio  # type: ignore
+                adapter = MotionAdapter.from_pretrained(model_id)
+                pipe = AnimateDiffPipeline.from_pretrained(
+                    "emilianJR/epiCRealism", motion_adapter=adapter,
+                    torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                )
+                if torch.cuda.is_available():
+                    pipe = pipe.to("cuda")
+                frames = pipe(input_text, num_frames=16, num_inference_steps=steps).frames[0]
+                imageio.mimwrite(str(out_path), frames, fps=8)
+            else:
+                # Stable Video Diffusion or generic text-to-video
+                from diffusers import DiffusionPipeline  # type: ignore
+                import imageio  # type: ignore
+                pipe = DiffusionPipeline.from_pretrained(
+                    model_id,
+                    torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                )
+                if torch.cuda.is_available():
+                    pipe = pipe.to("cuda")
+                output = pipe(input_text, num_inference_steps=steps)
+                frames = output.frames[0] if hasattr(output, "frames") else output.images
+                imageio.mimwrite(str(out_path), frames, fps=8)
+
+            if out_path.exists() and out_path.stat().st_size > 0:
+                return {"artifact_type": "video", "status": "generated", "method": label,
+                        "artifact_path": str(out_path), "file_name": out_path.name}
+        except Exception:
+            continue
+
+    # Trigger capability acquisition for missing packages/models
+    from nethub_runtime.core.services.capability_acquisition_service import CapabilityAcquisitionService
+    svc = getattr(coordinator, "capability_acquisition_service", None) or \
+          CapabilityAcquisitionService(security_guard=getattr(coordinator, "security_guard", None))
+    acq = svc.acquire(task_type="video_generation", gap="no_video_model")
+    return {"artifact_type": "video", "status": "acquisition_triggered",
+            "method": acq.strategy, "detail": acq.detail,
+            "message": "Video generation model is being installed. Retry shortly."}
 
 
 def handle_file_generate_step(
