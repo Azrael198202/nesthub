@@ -54,17 +54,21 @@ class BridgeService:
             await self._deliver_line_response(claimed, result)
         return result
 
+    @staticmethod
+    def _nesthub_base_url() -> str:
+        return os.getenv("NETHUB_LLM_ROUTER_ENDPOINT", "").strip().rstrip("/")
+
     def should_process_inline(self) -> bool:
-        handle_url = os.getenv("NESTHUB_CORE_HANDLE_URL", "").strip()
         inline_flag = os.getenv("NESTHUB_PUBLIC_API_PROCESS_INLINE", "").strip().lower()
         if inline_flag in {"1", "true", "yes", "on"}:
             return True
-        return bool(handle_url)
+        return bool(self._nesthub_base_url())
 
     async def _invoke_nesthub(self, msg: BridgeMessage, *, base_url: str | None = None) -> dict[str, Any]:
-        handle_url = os.getenv("NESTHUB_CORE_HANDLE_URL", "").strip()
-        if not handle_url:
+        base = self._nesthub_base_url()
+        if not base:
             return {"reply": "NestHub core handle url is not configured."}
+        handle_url = f"{base}/handle"
         payload = {
             "input_text": msg.text,
             "context": {
@@ -181,6 +185,29 @@ class BridgeService:
                     },
                 )
             )
+
+        # Handle image_generate step — artifact stored on disk at artifact_path
+        if not downloads:
+            img_payload = final_output.get("image_generate") or {}
+            img_path_str = str(img_payload.get("artifact_path") or "").strip()
+            if img_path_str:
+                img_path = Path(img_path_str)
+                if img_path.exists() and img_path.is_file():
+                    content_type = mimetypes.guess_type(img_path.name)[0] or "image/png"
+                    downloads.append(
+                        self.stage_artifact_bytes(
+                            file_name=img_path.name,
+                            content=img_path.read_bytes(),
+                            content_type=content_type,
+                            base_url=base_url,
+                            metadata={
+                                "artifact_type": "image",
+                                "artifact_id": img_path.stem,
+                                "source": "image_generate",
+                            },
+                        )
+                    )
+
         return downloads
 
     def _extract_reply_text(self, result: dict[str, Any]) -> str:
@@ -199,8 +226,46 @@ class BridgeService:
                 if value:
                     return f"Generated artifact: {value}" if field == "artifact_path" else value
 
+        # image_generate step
+        img_payload = final_output.get("image_generate") or {}
+        img_status = str(img_payload.get("status") or "").strip()
+        if img_status == "generated":
+            img_path = str(img_payload.get("artifact_path") or "").strip()
+            return f"图片已生成：{img_path}" if img_path else "图片已生成。"
+        if img_status and img_status != "":
+            return f"图片生成状态：{img_status}"
+
         task = result.get("task") or {}
         return f"NestHub completed {task.get('intent', 'the request')}."
+
+    def _build_line_messages(self, result: dict[str, Any]) -> list[dict[str, Any]]:
+        """Build LINE message objects (text + optional image) from result."""
+        downloads = result.get("downloads") or []
+        image_downloads = [
+            d for d in downloads
+            if str(d.get("content_type") or "").startswith("image/")
+        ]
+        messages: list[dict[str, Any]] = []
+
+        if image_downloads:
+            # Send image message(s) first
+            for img in image_downloads:
+                url = str(img.get("download_url") or "").strip()
+                if not url:
+                    continue
+                messages.append({
+                    "type": "image",
+                    "originalContentUrl": url,
+                    "previewImageUrl": url,
+                })
+            # Follow with a brief text caption (LINE allows up to 5 messages per reply)
+            caption = str(result.get("reply") or "图片已生成。").strip()[:5000]
+            messages.append({"type": "text", "text": caption})
+        else:
+            reply_text = self._compose_line_reply_text(result)[:5000]
+            messages.append({"type": "text", "text": reply_text or "收到您的消息！"})
+
+        return messages[:5]  # LINE reply API: max 5 messages
 
     async def _deliver_line_response(self, msg: BridgeMessage, result: dict[str, Any]) -> None:
         access_token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
@@ -208,7 +273,7 @@ class BridgeService:
             return
 
         event = msg.raw_payload or {}
-        reply_text = self._compose_line_reply_text(result)[:5000]
+        messages = self._build_line_messages(result)
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
@@ -219,10 +284,7 @@ class BridgeService:
                 response = await client.post(
                     "https://api.line.me/v2/bot/message/reply",
                     headers=headers,
-                    json={
-                        "replyToken": reply_token,
-                        "messages": [{"type": "text", "text": reply_text}],
-                    },
+                    json={"replyToken": reply_token, "messages": messages},
                 )
                 if response.is_success:
                     return
@@ -231,10 +293,7 @@ class BridgeService:
                 await client.post(
                     "https://api.line.me/v2/bot/message/push",
                     headers=headers,
-                    json={
-                        "to": msg.external_user_id,
-                        "messages": [{"type": "text", "text": reply_text}],
-                    },
+                    json={"to": msg.external_user_id, "messages": messages},
                 )
 
     def _compose_line_reply_text(self, result: dict[str, Any]) -> str:

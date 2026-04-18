@@ -57,7 +57,7 @@ def test_line_webhook_is_processed_through_public_api(monkeypatch) -> None:
 def test_line_webhook_is_queued_by_default_without_inline_processing(monkeypatch) -> None:
     monkeypatch.delenv("LINE_CHANNEL_SECRET", raising=False)
     monkeypatch.delenv("NESTHUB_PUBLIC_API_PROCESS_INLINE", raising=False)
-    monkeypatch.delenv("NESTHUB_CORE_HANDLE_URL", raising=False)
+    monkeypatch.delenv("NETHUB_LLM_ROUTER_ENDPOINT", raising=False)
 
     client = TestClient(app)
     response = client.post("/api/bridge/im/inbound", json=_line_payload("进入队列"))
@@ -165,7 +165,7 @@ def test_line_reply_text_includes_download_links() -> None:
 
 
 def test_inline_invoke_stages_file_read_content_as_download(monkeypatch) -> None:
-    monkeypatch.setenv("NESTHUB_CORE_HANDLE_URL", "https://core.example/handle")
+    monkeypatch.setenv("NETHUB_LLM_ROUTER_ENDPOINT", "https://core.example")
     monkeypatch.setenv("NESTHUB_PUBLIC_API_BASE_URL", "https://public.example")
 
     class FakeResponse:
