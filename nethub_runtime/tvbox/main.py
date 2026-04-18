@@ -285,20 +285,35 @@ def _create_app() -> Any:
             if claim_resp.status_code >= 400:
                 return
 
-            result = await core_engine.handle(
-                text,
-                {
-                    "metadata": {
-                        "source": "line_bridge",
-                        "bridge_message_id": bridge_message_id,
-                        "external_user_id": message.get("external_user_id"),
-                        "external_chat_id": message.get("external_chat_id"),
-                        "external_message_id": message.get("external_message_id"),
-                    }
-                },
-                fmt="dict",
-                use_langraph=True,
-            )
+            try:
+                result = await core_engine.handle(
+                    text,
+                    {
+                        "metadata": {
+                            "source": "line_bridge",
+                            "bridge_message_id": bridge_message_id,
+                            "external_user_id": message.get("external_user_id"),
+                            "external_chat_id": message.get("external_chat_id"),
+                            "external_message_id": message.get("external_message_id"),
+                        }
+                    },
+                    fmt="dict",
+                    use_langraph=True,
+                )
+            except Exception as engine_exc:
+                import logging as _logging
+                _logging.getLogger("nethub_runtime.tvbox").error(
+                    "core_engine.handle failed bridge_message_id=%s: %s", bridge_message_id, engine_exc
+                )
+                await client.post(
+                    f"{bridge_api}/hub/result",
+                    json={"bridge_message_id": bridge_message_id, "result": {
+                        "reply": f"处理请求时发生错误，请稍后重试。（{type(engine_exc).__name__}）",
+                        "artifacts": [], "downloads": [],
+                    }},
+                    headers=headers,
+                )
+                return
             runtime_response = _record_runtime_result(text, result if isinstance(result, dict) else {})
             raw_artifacts = list((result or {}).get("artifacts") or []) if isinstance(result, dict) else []
 

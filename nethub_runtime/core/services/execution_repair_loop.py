@@ -257,16 +257,20 @@ class ExecutionRepairLoop:
             if invoke is None:
                 return "model_router.invoke not available"
             import asyncio
-            try:
-                result = asyncio.get_event_loop().run_until_complete(
-                    invoke(self._diagnosis_task, prompt,
-                           system_prompt="You are a concise NestHub step diagnostic assistant.")
-                )
-            except RuntimeError:
-                result = asyncio.run(
-                    invoke(self._diagnosis_task, prompt,
-                           system_prompt="You are a concise NestHub step diagnostic assistant.")
-                )
+            import concurrent.futures
+
+            def _run_in_new_loop() -> str:
+                loop = asyncio.new_event_loop()
+                try:
+                    return loop.run_until_complete(
+                        invoke(self._diagnosis_task, prompt,
+                               system_prompt="You are a concise NestHub step diagnostic assistant.")
+                    )
+                finally:
+                    loop.close()
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                result = pool.submit(_run_in_new_loop).result(timeout=15)
             return str(result)
         except Exception as exc:
             LOGGER.debug("Diagnosis model call failed: %s", exc)
