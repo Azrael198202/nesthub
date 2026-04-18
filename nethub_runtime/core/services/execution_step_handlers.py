@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+import urllib.request
+import urllib.parse
 from typing import Any
 from pathlib import Path
 
@@ -355,21 +357,188 @@ def _extract_html_title(text: str) -> str:
 def handle_web_retrieve_step(
     coordinator: Any,
     _step: dict[str, Any],
-    _task: TaskSchema,
-    _context: CoreContextSchema,
+    task: TaskSchema,
+    context: CoreContextSchema,
     _step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
-    return {"artifact_type": "web_content", "status": "dispatched", "task": "web_research"}
+    """Fetch web content for the URL (or query) in *task.input_text*.
+
+    Strategy (local-first, no paid API required):
+      1. Extract URL from input text, or build a DuckDuckGo search URL.
+      2. Fetch with ``urllib.request`` (bundled, no extra install needed).
+      3. Strip HTML tags to plain text.
+      4. If ``readability-lxml`` is installed, use it for cleaner extraction.
+      5. Store the raw content in the VectorStore under namespace="web_cache"
+         so the business-domain layer remembers it for future queries.
+    """
+    url = _extract_url_from_text(task.input_text)
+    if not url:
+        # Fall back to DuckDuckGo lite HTML search
+        query = urllib.parse.quote_plus(task.input_text)
+        url = f"https://html.duckduckgo.com/html/?q={query}"
+
+    raw_html = ""
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (nesthub-runtime/1.0)"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            charset = "utf-8"
+            ct = resp.headers.get("Content-Type", "")
+            if "charset=" in ct:
+                charset = ct.split("charset=")[-1].strip().split(";")[0].strip()
+            raw_html = resp.read().decode(charset, errors="replace")
+    except Exception as exc:
+        return {
+            "artifact_type": "web_content",
+            "status": "failed",
+            "url": url,
+            "content": "",
+            "error": str(exc),
+        }
+
+    # Extract readable text
+    content = _extract_readable_text(raw_html, url)
+
+    # Persist to VectorStore (business domain layer — non-blocking)
+    try:
+        if hasattr(coordinator, "vector_store") and coordinator.vector_store is not None:
+            coordinator.vector_store.add_knowledge(
+                namespace="web_cache",
+                content=content[:2000],
+                metadata={"url": url, "session_id": context.session_id, "trace_id": context.trace_id},
+                item_id=f"web_{context.trace_id}",
+            )
+    except Exception:
+        pass
+
+    return {
+        "artifact_type": "web_content",
+        "status": "retrieved",
+        "url": url,
+        "content": content,
+        "content_length": len(content),
+    }
+
+
+def _extract_url_from_text(text: str) -> str | None:
+    """Extract the first HTTP(S) URL from *text*, or return None."""
+    match = re.search(r"https?://[^\s\"'<>]+", text)
+    if match:
+        url = match.group(0).rstrip(".,;)")
+        return url
+    return None
+
+
+def _extract_readable_text(html: str, url: str = "") -> str:
+    """Extract plain text from HTML.
+
+    Tries ``readability-lxml`` first (cleaner extraction), then falls back to
+    a simple regex tag-stripper that always works with zero extra dependencies.
+    """
+    # Try readability-lxml (installed via web_research strategy)
+    try:
+        from readability import Document  # type: ignore
+        doc = Document(html)
+        summary_html = doc.summary()
+        text = re.sub(r"<[^>]+>", " ", summary_html)
+        text = re.sub(r"&[a-zA-Z]+;", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        if text:
+            return text[:8000]
+    except Exception:
+        pass
+
+    # Fallback: strip all tags
+    text = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"&[a-zA-Z#0-9]+;", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:8000]
 
 
 def handle_web_summarize_step(
     coordinator: Any,
     _step: dict[str, Any],
-    _task: TaskSchema,
-    _context: CoreContextSchema,
-    _step_outputs: dict[str, Any],
+    task: TaskSchema,
+    context: CoreContextSchema,
+    step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
-    return {"artifact_type": "summary", "status": "dispatched", "task": "web_summary"}
+    """Summarise web content fetched by ``web_retrieve`` using a local LLM.
+
+    Reads ``step_outputs["web_retrieve"]["content"]`` and passes it to
+    ``coordinator._invoke_model_text`` with task_type="web_summarize".
+    Falls back to a truncated excerpt when the model router is unavailable.
+    """
+    retrieve_out = step_outputs.get("web_retrieve", {})
+    web_content = retrieve_out.get("content", "")
+    url = retrieve_out.get("url", "")
+
+    if not web_content:
+        # Try VectorStore cache
+        try:
+            if hasattr(coordinator, "vector_store") and coordinator.vector_store is not None:
+                hits = coordinator.vector_store.search(
+                    task.input_text, top_k=1, namespace="web_cache"
+                )
+                if hits:
+                    web_content = hits[0].get("content", "")
+                    url = hits[0].get("metadata", {}).get("url", url)
+        except Exception:
+            pass
+
+    if not web_content:
+        return {
+            "artifact_type": "summary",
+            "status": "no_content",
+            "summary": "",
+            "url": url,
+        }
+
+    # Truncate to fit context window (≤ 3000 chars for most local models)
+    excerpt = web_content[:3000]
+
+    # Local LLM summarization
+    summary: str | None = None
+    if hasattr(coordinator, "_invoke_model_text"):
+        summary = coordinator._invoke_model_text(
+            task_type="web_summarize",
+            prompt=(
+                f"Summarise the following web page content in 3-5 sentences.\n"
+                f"User question: {task.input_text}\n\n"
+                f"Content:\n{excerpt}"
+            ),
+            system_prompt=(
+                "You are a web research assistant. Summarise web content concisely and "
+                "accurately. Focus on information relevant to the user's question."
+            ),
+        )
+
+    if not summary:
+        # Fallback: return first 500 chars as plain excerpt
+        summary = excerpt[:500]
+
+    # Persist summary to VectorStore
+    try:
+        if hasattr(coordinator, "vector_store") and coordinator.vector_store is not None:
+            coordinator.vector_store.add_knowledge(
+                namespace="web_summary",
+                content=summary,
+                metadata={"url": url, "query": task.input_text, "trace_id": context.trace_id},
+                item_id=f"summary_{context.trace_id}",
+            )
+    except Exception:
+        pass
+
+    return {
+        "artifact_type": "summary",
+        "status": "summarized",
+        "summary": summary,
+        "url": url,
+        "source_length": len(web_content),
+    }
 
 
 def handle_prepare_runtime_tools_step(

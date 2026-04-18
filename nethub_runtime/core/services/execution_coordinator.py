@@ -334,6 +334,35 @@ class ExecutionCoordinator:
                             }
                         )
         results["final_output"] = step_outputs
+
+        # --- Task 1: auto-close task session when policy requests it ---
+        if self.session_store.is_task_session(context.session_id):
+            auto_close = (
+                self.semantic_policy
+                .get("runtime_behavior", {})
+                .get("session", {})
+                .get("context_window", {})
+                .get("task_session_auto_close", True)
+            )
+            if auto_close:
+                summary_parts = []
+                for step_result in results["steps"]:
+                    name = step_result.get("name", "")
+                    status = step_result.get("status", "")
+                    out = step_result.get("output") or {}
+                    if isinstance(out, dict):
+                        msg = out.get("message") or out.get("summary") or out.get("content") or ""
+                    else:
+                        msg = str(out)[:120]
+                    if msg:
+                        summary_parts.append(f"[{name}:{status}] {str(msg)[:120]}")
+                summary = "; ".join(summary_parts) or f"task {task.intent} completed"
+                self.session_store.close_task_session(
+                    context.session_id,
+                    summary=summary,
+                    merge_to_main=True,
+                )
+
         return results
 
     def _run_step(self, step: dict[str, Any], task: TaskSchema, context: CoreContextSchema, step_outputs: dict[str, Any]) -> dict[str, Any]:

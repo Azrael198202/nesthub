@@ -303,10 +303,36 @@ class SimpleWorkflow(BaseWorkflow):
         for step in state["plan"]:
             LOGGER.info(f"Executing step: {step['name']}")
             
-            # TODO: 执行实际的工作
-            result = {"step": step["step"], "result": "success"}
+        # Execute each step in the plan using the model_router when available
+        for step in state["plan"]:
+            step_name: str = str(step.get("name", f"step_{step.get('step', '?')}"))
+            LOGGER.info("Executing step: %s", step_name)
+            try:
+                if self.model_router is not None:
+                    prompt = (
+                        f"Execute the following task step and provide the result.\n"
+                        f"Step: {step_name}\n"
+                        f"Context: {state.get('input', '')}\n"
+                        f"Respond concisely with the outcome."
+                    )
+                    response = await self.model_router.invoke_async(
+                        messages=[{"role": "user", "content": prompt}],
+                        task="llm_execution",
+                    )
+                    result = {
+                        "step": step["step"],
+                        "name": step_name,
+                        "result": response.get("content") or response.get("text") or "completed",
+                        "status": "completed",
+                    }
+                else:
+                    # No model router — mark step as structurally completed
+                    result = {"step": step["step"], "name": step_name, "result": "completed", "status": "completed"}
+            except Exception as exc:
+                LOGGER.warning("Step %s execution error: %s", step_name, exc)
+                result = {"step": step["step"], "name": step_name, "result": "failed", "error": str(exc), "status": "failed"}
             state["results"].append(result)
-            step["status"] = "completed"
+            step["status"] = result["status"]
         
         state["should_continue"] = False
         return state

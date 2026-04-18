@@ -376,6 +376,17 @@
   "runtime_behavior": {
     "max_repair_iterations": 2,
     "session": {
+      "context_window": {
+        "max_messages": 20,
+        "task_session_enabled": true,
+        "task_session_auto_close": true
+      },
+      "persistence": {
+        "enabled": true,
+        "backend": "sqlite",
+        "sqlite_path": "~/.nesthub/sessions.db",
+        "vector_sqlite_path": "~/.nesthub/vector_store.db"
+      },
       "compaction": {
         "enabled": true,
         "max_records": 50,

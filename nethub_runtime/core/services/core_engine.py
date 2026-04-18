@@ -9,8 +9,9 @@ from nethub_runtime.core.config.settings import (
     MODEL_REGISTRY_PATH,
     load_local_env,
 )
-from nethub_runtime.core.memory.vector_store import VectorStore
+from nethub_runtime.core.memory.vector_store import VectorStore, SQLiteVectorPersistence
 from nethub_runtime.core.memory.runtime_learning_store import RuntimeLearningStore
+from nethub_runtime.core.memory.session_persistence import SQLiteSessionPersistence
 from nethub_runtime.core.services.agent_designer import AgentDesigner
 from nethub_runtime.core.services.blueprint_generator import BlueprintGenerator
 from nethub_runtime.core.services.blueprint_resolver import BlueprintResolver
@@ -67,7 +68,23 @@ class AICore:
         
         # ========== 基础管理器 ==========
         self.context_manager = ContextManager()
-        self.vector_store = VectorStore()
+
+        # ========== Task 3: Vector embedding (sentence-transformers, opt-in) ==========
+        _embedding_fn = None
+        try:
+            import importlib.util as _ilu
+            if _ilu.find_spec("sentence_transformers") is not None:
+                from sentence_transformers import SentenceTransformer  # type: ignore
+                _st_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+                _embedding_fn = lambda text: _st_model.encode(text, convert_to_numpy=True).tolist()
+                self.logger.info("✓ VectorStore: sentence-transformers embeddings enabled")
+        except Exception as _e:
+            self.logger.debug("sentence-transformers not available, using keyword search: %s", _e)
+
+        self.vector_store = VectorStore(embedding_fn=_embedding_fn)
+        # ========== Task 3: VectorStore SQLite persistence (opt-in via policy) ==========
+        # Applied after load_runtime_policy is available (post execution_coordinator init).
+        # We defer this wiring below so we can read the policy first.
         self.dependency_manager = DependencyManager()
         self.security_guard = SecurityGuard()
         
@@ -156,6 +173,48 @@ class AICore:
                 "✓ Session Compactor enabled (max_records=%d compact_to=%d)",
                 _compactor.max_records, _compactor.compact_to,
             )
+
+        # ========== Task 1: Context window limiting (10–20 messages per spec) ==========
+        _session_cfg = self.execution_coordinator.semantic_policy_store.load_runtime_policy().get(
+            "runtime_behavior", {}
+        ).get("session", {})
+        _window_cfg = _session_cfg.get("context_window", {})
+        _max_messages = int(_window_cfg.get("max_messages", 20))
+        self.context_manager.session_store._max_window = _max_messages
+        self.logger.info("✓ Session context window: max_messages=%d", _max_messages)
+
+        # ========== Task 3: Session persistence (SQLite, opt-in via policy) ==========
+        _persist_cfg = _session_cfg.get("persistence", {})
+        if _persist_cfg.get("enabled", False):
+            try:
+                import os as _os
+                _db_raw = _persist_cfg.get("sqlite_path", "~/.nesthub/sessions.db")
+                _db_path = _os.path.expandvars(_os.path.expanduser(_db_raw))
+                _persistence = SQLiteSessionPersistence(_db_path)
+                self.context_manager.session_store._persistence = _persistence
+                self.logger.info("✓ Session persistence: SQLite at %s", _db_path)
+            except Exception as _pe:
+                self.logger.warning("Session persistence init failed: %s", _pe)
+
+        # ========== Task 3: VectorStore SQLite persistence (domain memory) ==========
+        if _persist_cfg.get("enabled", False):
+            try:
+                import os as _os
+                _vs_db_raw = _persist_cfg.get("vector_sqlite_path", "~/.nesthub/vector_store.db")
+                _vs_db_path = _os.path.expandvars(_os.path.expanduser(_vs_db_raw))
+                _vs_persistence = SQLiteVectorPersistence(_vs_db_path)
+                # Re-create VectorStore with persistence (loads previously stored items)
+                _prev_embedding_fn = self.vector_store._embedding_fn
+                self.vector_store = VectorStore(
+                    embedding_fn=_prev_embedding_fn,
+                    persistence=_vs_persistence,
+                )
+                # Propagate to ExecutionCoordinator
+                self.execution_coordinator.vector_store = self.vector_store
+                self.logger.info("✓ VectorStore persistence: SQLite at %s (%d items restored)",
+                                 _vs_db_path, len(self.vector_store._items))
+            except Exception as _vpe:
+                self.logger.warning("VectorStore persistence init failed: %s", _vpe)
 
         # ========== Session Queue (concurrency control) ==========
         _queue_cfg = self.execution_coordinator.semantic_policy_store.load_runtime_policy().get(

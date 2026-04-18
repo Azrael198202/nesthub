@@ -5,8 +5,16 @@ Reference: docs/03_workflow/langgraph_agent_framework.md
 
 from __future__ import annotations
 
+import asyncio
+import importlib.util
+import io
 import logging
 import os
+import subprocess
+import sys
+import urllib.parse
+import urllib.request
+from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 from typing import Any, Optional, Callable
 from abc import ABC, abstractmethod
@@ -340,17 +348,46 @@ class WebSearchTool(BaseTool):
         super().__init__("web_search", "Search the web for information")
     
     async def execute(self, input_data: dict[str, Any]) -> Any:
-        """执行Web搜索"""
+        """Execute a web search using the DuckDuckGo Instant Answer API (no key needed)."""
         query = input_data.get("query", "")
-        LOGGER.debug(f"Executing web search: {query}")
-        
-        # TODO: 实现实际的Web搜索
-        return {
-            "success": True,
-            "results": [
-                {"title": f"Result for {query}", "url": "https://example.com"}
-            ]
-        }
+        max_results = int(input_data.get("max_results", 5))
+        LOGGER.debug("Executing web search: %s", query)
+        if not query:
+            return {"success": False, "error": "query is required"}
+        try:
+            # DuckDuckGo Instant Answer JSON API — free, no key
+            params = urllib.parse.urlencode({"q": query, "format": "json", "no_redirect": 1})
+            url = f"https://api.duckduckgo.com/?{params}"
+            req = urllib.request.Request(url, headers={"User-Agent": "nesthub-runtime/1.0"})
+            loop = asyncio.get_event_loop()
+            raw = await loop.run_in_executor(
+                None,
+                lambda: urllib.request.urlopen(req, timeout=10).read().decode(),
+            )
+            import json as _json
+            data = _json.loads(raw)
+            results: list[dict[str, Any]] = []
+            # Abstract (best single answer)
+            if data.get("Abstract"):
+                results.append({
+                    "title": data.get("Heading", query),
+                    "snippet": data["Abstract"],
+                    "url": data.get("AbstractURL", ""),
+                    "source": "abstract",
+                })
+            # Related topics
+            for topic in data.get("RelatedTopics", [])[:max_results]:
+                if isinstance(topic, dict) and topic.get("Text"):
+                    results.append({
+                        "title": topic.get("Text", "")[:80],
+                        "snippet": topic.get("Text", ""),
+                        "url": topic.get("FirstURL", ""),
+                        "source": "related",
+                    })
+            return {"success": True, "query": query, "results": results[:max_results]}
+        except Exception as exc:
+            LOGGER.warning("web_search failed: %s", exc)
+            return {"success": False, "error": str(exc), "results": []}
 
 
 class FileSystemTool(BaseTool):
@@ -360,15 +397,67 @@ class FileSystemTool(BaseTool):
         super().__init__("filesystem", "Access file system operations")
     
     async def execute(self, input_data: dict[str, Any]) -> Any:
-        """执行文件系统操作"""
-        operation = input_data.get("operation", "")
-        LOGGER.debug(f"Executing filesystem operation: {operation}")
-        
-        # TODO: 实现实际的文件系统操作
-        return {
-            "success": True,
-            "result": f"Operation {operation} completed"
-        }
+        """Execute filesystem operations: read / write / list / exists / delete.
+
+        Accepted operations and required fields:
+          - read:   path
+          - write:  path, content
+          - list:   path  (directory listing)
+          - exists: path
+          - delete: path  (files only; no recursive delete for safety)
+        """
+        operation = str(input_data.get("operation", "")).lower()
+        raw_path = input_data.get("path", "")
+        LOGGER.debug("Executing filesystem operation=%s path=%s", operation, raw_path)
+
+        if not raw_path:
+            return {"success": False, "error": "path is required"}
+
+        path = Path(os.path.expandvars(os.path.expanduser(str(raw_path))))
+
+        try:
+            if operation == "read":
+                if not path.is_file():
+                    return {"success": False, "error": f"not a file: {path}"}
+                content = path.read_text(encoding="utf-8", errors="replace")
+                return {"success": True, "path": str(path), "content": content, "size": len(content)}
+
+            elif operation == "write":
+                content = str(input_data.get("content", ""))
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+                return {"success": True, "path": str(path), "bytes_written": len(content.encode())}
+
+            elif operation == "list":
+                if not path.is_dir():
+                    return {"success": False, "error": f"not a directory: {path}"}
+                entries = [
+                    {"name": e.name, "type": "dir" if e.is_dir() else "file",
+                     "size": e.stat().st_size if e.is_file() else None}
+                    for e in sorted(path.iterdir())
+                ]
+                return {"success": True, "path": str(path), "entries": entries}
+
+            elif operation == "exists":
+                return {"success": True, "path": str(path), "exists": path.exists(),
+                        "is_file": path.is_file(), "is_dir": path.is_dir()}
+
+            elif operation == "delete":
+                if not path.exists():
+                    return {"success": False, "error": f"not found: {path}"}
+                if path.is_dir():
+                    return {"success": False, "error": "delete of directories is not supported"}
+                path.unlink()
+                return {"success": True, "path": str(path), "deleted": True}
+
+            else:
+                return {"success": False, "error": f"unknown operation: {operation}"}
+
+        except PermissionError as exc:
+            return {"success": False, "error": f"permission denied: {exc}"}
+        except Exception as exc:
+            LOGGER.warning("filesystem tool error: %s", exc)
+            return {"success": False, "error": str(exc)}
 
 
 class ShellExecutionTool(BaseTool):
@@ -377,16 +466,55 @@ class ShellExecutionTool(BaseTool):
     def __init__(self):
         super().__init__("shell", "Execute shell commands")
     
+    # Commands that are explicitly allowed for execution (security allowlist)
+    _ALLOWED_COMMANDS: frozenset[str] = frozenset({
+        "ls", "cat", "echo", "pwd", "date", "whoami", "uname",
+        "python", "python3", "pip", "pip3", "git", "curl", "wget",
+        "find", "grep", "wc", "head", "tail", "sort", "uniq",
+    })
+
     async def execute(self, input_data: dict[str, Any]) -> Any:
-        """执行Shell命令"""
-        command = input_data.get("command", "")
-        LOGGER.debug(f"Executing shell command: {command}")
-        
-        # TODO: 实现实际的Shell命令执行
-        return {
-            "success": True,
-            "output": f"Command executed: {command}"
-        }
+        """Execute a shell command from a security allowlist.
+
+        Accepted fields:
+          command  — the shell command string
+          timeout  — seconds before killing (default 30)
+          cwd      — working directory (default None = caller's cwd)
+        """
+        command = str(input_data.get("command", "")).strip()
+        timeout = int(input_data.get("timeout", 30))
+        cwd = input_data.get("cwd") or None
+        LOGGER.debug("Executing shell command: %s", command[:120])
+
+        if not command:
+            return {"success": False, "error": "command is required"}
+
+        # Security: only allow commands whose first token is in the allowlist
+        first_token = command.split()[0].split("/")[-1]  # strip path prefix
+        if first_token not in self._ALLOWED_COMMANDS:
+            LOGGER.warning("shell tool: rejected non-allowlisted command '%s'", first_token)
+            return {"success": False, "error": f"command '{first_token}' is not in the allowed list"}
+
+        try:
+            loop = asyncio.get_event_loop()
+            proc = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    command, shell=True, capture_output=True, text=True,
+                    timeout=timeout, cwd=cwd,
+                ),
+            )
+            return {
+                "success": proc.returncode == 0,
+                "returncode": proc.returncode,
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+            }
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": f"command timed out after {timeout}s"}
+        except Exception as exc:
+            LOGGER.warning("shell tool error: %s", exc)
+            return {"success": False, "error": str(exc)}
 
 
 class CodeExecutionTool(BaseTool):
@@ -396,12 +524,60 @@ class CodeExecutionTool(BaseTool):
         super().__init__("code_execution", "Execute Python code")
     
     async def execute(self, input_data: dict[str, Any]) -> Any:
-        """执行Python代码"""
-        code = input_data.get("code", "")
-        LOGGER.debug(f"Executing code: {code[:50]}...")
-        
-        # TODO: 实现实际的代码执行
-        return {
-            "success": True,
-            "result": "Code executed"
-        }
+        """Execute Python code in an isolated namespace with captured stdout/stderr.
+
+        Accepted fields:
+          code     — Python source string to execute
+          timeout  — seconds before aborting (default 10)
+
+        The executed code may define variables; their values are returned under
+        ``locals`` if they are JSON-serialisable.  ``print()`` output is
+        captured under ``stdout``.
+        """
+        code = str(input_data.get("code", ""))
+        timeout = int(input_data.get("timeout", 10))
+        LOGGER.debug("Executing code (%d chars)", len(code))
+
+        if not code.strip():
+            return {"success": False, "error": "code is required"}
+
+        stdout_buf = io.StringIO()
+        stderr_buf = io.StringIO()
+        namespace: dict[str, Any] = {"__builtins__": __builtins__}
+
+        try:
+            loop = asyncio.get_event_loop()
+
+            def _run() -> None:
+                with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
+                    exec(compile(code, "<nesthub_tool>", "exec"), namespace)  # noqa: S102
+
+            await asyncio.wait_for(loop.run_in_executor(None, _run), timeout=timeout)
+
+            # Collect serialisable locals (exclude builtins and private)
+            safe_locals: dict[str, Any] = {}
+            for k, v in namespace.items():
+                if k.startswith("_"):
+                    continue
+                try:
+                    import json as _json
+                    _json.dumps(v)
+                    safe_locals[k] = v
+                except (TypeError, ValueError):
+                    safe_locals[k] = repr(v)
+
+            return {
+                "success": True,
+                "stdout": stdout_buf.getvalue(),
+                "stderr": stderr_buf.getvalue(),
+                "locals": safe_locals,
+            }
+        except asyncio.TimeoutError:
+            return {"success": False, "error": f"code execution timed out after {timeout}s"}
+        except Exception as exc:
+            return {
+                "success": False,
+                "error": str(exc),
+                "stdout": stdout_buf.getvalue(),
+                "stderr": stderr_buf.getvalue(),
+            }
