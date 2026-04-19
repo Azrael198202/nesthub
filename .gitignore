@@ -57,3 +57,7 @@ examples/*.html
 examples/*.png
 
 .public_api_temp/*.*
+
+# External log snapshots (fetched from Railway public_api)
+nethub_runtime/external_logs/
+api/public_api/received/

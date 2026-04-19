@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 import urllib.request
 import urllib.parse
@@ -9,6 +11,8 @@ from pathlib import Path
 
 from nethub_runtime.core.schemas.context_schema import CoreContextSchema
 from nethub_runtime.core.schemas.task_schema import TaskSchema
+
+logger = logging.getLogger("nethub_runtime.core.execution_step_handlers")
 
 
 def handle_extract_records_step(
@@ -78,12 +82,24 @@ def handle_ocr_extract_step(
         ct = str(att.get("content_type") or "")
         if ct.startswith("image/"):
             sp = str(att.get("stored_path") or "").strip()
+            dest_dir = _received_dir(context.session_id)
+            dest = dest_dir / str(att.get("file_name") or Path(sp).name if sp else att.get("file_name") or "image.jpg")
             if sp and Path(sp).exists():
-                dest_dir = _received_dir(context.session_id)
-                dest = dest_dir / str(att.get("file_name") or Path(sp).name)
+                # Same-host: direct copy (no HTTP round-trip)
                 if not dest.exists():
                     shutil.copy2(sp, dest)
                 image_path = dest
+            else:
+                # Cross-host (Railway → local): download via download_url
+                url = str(att.get("download_url") or "").strip()
+                if url:
+                    try:
+                        import urllib.request as _ur
+                        with _ur.urlopen(_ur.Request(url), timeout=30) as resp:
+                            dest.write_bytes(resp.read())
+                        image_path = dest
+                    except Exception as exc:
+                        logger.warning("Failed to download image attachment %s: %s", url, exc)
             break
 
     # Priority 2: file path in task text

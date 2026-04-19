@@ -168,10 +168,14 @@ async def im_inbound(request: Request, x_line_signature: str = Header(None)):
                         )
                         # ── Step 2: Build attachment pointing at the saved path ──
                         input_type_label = _derive_input_type(content_type)
+                        download_url = (
+                            f"{base_url}/api/received/{date_prefix}/{dest_path.name}"
+                        )
                         attachments.append({
                             "file_name": file_name,
                             "content_type": content_type,
-                            "stored_path": str(dest_path),   # NestHub reads from here
+                            "stored_path": str(dest_path),   # same-host direct read
+                            "download_url": download_url,    # cross-host HTTP download
                             "input_type": input_type_label,
                             "source_message_type": msg_type,
                             "external_message_id": external_message_id,
@@ -183,6 +187,7 @@ async def im_inbound(request: Request, x_line_signature: str = Header(None)):
                             "content_type": content_type,
                             "input_type": input_type_label,
                             "stored_path": str(dest_path),
+                            "download_url": download_url,
                             "size_bytes": len(content_bytes),
                             "message_id": external_message_id,
                         })

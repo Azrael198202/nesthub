@@ -366,6 +366,7 @@ def _create_app() -> Any:
         if not bridge_api or not bridge_token:
             return
         import httpx
+        from nethub_runtime.integrations.external_log_monitor import fetch_and_save
 
         headers = {"Authorization": f"Bearer {bridge_token}"}
         while True:
@@ -374,11 +375,16 @@ def _create_app() -> Any:
                     response = await client.get(f"{bridge_api}/hub/pending", headers=headers)
                     response.raise_for_status()
                     pending = response.json()
+                processed_any = False
                 for item in pending:
                     try:
                         await _process_bridge_message(item)
+                        processed_any = True
                     except Exception:
                         continue
+                # Fetch external log snapshot after each poll round that had messages
+                if processed_any:
+                    await fetch_and_save(label=f"bridge_poll_{len(pending)}_items")
             except asyncio.CancelledError:
                 raise
             except Exception:
