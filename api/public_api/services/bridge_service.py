@@ -78,18 +78,19 @@ class BridgeService:
         if not base:
             return {"reply": "NestHub core handle url is not configured."}
         handle_url = f"{base}/handle"
+        meta: dict[str, Any] = {
+            "source_im": msg.source_im,
+            "external_user_id": msg.external_user_id,
+            "external_chat_id": msg.external_chat_id,
+            "external_message_id": msg.external_message_id,
+            "bridge_message_id": msg.bridge_message_id,
+            "attachments": msg.attachments,
+        }
+        if msg.attachments:
+            meta["input_type"] = msg.attachments[0].get("input_type", "file")
         payload = {
             "input_text": msg.text,
-            "context": {
-                "metadata": {
-                    "source_im": msg.source_im,
-                    "external_user_id": msg.external_user_id,
-                    "external_chat_id": msg.external_chat_id,
-                    "external_message_id": msg.external_message_id,
-                    "bridge_message_id": msg.bridge_message_id,
-                    "attachments": msg.attachments,
-                }
-            },
+            "context": {"metadata": meta},
             "output_format": "dict",
             "use_langraph": True,
         }
@@ -136,6 +137,7 @@ class BridgeService:
                     "external_message_id": msg.external_message_id,
                     "bridge_message_id": msg.bridge_message_id,
                     "attachments": msg.attachments,
+                    **( {"input_type": msg.attachments[0].get("input_type", "file")} if msg.attachments else {} ),
                 }
             },
             "output_format": "dict",

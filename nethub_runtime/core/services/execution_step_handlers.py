@@ -69,10 +69,30 @@ def handle_ocr_extract_step(
     from nethub_runtime.core.services.capability_acquisition_service import CapabilityAcquisitionService
 
     input_text = task.input_text or ""
-    # Extract file path from input
-    import re as _re
-    path_match = _re.search(r'[\w./\\-]+\.(?:png|jpg|jpeg|bmp|tiff|gif|webp)', input_text, _re.IGNORECASE)
-    image_path = Path(path_match.group(0)) if path_match else None
+
+    # --- Resolve image path ---
+    # Priority 1: attachment uploaded via LINE / bridge
+    image_path: Path | None = None
+    attachments = context.metadata.get("attachments") or []
+    for att in attachments:
+        ct = str(att.get("content_type") or "")
+        if ct.startswith("image/"):
+            # Prefer stored_path (same-process direct read) over HTTP download
+            sp = str(att.get("stored_path") or "").strip()
+            dest_dir = _received_dir(context.session_id)
+            if sp and Path(sp).exists():
+                dest = dest_dir / str(att.get("file_name") or Path(sp).name)
+                if not dest.exists():
+                    import shutil
+                    shutil.copy2(sp, dest)
+                image_path = dest
+            break
+
+    # Priority 2: file path mentioned in the task text
+    if image_path is None:
+        import re as _re
+        path_match = _re.search(r'[\w./\\-]+\.(?:png|jpg|jpeg|bmp|tiff|gif|webp)', input_text, _re.IGNORECASE)
+        image_path = Path(path_match.group(0)) if path_match else None
 
     if image_path is None or not image_path.exists():
         return {"artifact_type": "text", "status": "error", "message": f"Image file not found: {image_path}"}
@@ -451,20 +471,34 @@ def _process_context_attachments(
         file_name = str(att.get("file_name") or "file.bin").strip()
         content_type = str(att.get("content_type") or "application/octet-stream")
 
-        if not url:
+        if not url and not str(att.get("stored_path") or "").strip():
             continue
 
         local_path = dest_dir / file_name
-        # Download
-        try:
-            req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                local_path.write_bytes(resp.read())
-        except Exception as exc:
+        # Prefer stored_path (same-process direct read — no HTTP round-trip)
+        sp = str(att.get("stored_path") or "").strip()
+        if sp and Path(sp).exists():
+            import shutil
+            shutil.copy2(sp, local_path)
+        elif url:
+            # Fallback: HTTP download (cross-process / remote deployments)
+            try:
+                req = urllib.request.Request(url)
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    local_path.write_bytes(resp.read())
+            except Exception as exc:
+                processed.append({
+                    "file_name": file_name,
+                    "status": "download_error",
+                    "error": str(exc),
+                    "content": "",
+                })
+                continue
+        else:
             processed.append({
                 "file_name": file_name,
                 "status": "download_error",
-                "error": str(exc),
+                "error": "no stored_path and no download_url",
                 "content": "",
             })
             continue

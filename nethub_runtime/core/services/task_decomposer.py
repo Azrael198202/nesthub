@@ -70,6 +70,7 @@ class MultimodalTaskDecomposerPlugin:
             "video_generation_task": [("video_generate", "Generate video/animation artifact.")],
             "file_generation_task": [("file_generate", "Generate file artifact (PDF/Word/PPT).")],
             "file_delivery_task": [("file_read", "Read an existing file and return its content.")],
+            "file_upload_task": [("file_read", "Read and extract content from the uploaded file.")],
             "web_research_task": [
                 ("web_retrieve", "Retrieve and parse web content."),
                 ("web_summarize", "Summarize retrieved web content."),

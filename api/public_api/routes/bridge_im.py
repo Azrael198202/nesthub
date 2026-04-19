@@ -17,6 +17,24 @@ logger = logging.getLogger("api.public_api.routes.bridge_im")
 _SUPPORTED_MSG_TYPES = {"text", "image", "file"}
 
 
+def _derive_input_type(content_type: str) -> str:
+    """Map a MIME type to a simplified input_type for NestHub intent routing."""
+    ct = content_type.lower()
+    if ct.startswith("image/"):
+        return "image"
+    if ct in (
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ):
+        return "document"
+    return "file"
+
+
 def _public_base_url(request: Request) -> str:
     configured = os.getenv("NESTHUB_PUBLIC_API_BASE_URL", "").strip().rstrip("/")
     if configured:
@@ -126,6 +144,8 @@ async def im_inbound(request: Request, x_line_signature: str = Header(None)):
                             "file_name": record.file_name,
                             "content_type": record.content_type,
                             "download_url": download_url,
+                            "stored_path": str(record.stored_path),
+                            "input_type": _derive_input_type(record.content_type),
                             "source_message_type": msg_type,
                         })
                         text = f"处理上传的文件: {file_name}"

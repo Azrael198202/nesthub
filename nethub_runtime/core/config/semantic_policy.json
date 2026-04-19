@@ -187,6 +187,14 @@
       "input_types": [],
       "keywords": ["web检索", "网页抓取", "自动查询", "联网查询"],
       "patterns": []
+    },
+    {
+      "intent": "file_upload_task",
+      "domain": "multimodal_ops",
+      "input_types": ["document"],
+      "keywords": ["分析文件", "分析文档", "读取文件", "读取文档", "解析文件", "解析文档",
+                   "总结文件", "总结文档", "提取内容", "看这个文件", "帮我看", "这是什么文件"],
+      "patterns": []
     }
   ],
   "huggingface_image_models": [
