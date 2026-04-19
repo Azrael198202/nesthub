@@ -295,6 +295,7 @@ def _create_app() -> Any:
                             "external_user_id": message.get("external_user_id"),
                             "external_chat_id": message.get("external_chat_id"),
                             "external_message_id": message.get("external_message_id"),
+                            "attachments": message.get("attachments") or [],
                         }
                     },
                     fmt="dict",
