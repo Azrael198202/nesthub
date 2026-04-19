@@ -61,3 +61,4 @@ examples/*.png
 # External log snapshots (fetched from Railway public_api)
 external_logs/
 api/public_api/received/
+received/
