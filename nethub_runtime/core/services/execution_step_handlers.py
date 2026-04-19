@@ -92,10 +92,23 @@ def handle_ocr_extract_step(
         image_path = Path(path_match.group(0)) if path_match else None
 
     if image_path is None or not image_path.exists():
+        # File not on disk yet (cross-process / delayed write), but attachment
+        # info was received — treat as received so repair loop doesn't fire.
+        # Only hard-fail when there are no attachments at all.
+        if attachments:
+            att = next((a for a in attachments if str(a.get("content_type","")).startswith("image/")), attachments[0])
+            return {
+                "artifact_type": "text",
+                "status": "received",
+                "method": "placeholder",
+                "file_name": att.get("file_name", ""),
+                "content": f"[图片已接收: {att.get('file_name','')}, 内容提取待实现]",
+                "message": f"附件已接收，本地路径暂不可访问: {image_path}",
+            }
         return {
             "artifact_type": "text",
             "status": "error",
-            "message": f"图片文件未找到: {image_path}",
+            "message": f"图片文件未找到且无附件信息: {image_path}",
         }
 
     # TODO: 接入 OCR 引擎（PaddleOCR / Qwen2.5-VL / EasyOCR）

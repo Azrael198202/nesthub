@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Header, HTTPException, Request
+from api.public_api.routes.debug import append_event
 
 
 router = APIRouter()
@@ -137,6 +138,15 @@ async def im_inbound(request: Request, x_line_signature: str = Header(None)):
                     "LINE %s upload: userId=%s messageId=%s fileName=%s",
                     msg_type, external_user_id, external_message_id, file_name,
                 )
+                append_event(request, {
+                    "action": "line_file_webhook_received",
+                    "status": "pending_download",
+                    "msg_type": msg_type,
+                    "file_name": file_name,
+                    "message_id": external_message_id,
+                    "user_id": external_user_id,
+                    "has_access_token": bool(access_token),
+                })
                 if access_token:
                     result = await _download_line_content(external_message_id, access_token)
                     if result:
@@ -166,13 +176,37 @@ async def im_inbound(request: Request, x_line_signature: str = Header(None)):
                             "source_message_type": msg_type,
                             "external_message_id": external_message_id,
                         })
+                        append_event(request, {
+                            "action": "line_file_saved_to_received",
+                            "status": "ok",
+                            "file_name": file_name,
+                            "content_type": content_type,
+                            "input_type": input_type_label,
+                            "stored_path": str(dest_path),
+                            "size_bytes": len(content_bytes),
+                            "message_id": external_message_id,
+                        })
                         if input_type_label == "image":
                             text = f"识别图片内容: {file_name}"
                         else:
                             text = f"分析文档: {file_name}"
                     else:
+                        append_event(request, {
+                            "action": "line_content_api_download",
+                            "status": "failed",
+                            "file_name": file_name,
+                            "message_id": external_message_id,
+                            "error": "LINE Content API returned no data",
+                        })
                         text = f"收到文件: {file_name}（无法下载）"
                 else:
+                    append_event(request, {
+                        "action": "line_content_api_download",
+                        "status": "skipped",
+                        "file_name": file_name,
+                        "message_id": external_message_id,
+                        "error": "LINE_CHANNEL_ACCESS_TOKEN not configured",
+                    })
                     text = f"收到文件: {file_name}（LINE token 未配置）"
 
             msg = request.app.state.bridge_service.create_message(
@@ -185,6 +219,13 @@ async def im_inbound(request: Request, x_line_signature: str = Header(None)):
                 )
                 status = request.app.state.bridge_service.get_message(msg.bridge_message_id).status
                 reply = result.get("reply", "")
+                append_event(request, {
+                    "action": "bridge_message_processed",
+                    "status": status,
+                    "bridge_message_id": msg.bridge_message_id,
+                    "has_attachments": bool(attachments),
+                    "reply_preview": reply[:80] if reply else "",
+                })
             else:
                 result = {}
                 status = "pending"

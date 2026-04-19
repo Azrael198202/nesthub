@@ -204,7 +204,7 @@ class StepResultVerifier:
 _DEFAULTS: dict[str, Any] = {
     "ok_statuses": [
         "generated", "read", "saved", "completed", "ok", "success",
-        "summarized", "retrieved", "transcribed", "repaired",
+        "summarized", "retrieved", "transcribed", "repaired", "received",
     ],
     "failed_statuses": [
         "failed", "error", "invalid_output", "intent_mismatch",

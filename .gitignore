@@ -55,3 +55,5 @@ nethub_runtime/generated/traces/*.json
 # examples
 examples/*.html
 examples/*.png
+
+.public_api_temp/*.*
