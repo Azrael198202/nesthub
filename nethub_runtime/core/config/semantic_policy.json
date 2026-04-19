@@ -131,7 +131,7 @@
       "intent": "ocr_task",
       "domain": "multimodal_ops",
       "input_types": ["image", "screenshot"],
-      "keywords": ["ocr", "识别图片", "图像文字", "票据识别"],
+      "keywords": ["ocr", "识别图片", "图像文字", "票据识别", "识别图片内容", "识别内容"],
       "patterns": []
     },
     {
@@ -193,7 +193,8 @@
       "domain": "multimodal_ops",
       "input_types": ["document"],
       "keywords": ["分析文件", "分析文档", "读取文件", "读取文档", "解析文件", "解析文档",
-                   "总结文件", "总结文档", "提取内容", "看这个文件", "帮我看", "这是什么文件"],
+                   "总结文件", "总结文档", "提取内容", "看这个文件", "帮我看", "这是什么文件",
+                   "分析文档:"],
       "patterns": []
     }
   ],

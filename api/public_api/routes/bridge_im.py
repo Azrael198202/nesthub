@@ -4,6 +4,8 @@ import hashlib
 import hmac
 import logging
 import os
+from datetime import datetime, UTC
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -12,6 +14,18 @@ from fastapi import APIRouter, Header, HTTPException, Request
 
 router = APIRouter()
 logger = logging.getLogger("api.public_api.routes.bridge_im")
+
+
+def _received_dir() -> Path:
+    """Return (and create) the public_api received directory for LINE uploads."""
+    configured = os.getenv("NESTHUB_PUBLIC_API_RECEIVED_DIR", "").strip()
+    if configured:
+        base = Path(configured)
+    else:
+        # <workspace_root>/api/public_api/received/
+        base = Path(__file__).resolve().parents[1] / "received"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
 
 # LINE message types we handle
 _SUPPORTED_MSG_TYPES = {"text", "image", "file"}
@@ -117,7 +131,7 @@ async def im_inbound(request: Request, x_line_signature: str = Header(None)):
                     external_user_id, external_chat_id, external_message_id, text,
                 )
             else:
-                # image or file — download from LINE Content API and stage in temp store
+                # image or file — download from LINE Content API and save to received/
                 file_name = _line_file_name(message, msg_type, external_message_id)
                 logger.info(
                     "LINE %s upload: userId=%s messageId=%s fileName=%s",
@@ -127,29 +141,35 @@ async def im_inbound(request: Request, x_line_signature: str = Header(None)):
                     result = await _download_line_content(external_message_id, access_token)
                     if result:
                         content_bytes, content_type = result
-                        record = request.app.state.temp_file_store.save_bytes(
-                            file_name=file_name,
-                            content=content_bytes,
-                            content_type=content_type,
-                            metadata={
-                                "source": "line_upload",
-                                "message_type": msg_type,
-                                "external_user_id": external_user_id,
-                                "external_message_id": external_message_id,
-                            },
+                        # ── Step 1: Save to public_api/received/ (persistent) ──
+                        date_prefix = datetime.now(UTC).strftime("%Y%m%d")
+                        dest_dir = _received_dir() / date_prefix
+                        dest_dir.mkdir(parents=True, exist_ok=True)
+                        dest_path = dest_dir / file_name
+                        # Avoid overwriting if same filename arrives twice
+                        if dest_path.exists():
+                            stem = Path(file_name).stem
+                            suffix = Path(file_name).suffix
+                            dest_path = dest_dir / f"{stem}_{external_message_id}{suffix}"
+                        dest_path.write_bytes(content_bytes)
+                        logger.info(
+                            "Saved LINE upload to received/: %s (%d bytes)",
+                            dest_path, len(content_bytes),
                         )
-                        download_url = f"{base_url}/api/temp-files/{record.file_id}/{record.file_name}"
+                        # ── Step 2: Build attachment pointing at the saved path ──
+                        input_type_label = _derive_input_type(content_type)
                         attachments.append({
-                            "file_id": record.file_id,
-                            "file_name": record.file_name,
-                            "content_type": record.content_type,
-                            "download_url": download_url,
-                            "stored_path": str(record.stored_path),
-                            "input_type": _derive_input_type(record.content_type),
+                            "file_name": file_name,
+                            "content_type": content_type,
+                            "stored_path": str(dest_path),   # NestHub reads from here
+                            "input_type": input_type_label,
                             "source_message_type": msg_type,
+                            "external_message_id": external_message_id,
                         })
-                        text = f"处理上传的文件: {file_name}"
-                        logger.info("Staged LINE upload as temp file: %s → %s", file_name, download_url)
+                        if input_type_label == "image":
+                            text = f"识别图片内容: {file_name}"
+                        else:
+                            text = f"分析文档: {file_name}"
                     else:
                         text = f"收到文件: {file_name}（无法下载）"
                 else:

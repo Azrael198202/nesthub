@@ -65,76 +65,50 @@ def handle_ocr_extract_step(
     context: CoreContextSchema,
     _step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
-    """OCR with priority chain: PaddleOCR → Qwen2.5-VL (Ollama) → TrOCR (HuggingFace) → EasyOCR."""
-    from nethub_runtime.core.services.capability_acquisition_service import CapabilityAcquisitionService
+    """OCR placeholder: copy image to received/, content extraction to be implemented."""
+    import shutil
+    import re as _re
 
     input_text = task.input_text or ""
-
-    # --- Resolve image path ---
-    # Priority 1: attachment uploaded via LINE / bridge
-    image_path: Path | None = None
     attachments = context.metadata.get("attachments") or []
+
+    # Resolve image path — Priority 1: context attachments (LINE uploads)
+    image_path: Path | None = None
     for att in attachments:
         ct = str(att.get("content_type") or "")
         if ct.startswith("image/"):
-            # Prefer stored_path (same-process direct read) over HTTP download
             sp = str(att.get("stored_path") or "").strip()
-            dest_dir = _received_dir(context.session_id)
             if sp and Path(sp).exists():
+                dest_dir = _received_dir(context.session_id)
                 dest = dest_dir / str(att.get("file_name") or Path(sp).name)
                 if not dest.exists():
-                    import shutil
                     shutil.copy2(sp, dest)
                 image_path = dest
             break
 
-    # Priority 2: file path mentioned in the task text
+    # Priority 2: file path in task text
     if image_path is None:
-        import re as _re
         path_match = _re.search(r'[\w./\\-]+\.(?:png|jpg|jpeg|bmp|tiff|gif|webp)', input_text, _re.IGNORECASE)
         image_path = Path(path_match.group(0)) if path_match else None
 
     if image_path is None or not image_path.exists():
-        return {"artifact_type": "text", "status": "error", "message": f"Image file not found: {image_path}"}
+        return {
+            "artifact_type": "text",
+            "status": "error",
+            "message": f"图片文件未找到: {image_path}",
+        }
 
-    # Try PaddleOCR first (highest free accuracy)
-    try:
-        from paddleocr import PaddleOCR  # type: ignore
-        ocr = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)
-        result = ocr.ocr(str(image_path), cls=True)
-        lines = [line[1][0] for block in (result or []) for line in (block or []) if line and line[1]]
-        if lines:
-            text = "\n".join(lines)
-            return {"artifact_type": "text", "status": "extracted", "method": "paddleocr",
-                    "content": text, "line_count": len(lines)}
-    except Exception:
-        pass
-
-    # Try Qwen2.5-VL via Ollama (multimodal)
-    try:
-        import base64 as _b64
-        import urllib.request as _ur, json as _json
-        img_b64 = _b64.b64encode(image_path.read_bytes()).decode()
-        payload = _json.dumps({"model": "qwen2.5vl:7b", "prompt": "Extract all text from this image verbatim.",
-                               "images": [img_b64], "stream": False}).encode()
-        req = _ur.Request("http://localhost:11434/api/generate", data=payload,
-                          headers={"Content-Type": "application/json"})
-        with _ur.urlopen(req, timeout=60) as resp:
-            data = _json.loads(resp.read())
-            text = str(data.get("response") or "").strip()
-            if text:
-                return {"artifact_type": "text", "status": "extracted", "method": "qwen2.5vl_ollama",
-                        "content": text, "line_count": len(text.splitlines())}
-    except Exception:
-        pass
-
-    # Trigger capability acquisition to install missing packages, then retry
-    svc = getattr(coordinator, "capability_acquisition_service", None) or \
-          CapabilityAcquisitionService(security_guard=getattr(coordinator, "security_guard", None))
-    acq = svc.acquire(task_type="ocr", gap="no_ocr_engine")
-    return {"artifact_type": "text", "status": "acquisition_triggered",
-            "method": acq.strategy, "detail": acq.detail,
-            "message": "OCR engine is being installed. Retry shortly."}
+    # TODO: 接入 OCR 引擎（PaddleOCR / Qwen2.5-VL / EasyOCR）
+    return {
+        "artifact_type": "text",
+        "status": "received",
+        "method": "placeholder",
+        "artifact_path": str(image_path),
+        "file_name": image_path.name,
+        "file_size": image_path.stat().st_size,
+        "content": f"[图片已接收: {image_path.name}，内容提取待实现]",
+        "message": f"文件已保存至 {image_path}",
+    }
 
 
 def handle_stt_transcribe_step(
@@ -503,13 +477,14 @@ def _process_context_attachments(
             })
             continue
 
-        content = _extract_file_content(local_path, content_type)
+        # TODO: 接入文件内容提取（PDF / Word / Excel / 纯文本）
         processed.append({
             "file_name": file_name,
             "artifact_path": str(local_path),
             "content_type": content_type,
-            "content": content,
-            "status": "read",
+            "file_size": local_path.stat().st_size,
+            "content": f"[文件已接收: {file_name}，内容提取待实现]",
+            "status": "received",
         })
 
     if not processed:
@@ -522,12 +497,12 @@ def _process_context_attachments(
 
     # Return the first (primary) attachment as the main result,
     # include all in the attachments list for multi-file scenarios
-    primary = next((p for p in processed if p["status"] == "read"), processed[0])
+    primary = next((p for p in processed if p["status"] == "received"), processed[0])
     return {
         "artifact_type": "file",
         "artifact_path": primary.get("artifact_path", ""),
-        "status": primary.get("status", "read"),
-        "message": f"已读取 {len([p for p in processed if p['status'] == 'read'])} 个附件",
+        "status": primary.get("status", "received"),
+        "message": f"已接收 {len([p for p in processed if p['status'] == 'received'])} 个附件",
         "content": primary.get("content", ""),
         "file_name": primary.get("file_name", ""),
         "storage": "received",

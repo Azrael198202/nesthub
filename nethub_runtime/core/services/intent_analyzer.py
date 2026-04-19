@@ -275,6 +275,7 @@ class SemanticIntentPlugin:
                 "tts_task": ["audio"],
                 "file_generation_task": ["artifact", "file"],
                 "file_delivery_task": ["text", "file"],
+                "file_upload_task": ["text", "file"],
                 "web_research_task": ["text"],
             }
             output_requirements = _output_req_map.get(intent, ["text"])

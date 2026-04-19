@@ -50,3 +50,8 @@ nethub_runtime/generated/code/*
 nethub_runtime/generated/features/*
 nethub_runtime/generated/local_models/*
 nethub_runtime/generated/traces/*.json
+
+
+# examples
+examples/*.html
+examples/*.png
