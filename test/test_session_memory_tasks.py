@@ -289,7 +289,7 @@ class TestFileSystemTool:
         f.write_text("hello file", encoding="utf-8")
         from nethub_runtime.core.tools.registry import FileSystemTool
         tool = FileSystemTool()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tool.execute({"operation": "read", "path": str(f)})
         )
         assert result["success"] is True
@@ -299,7 +299,7 @@ class TestFileSystemTool:
         dest = tmp_path / "out.txt"
         from nethub_runtime.core.tools.registry import FileSystemTool
         tool = FileSystemTool()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tool.execute({"operation": "write", "path": str(dest), "content": "written"})
         )
         assert result["success"] is True
@@ -310,7 +310,7 @@ class TestFileSystemTool:
         (tmp_path / "b.txt").write_text("b")
         from nethub_runtime.core.tools.registry import FileSystemTool
         tool = FileSystemTool()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tool.execute({"operation": "list", "path": str(tmp_path)})
         )
         assert result["success"] is True
@@ -323,7 +323,7 @@ class TestFileSystemTool:
         f.write_text("x")
         from nethub_runtime.core.tools.registry import FileSystemTool
         tool = FileSystemTool()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tool.execute({"operation": "exists", "path": str(f)})
         )
         assert result["exists"] is True
@@ -334,7 +334,7 @@ class TestFileSystemTool:
         f.write_text("bye")
         from nethub_runtime.core.tools.registry import FileSystemTool
         tool = FileSystemTool()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tool.execute({"operation": "delete", "path": str(f)})
         )
         assert result["success"] is True
@@ -343,7 +343,7 @@ class TestFileSystemTool:
     def test_unknown_operation_returns_error(self, tmp_path):
         from nethub_runtime.core.tools.registry import FileSystemTool
         tool = FileSystemTool()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tool.execute({"operation": "teleport", "path": str(tmp_path)})
         )
         assert result["success"] is False
@@ -354,7 +354,7 @@ class TestShellExecutionTool:
     def test_allowed_command_runs(self):
         from nethub_runtime.core.tools.registry import ShellExecutionTool
         tool = ShellExecutionTool()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tool.execute({"command": "echo hello"})
         )
         assert result["success"] is True
@@ -363,7 +363,7 @@ class TestShellExecutionTool:
     def test_blocked_command_rejected(self):
         from nethub_runtime.core.tools.registry import ShellExecutionTool
         tool = ShellExecutionTool()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tool.execute({"command": "rm -rf /"})
         )
         assert result["success"] is False
@@ -372,7 +372,7 @@ class TestShellExecutionTool:
     def test_missing_command_returns_error(self):
         from nethub_runtime.core.tools.registry import ShellExecutionTool
         tool = ShellExecutionTool()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tool.execute({"command": ""})
         )
         assert result["success"] is False
@@ -382,7 +382,7 @@ class TestCodeExecutionTool:
     def test_simple_expression(self):
         from nethub_runtime.core.tools.registry import CodeExecutionTool
         tool = CodeExecutionTool()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tool.execute({"code": "x = 1 + 1"})
         )
         assert result["success"] is True
@@ -391,7 +391,7 @@ class TestCodeExecutionTool:
     def test_print_captured(self):
         from nethub_runtime.core.tools.registry import CodeExecutionTool
         tool = CodeExecutionTool()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tool.execute({"code": "print('hello from code')"})
         )
         assert result["success"] is True
@@ -400,7 +400,7 @@ class TestCodeExecutionTool:
     def test_syntax_error_returns_failure(self):
         from nethub_runtime.core.tools.registry import CodeExecutionTool
         tool = CodeExecutionTool()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tool.execute({"code": "def broken(:"})
         )
         assert result["success"] is False
@@ -409,7 +409,7 @@ class TestCodeExecutionTool:
     def test_empty_code_returns_error(self):
         from nethub_runtime.core.tools.registry import CodeExecutionTool
         tool = CodeExecutionTool()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tool.execute({"code": "   "})
         )
         assert result["success"] is False
@@ -419,7 +419,7 @@ class TestWebSearchTool:
     def test_empty_query_returns_error(self):
         from nethub_runtime.core.tools.registry import WebSearchTool
         tool = WebSearchTool()
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             tool.execute({"query": ""})
         )
         assert result["success"] is False
@@ -428,7 +428,7 @@ class TestWebSearchTool:
         from nethub_runtime.core.tools.registry import WebSearchTool
         tool = WebSearchTool()
         with patch("urllib.request.urlopen", side_effect=OSError("network down")):
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 tool.execute({"query": "test"})
             )
         assert result["success"] is False
@@ -453,7 +453,7 @@ class TestWebSearchTool:
 
         tool = WebSearchTool()
         with patch("urllib.request.urlopen", return_value=mock_resp):
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 tool.execute({"query": "Python"})
             )
         assert result["success"] is True

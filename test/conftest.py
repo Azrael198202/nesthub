@@ -65,6 +65,15 @@ def isolated_generated_artifacts(tmp_path, monkeypatch) -> None:
     generated_root = tmp_path / "generated_artifacts"
     generated_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("NETHUB_GENERATED_ROOT", str(generated_root))
+    # Clear the in-memory session store and any SQLite persistence so that
+    # test runs are fully isolated from each other regardless of previous state.
+    store = core_api.core_engine.context_manager.session_store
+    with store._lock:
+        store._state.clear()
+    try:
+        store._persistence.clear_all()
+    except AttributeError:
+        pass
 
 
 @pytest.fixture

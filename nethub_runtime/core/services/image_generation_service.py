@@ -84,8 +84,18 @@ class ImageGenerationService:
         import asyncio
         import concurrent.futures
 
-        # Intent has already been resolved by the workflow planner before reaching
-        # this service — no need to re-verify it here.
+        # ---- Intent guard: reject non-image-generation tasks early ----
+        expected_intent = getattr(self._verifier, "_image_intent", "image_generation_task")
+        if task.intent != expected_intent:
+            LOGGER.info(
+                "image_generate intent_mismatch task=%s expected=%s actual=%s",
+                task.task_id, expected_intent, task.intent,
+            )
+            return {
+                "status": "intent_mismatch",
+                "intent_verdict": {"expected": expected_intent, "actual": task.intent},
+            }
+
         LOGGER.info("image_generate start task=%s intent=%s", task.task_id, task.intent)
 
         # ---- Step 1: Attempt generation ----

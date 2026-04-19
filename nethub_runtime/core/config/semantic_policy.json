@@ -442,7 +442,7 @@
       ]
     },
     "image_verification": {
-      "image_intent_name": "image_generation",
+      "image_intent_name": "image_generation_task",
       "paid_providers": [
         {
           "name": "openai",

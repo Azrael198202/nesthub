@@ -70,6 +70,9 @@ class NullSessionPersistence(SessionPersistence):
     def list_ids(self) -> list[str]:
         return []
 
+    def clear_all(self) -> None:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # SQLite backend
@@ -154,3 +157,9 @@ class SQLiteSessionPersistence(SessionPersistence):
             with self._connect() as conn:
                 cur = conn.execute("SELECT session_id FROM sessions ORDER BY updated_at DESC")
                 return [row[0] for row in cur.fetchall()]
+
+    def clear_all(self) -> None:
+        """Delete all stored sessions (used for test isolation)."""
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute("DELETE FROM sessions")
