@@ -333,9 +333,12 @@ class ImageGenerationService:
             return None
         if importlib.util.find_spec("torch") is None:
             return None
+        import torch  # type: ignore
+        if not torch.cuda.is_available():
+            LOGGER.info("local_diffusion: no GPU detected, skipping (CPU inference disabled)")
+            return None
         import io
         from diffusers import DiffusionPipeline  # type: ignore
-        import torch  # type: ignore
 
         # Use the model that huggingface_auto already downloaded and persisted
         # in policy, if available.  Fall back to the first candidate in policy.
@@ -391,6 +394,9 @@ class ImageGenerationService:
 
         import io
         import torch  # type: ignore
+        if not torch.cuda.is_available():
+            LOGGER.info("huggingface_auto: no GPU detected, skipping (CPU inference disabled)")
+            return None
         from diffusers import DiffusionPipeline  # type: ignore
 
         steps = self._get_hf_model_steps(model_id)

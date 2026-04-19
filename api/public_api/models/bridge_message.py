@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import UTC, datetime
 from pydantic import BaseModel, Field
 
@@ -16,3 +16,5 @@ class BridgeMessage(BaseModel):
     completed_at: Optional[datetime] = None
     result: Optional[Dict[str, Any]] = None
     failed: bool = False
+    # Files/images uploaded by the user (populated by bridge_im for non-text messages)
+    attachments: List[Dict[str, Any]] = Field(default_factory=list)

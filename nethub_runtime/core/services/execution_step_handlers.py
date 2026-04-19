@@ -251,6 +251,8 @@ def handle_video_generate_step(
         steps = int(candidate.get("inference_steps", 25))
         try:
             import torch  # type: ignore
+            if not torch.cuda.is_available():
+                continue  # skip local diffusion on CPU-only machines
             if "animatediff" in model_id.lower():
                 from diffusers import AnimateDiffPipeline, MotionAdapter  # type: ignore
                 import imageio  # type: ignore
@@ -334,9 +336,15 @@ def handle_file_read_step(
     coordinator: Any,
     _step: dict[str, Any],
     task: TaskSchema,
-    _context: CoreContextSchema,
+    context: CoreContextSchema,
     _step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
+    # --- Priority 1: attachments passed via context (LINE uploads, etc.) ---
+    attachments = context.metadata.get("attachments") or []
+    if attachments:
+        return _process_context_attachments(attachments, context)
+
+    # --- Priority 2: file path mentioned in the task text ---
     target_path = _resolve_existing_file_path(task.input_text)
     if target_path is None:
         return {
@@ -355,6 +363,141 @@ def handle_file_read_step(
         "content": content,
         "file_name": target_path.name,
         "storage": "workspace",
+    }
+
+
+def _received_dir(session_id: str) -> Path:
+    """Return (and create) the per-session received directory inside nethub_runtime."""
+    workspace = os.getenv("NESTHUB_WORKSPACE_PATH", "").strip()
+    base = Path(workspace) if workspace else Path(__file__).resolve().parents[3]
+    received = base / "received" / session_id
+    received.mkdir(parents=True, exist_ok=True)
+    return received
+
+
+def _extract_file_content(path: Path, content_type: str) -> str:
+    """Best-effort text extraction from a file.
+
+    Supports plain text formats natively; tries PyMuPDF for PDFs,
+    python-docx for Word, openpyxl for Excel.  Falls back to a path
+    reference for unrecognised binary formats.
+    """
+    suffix = path.suffix.lower()
+
+    # Plain text
+    if suffix in (".txt", ".md", ".json", ".yaml", ".yml", ".html", ".htm",
+                  ".csv", ".xml", ".js", ".css", ".py", ".ts"):
+        try:
+            return path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return ""
+
+    # PDF
+    if suffix == ".pdf" or content_type == "application/pdf":
+        try:
+            import fitz  # type: ignore  # PyMuPDF
+            doc = fitz.open(str(path))
+            return "\n".join(page.get_text() for page in doc)
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+    # Word (.docx)
+    if suffix in (".docx", ".doc") or "wordprocessingml" in content_type:
+        try:
+            from docx import Document  # type: ignore  # python-docx
+            doc = Document(str(path))
+            return "\n".join(para.text for para in doc.paragraphs)
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+    # Excel (.xlsx, .xls)
+    if suffix in (".xlsx", ".xls") or "spreadsheetml" in content_type:
+        try:
+            import openpyxl  # type: ignore
+            wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
+            lines: list[str] = []
+            for sheet in wb.worksheets:
+                lines.append(f"[Sheet: {sheet.title}]")
+                for row in sheet.iter_rows(values_only=True):
+                    lines.append("\t".join("" if v is None else str(v) for v in row))
+            return "\n".join(lines)
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+    # Image — return path reference (OCR handled by a dedicated step)
+    if content_type.startswith("image/") or suffix in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
+        return f"[IMAGE FILE: {path.name}]"
+
+    # Binary fallback
+    return f"[BINARY FILE: {path.name} ({content_type})]"
+
+
+def _process_context_attachments(
+    attachments: list[dict[str, Any]],
+    context: CoreContextSchema,
+) -> dict[str, Any]:
+    """Download attachment files to nethub_runtime/received/ and read their content."""
+    dest_dir = _received_dir(context.session_id)
+    processed: list[dict[str, Any]] = []
+
+    for att in attachments:
+        url = str(att.get("download_url") or "").strip()
+        file_name = str(att.get("file_name") or "file.bin").strip()
+        content_type = str(att.get("content_type") or "application/octet-stream")
+
+        if not url:
+            continue
+
+        local_path = dest_dir / file_name
+        # Download
+        try:
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                local_path.write_bytes(resp.read())
+        except Exception as exc:
+            processed.append({
+                "file_name": file_name,
+                "status": "download_error",
+                "error": str(exc),
+                "content": "",
+            })
+            continue
+
+        content = _extract_file_content(local_path, content_type)
+        processed.append({
+            "file_name": file_name,
+            "artifact_path": str(local_path),
+            "content_type": content_type,
+            "content": content,
+            "status": "read",
+        })
+
+    if not processed:
+        return {
+            "artifact_type": "file",
+            "status": "no_attachments",
+            "message": "未找到附件。",
+            "content": "",
+        }
+
+    # Return the first (primary) attachment as the main result,
+    # include all in the attachments list for multi-file scenarios
+    primary = next((p for p in processed if p["status"] == "read"), processed[0])
+    return {
+        "artifact_type": "file",
+        "artifact_path": primary.get("artifact_path", ""),
+        "status": primary.get("status", "read"),
+        "message": f"已读取 {len([p for p in processed if p['status'] == 'read'])} 个附件",
+        "content": primary.get("content", ""),
+        "file_name": primary.get("file_name", ""),
+        "storage": "received",
+        "attachments": processed,
     }
 
 

@@ -1,3 +1,4 @@
+import json
 import os
 import uuid
 import mimetypes
@@ -9,13 +10,14 @@ import httpx
 from api.public_api.models.bridge_message import BridgeMessage
 from api.public_api.storage.memory_store import MemoryStore
 from api.public_api.storage.temp_file_store import TempFileStore
+from nethub_runtime.core.services.progress_formatter import ProgressFormatter
 
 class BridgeService:
     def __init__(self, store: MemoryStore, temp_file_store: TempFileStore):
         self.store = store
         self.temp_file_store = temp_file_store
 
-    def create_message(self, source_im: str, external_user_id: str, external_chat_id: str, external_message_id: str, text: str, raw_payload: dict) -> BridgeMessage:
+    def create_message(self, source_im: str, external_user_id: str, external_chat_id: str, external_message_id: str, text: str, raw_payload: dict, *, attachments: list[dict] | None = None) -> BridgeMessage:
         msg = BridgeMessage(
             bridge_message_id=str(uuid.uuid4()),
             source_im=source_im,
@@ -24,6 +26,7 @@ class BridgeService:
             external_message_id=external_message_id,
             text=text,
             raw_payload=raw_payload,
+            attachments=attachments or [],
         )
         self.store.add_message(msg)
         return msg
@@ -48,9 +51,15 @@ class BridgeService:
                 return existing.result
             return {"reply": "Message is no longer pending."}
 
-        result = await self._invoke_nesthub(claimed, base_url=base_url)
+        # Use streaming path for LINE so we can push incremental progress
+        if claimed.source_im == "line" and claimed.external_user_id:
+            result = await self._invoke_nesthub_stream(claimed, base_url=base_url)
+        else:
+            result = await self._invoke_nesthub(claimed, base_url=base_url)
+
         self.store.complete_message(claimed.bridge_message_id, result)
-        if claimed.source_im == "line":
+        if claimed.source_im == "line" and not (claimed.source_im == "line" and claimed.external_user_id):
+            # Non-streaming LINE fallback — deliver final response
             await self._deliver_line_response(claimed, result)
         return result
 
@@ -78,6 +87,7 @@ class BridgeService:
                     "external_chat_id": msg.external_chat_id,
                     "external_message_id": msg.external_message_id,
                     "bridge_message_id": msg.bridge_message_id,
+                    "attachments": msg.attachments,
                 }
             },
             "output_format": "dict",
@@ -103,6 +113,114 @@ class BridgeService:
             "artifacts": result.get("artifacts", []),
             "downloads": downloads,
         }
+
+    async def _invoke_nesthub_stream(self, msg: BridgeMessage, *, base_url: str | None = None) -> dict[str, Any]:
+        """Stream NestHub pipeline events and push LINE progress updates after each stage.
+
+        Uses the ``/handle/stream`` SSE endpoint.  For each meaningful event a
+        progress snapshot is pushed to the LINE user so they see a live todo-list
+        that updates step by step.
+        """
+        base = self._nesthub_base_url()
+        if not base:
+            return {"reply": "NestHub core handle url is not configured."}
+
+        stream_url = f"{base}/handle/stream"
+        payload = {
+            "input_text": msg.text,
+            "context": {
+                "metadata": {
+                    "source_im": msg.source_im,
+                    "external_user_id": msg.external_user_id,
+                    "external_chat_id": msg.external_chat_id,
+                    "external_message_id": msg.external_message_id,
+                    "bridge_message_id": msg.bridge_message_id,
+                    "attachments": msg.attachments,
+                }
+            },
+            "output_format": "dict",
+            "use_langraph": True,
+        }
+
+        access_token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
+        line_headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+        user_id = msg.external_user_id
+        formatter = ProgressFormatter()
+        final_result: dict[str, Any] | None = None
+
+        # We use a push message ID placeholder so LINE shows a single "conversation"
+        # (LINE does not support editing messages, so we push new updates instead)
+        last_push_text: str | None = None
+
+        async def _push_progress(text: str) -> None:
+            nonlocal last_push_text
+            if not access_token or not user_id or text == last_push_text:
+                return
+            last_push_text = text
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as push_client:
+                    await push_client.post(
+                        "https://api.line.me/v2/bot/message/push",
+                        headers=line_headers,
+                        json={"to": user_id, "messages": [{"type": "text", "text": text[:5000]}]},
+                    )
+            except Exception:
+                pass  # Progress push is best-effort; do not abort pipeline
+
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                async with client.stream("POST", stream_url, json=payload) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        raw = line[5:].strip()
+                        if not raw:
+                            continue
+                        try:
+                            event = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+
+                        progress_text = formatter.format_event(event)
+                        if progress_text:
+                            await _push_progress(progress_text)
+
+                        if event.get("event") == "final":
+                            final_result = event.get("result") or {}
+
+        except Exception as exc:
+            return {"reply": f"NestHub bridge stream error: {exc}"}
+
+        if not isinstance(final_result, dict):
+            return {"reply": "NestHub returned an invalid response."}
+
+        downloads = self.stage_result_downloads(final_result, base_url=base_url)
+        reply = self._extract_reply_text(final_result)
+
+        # Push the final response (with downloads if any) via LINE
+        final_payload = {
+            "reply": reply,
+            "result": final_result,
+            "artifacts": final_result.get("artifacts", []),
+            "downloads": downloads,
+        }
+        final_line_messages = self._build_line_messages(final_payload)
+        if access_token and user_id:
+            try:
+                async with httpx.AsyncClient(timeout=20.0) as client:
+                    await client.post(
+                        "https://api.line.me/v2/bot/message/push",
+                        headers=line_headers,
+                        json={"to": user_id, "messages": final_line_messages},
+                    )
+            except Exception:
+                pass
+
+        return final_payload
 
     def build_public_download_url(self, file_id: str, file_name: str, base_url: str | None = None) -> str:
         root = (base_url or os.getenv("NESTHUB_PUBLIC_API_BASE_URL") or "").strip().rstrip("/")
