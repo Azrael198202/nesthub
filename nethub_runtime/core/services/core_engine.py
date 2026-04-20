@@ -110,6 +110,7 @@ class AICore:
         self.training_fine_tune_runner_service = TrainingFineTuneRunnerService(
             generated_artifact_store=self.generated_artifact_store,
             training_pipeline_service=self.training_pipeline_service,
+            semantic_policy_store=self.execution_coordinator.semantic_policy_store,
         )
         
         # ========== 传统插件-based 服务 ==========

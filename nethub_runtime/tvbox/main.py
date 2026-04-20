@@ -628,10 +628,12 @@ def _create_app() -> Any:
         manifest = core_engine.build_training_manifest(profile=profile)
         runner = core_engine.inspect_training_runner(profile=profile, backend="mock")
         training_assets = (summary.get("layers") or {}).get("training_assets") or {}
+        latest_runs = (summary.get("artifacts") or {}).get("dataset_run") or []
         dashboard_state["trainingAssets"] = {
             "summary": training_assets,
             "manifest": manifest,
             "runner": runner,
+            "latestRuns": latest_runs,
             "repairPreferenceCounts": training_assets.get("repair_preference_counts") or {},
         }
         return {
@@ -640,6 +642,7 @@ def _create_app() -> Any:
                 "summary": training_assets,
                 "manifest": manifest,
                 "runner": runner,
+                "latest_runs": latest_runs,
                 "repair_preference_counts": training_assets.get("repair_preference_counts") or {},
                 "artifacts": (summary.get("artifacts") or {}),
             },
@@ -653,10 +656,12 @@ def _create_app() -> Any:
         manifest = core_engine.build_training_manifest(profile=profile)
         runner = core_engine.inspect_training_runner(profile=profile, backend="mock")
         training_assets = (summary.get("layers") or {}).get("training_assets") or {}
+        latest_runs = (summary.get("artifacts") or {}).get("dataset_run") or []
         dashboard_state["trainingAssets"] = {
             "summary": training_assets,
             "manifest": manifest,
             "runner": runner,
+            "latestRuns": latest_runs,
             "repairPreferenceCounts": training_assets.get("repair_preference_counts") or {},
         }
         return {
@@ -665,6 +670,7 @@ def _create_app() -> Any:
                 "summary": training_assets,
                 "manifest": manifest,
                 "runner": runner,
+                "latest_runs": latest_runs,
                 "repair_preference_counts": training_assets.get("repair_preference_counts") or {},
                 "artifacts": (summary.get("artifacts") or {}),
             },
@@ -687,11 +693,13 @@ def _create_app() -> Any:
         manifest = core_engine.build_training_manifest(profile=profile)
         runner = core_engine.inspect_training_runner(profile=profile, backend=backend)
         training_assets = (summary.get("layers") or {}).get("training_assets") or {}
+        latest_runs = (summary.get("artifacts") or {}).get("dataset_run") or []
         dashboard_state["trainingAssets"] = {
             "summary": training_assets,
             "manifest": manifest,
             "runner": runner,
             "lastRun": run_result,
+            "latestRuns": latest_runs,
             "repairPreferenceCounts": training_assets.get("repair_preference_counts") or {},
         }
         return {
@@ -701,6 +709,7 @@ def _create_app() -> Any:
                 "summary": training_assets,
                 "manifest": manifest,
                 "runner": runner,
+                "latest_runs": latest_runs,
                 "repair_preference_counts": training_assets.get("repair_preference_counts") or {},
                 "artifacts": (summary.get("artifacts") or {}),
             },

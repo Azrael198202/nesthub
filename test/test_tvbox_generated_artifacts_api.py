@@ -64,6 +64,7 @@ def test_tvbox_training_assets_api_proxies_private_brain_summary_and_manifest(mo
                     "dataset_sft": [{"artifactId": "sft_demo", "name": "sft_demo.json", "path": "runtime/generated/datasets/sft_demo.json"}],
                     "dataset_preference": [{"artifactId": "pref_demo", "name": "pref_demo.json", "path": "runtime/generated/datasets/pref_demo.json"}],
                     "dataset_manifest": [{"artifactId": "manifest_demo", "name": "manifest_demo.json", "path": "runtime/generated/datasets/manifest_demo.json"}],
+                    "dataset_run": [{"artifactId": "run_demo", "name": "run_demo.json", "path": "runtime/generated/datasets/run_demo.json", "contentPreview": "dry_run"}],
                 },
             }
 
@@ -82,6 +83,7 @@ def test_tvbox_training_assets_api_proxies_private_brain_summary_and_manifest(mo
                 "profile": profile,
                 "backend": {"backend": backend, "label": "Mock Runner", "supports_execution": False},
                 "command_preview": ["python", "-m", "nethub_runtime.training.run", "--mode=dry-run"],
+                "runtime_config": {"default_backend": "mock", "backends": {"mock": {}}},
                 "ready": True,
             }
 
@@ -112,6 +114,7 @@ def test_tvbox_training_assets_api_proxies_private_brain_summary_and_manifest(mo
     assert payload["result"]["manifest"]["profile"] == "lora_sft"
     assert payload["result"]["artifacts"]["dataset_manifest"][0]["artifactId"] == "manifest_demo"
     assert payload["result"]["runner"]["backend"]["backend"] == "mock"
+    assert payload["result"]["latest_runs"][0]["artifactId"] == "run_demo"
 
 
 def test_tvbox_training_assets_rebuild_and_run_actions(monkeypatch) -> None:

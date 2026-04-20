@@ -3033,7 +3033,8 @@ button {
 
 .training-metric-card,
 .training-plan-card,
-.training-command-card {
+.training-command-card,
+.training-timeline-card {
   display: grid;
   gap: 8px;
   padding: 16px;

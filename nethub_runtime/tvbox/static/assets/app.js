@@ -532,6 +532,48 @@ function renderCommandPreview(lines) {
   `;
 }
 
+function renderTrainingBackendOptions(runner) {
+  const runtimeConfig = runner?.runtime_config || {};
+  const backends = Object.keys(runtimeConfig.backends || {});
+  const items = backends.length ? backends : ["mock", "unsloth", "llamafactory"];
+  return items.map((item) => `<option value="${escapeHtml(item)}" ${trainingAssetsInspection.backend === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("");
+}
+
+function renderTrainingRunTimeline(runs, lastRun) {
+  const merged = [];
+  if (lastRun) {
+    merged.push({
+      name: lastRun.run_id || "latest run",
+      created_at: lastRun.created_at || "",
+      status: lastRun.status || "unknown",
+      path: lastRun.artifact_path || "",
+      preview: lastRun.message || "",
+    });
+  }
+  (Array.isArray(runs) ? runs : []).forEach((item) => {
+    if (merged.some((existing) => existing.path && existing.path === item.path)) return;
+    merged.push({
+      name: item.name || item.artifactId || "run",
+      created_at: item.created_at || "",
+      status: item.status || "artifact",
+      path: item.path || "",
+      preview: item.contentPreview || "",
+    });
+  });
+  if (!merged.length) return `<div class="settings-card"><p>No training runs yet.</p></div>`;
+  return merged.map((item) => `
+    <article class="settings-card training-timeline-card">
+      <div class="agent-row">
+        <strong>${escapeHtml(item.name)}</strong>
+        <span class="pill ${item.status === "completed" ? "is-ready" : item.status === "failed" ? "is-attention" : "is-active"}">${escapeHtml(item.status)}</span>
+      </div>
+      <p>${escapeHtml(item.created_at || "Pending timestamp")}</p>
+      <p>${escapeHtml(item.path || "")}</p>
+      <p>${escapeHtml(item.preview || "")}</p>
+    </article>
+  `).join("");
+}
+
 function localizeCatalogText(entry) {
   return typeof entry === "string" ? entry : "";
 }
@@ -3327,6 +3369,7 @@ function renderSettingsDetail(data) {
     const runner = result.runner || {};
     const artifacts = result.artifacts || {};
     const lastRun = result.last_run || result.lastRun || null;
+    const latestRuns = result.latest_runs || [];
     detail.innerHTML = `
       ${overview}
       <div class="settings-section-header">
@@ -3342,7 +3385,7 @@ function renderSettingsDetail(data) {
           ${["lora_sft"].map((item) => `<option value="${escapeHtml(item)}" ${trainingAssetsInspection.profile === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
         </select>
         <select id="training-assets-backend" class="settings-input">
-          ${["mock", "unsloth", "llamafactory"].map((item) => `<option value="${escapeHtml(item)}" ${trainingAssetsInspection.backend === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+          ${renderTrainingBackendOptions(runner)}
         </select>
       </div>
       <div class="studio-actions training-action-row">
@@ -3380,6 +3423,10 @@ function renderSettingsDetail(data) {
       <div class="settings-stack">
         <div class="panel-header compact"><h3>Run Specs</h3></div>
         ${lastRun ? renderTrainingArtifactRows([{ name: lastRun.run_id || "run", path: lastRun.artifact_path || "", profile: lastRun.status || "", sample_count: lastRun.ready ? 1 : 0 }], "No run specs yet.") : renderTrainingArtifactRows(artifacts.dataset_run || [], "No run specs yet.")}
+      </div>
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>Latest Run Timeline</h3></div>
+        ${renderTrainingRunTimeline(latestRuns, lastRun)}
       </div>
       <div class="settings-detail-grid">
         <div class="settings-card">

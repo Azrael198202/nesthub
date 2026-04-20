@@ -594,6 +594,50 @@
         {
           "name": "openai",
           "display_name": "OpenAI DALL-E 3",
+      "training": {
+        "default_profile": "lora_sft",
+        "default_backend": "mock",
+        "allow_execution": false,
+        "workspace_root": ".",
+        "backends": {
+          "mock": {
+            "label": "Mock Runner",
+            "supports_execution": false,
+            "command_template": [
+              "python",
+              "-m",
+              "nethub_runtime.training.run",
+              "--backend={backend}",
+              "--profile={profile}",
+              "--manifest={manifest_path}",
+              "--dry-run"
+            ]
+          },
+          "unsloth": {
+            "label": "Unsloth LoRA",
+            "supports_execution": true,
+            "command_template": [
+              "python",
+              "-m",
+              "nethub_runtime.training.run",
+              "--backend={backend}",
+              "--profile={profile}",
+              "--manifest={manifest_path}",
+              "--execute"
+            ]
+          },
+          "llamafactory": {
+            "label": "LLaMA-Factory",
+            "supports_execution": true,
+            "command_template": [
+              "llamafactory-cli",
+              "train",
+              "--manifest={manifest_path}",
+              "--profile={profile}"
+            ]
+          }
+        }
+      },
           "model_name": "dall-e-3",
           "model_id": "openai:dall-e-3",
           "endpoint": "https://api.openai.com/v1/images/generations",
