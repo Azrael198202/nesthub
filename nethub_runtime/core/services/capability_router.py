@@ -32,6 +32,7 @@ class CapabilityRouter:
             "parse_query": "routing",
             "aggregate_query": "planning",
             "persist_records": "planning",
+            "analyze_document": "document_analysis",
             "manage_information_agent": "planning",
             "query_information_knowledge": "planning",
             "analyze_workflow_context": "planning",
@@ -60,7 +61,7 @@ class CapabilityRouter:
             return "agent"
         if step_name == "query_information_knowledge" or tool_name == "vector_store":
             return "knowledge_retrieval"
-        if step_name in {"generate_workflow_artifact", "persist_workflow_output", "file_read"}:
+        if step_name in {"generate_workflow_artifact", "persist_workflow_output", "file_read", "analyze_document"}:
             return "tool"
         if tool_name not in {"", "none"}:
             return "tool"
@@ -114,6 +115,9 @@ class CapabilityRouter:
             },
             "query_agent_knowledge": {
                 "query_information_knowledge": {"model": "general-llm", "tool": "vector_store", "service": "knowledge_memory"},
+            },
+            "file_upload_task": {
+                "analyze_document": {"model": "general-llm", "tool": "document_analyzer", "service": "document_runtime"},
             },
             "default_analysis": {
                 "analyze_workflow_context": {"model": "general-llm", "tool": "none", "service": "generic"},

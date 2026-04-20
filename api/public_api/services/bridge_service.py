@@ -73,6 +73,12 @@ class BridgeService:
             return True
         return bool(self._nesthub_base_url())
 
+    @staticmethod
+    def _build_session_id(msg: BridgeMessage) -> str:
+        chat_key = msg.external_chat_id or msg.external_user_id or msg.external_message_id or "default"
+        normalized = "".join(char if char.isalnum() or char in {"-", "_", ":"} else "_" for char in str(chat_key))
+        return f"bridge:{msg.source_im}:{normalized}"
+
     async def _invoke_nesthub(self, msg: BridgeMessage, *, base_url: str | None = None) -> dict[str, Any]:
         base = self._nesthub_base_url()
         if not base:
@@ -90,7 +96,7 @@ class BridgeService:
             meta["input_type"] = msg.attachments[0].get("input_type", "file")
         payload = {
             "input_text": msg.text,
-            "context": {"metadata": meta},
+            "context": {"session_id": self._build_session_id(msg), "metadata": meta},
             "output_format": "dict",
             "use_langraph": True,
         }
@@ -108,11 +114,14 @@ class BridgeService:
 
         downloads = self.stage_result_downloads(result, base_url=base_url)
         reply = self._extract_reply_text(result)
+        final_output = (result.get("execution_result") or {}).get("final_output") or {}
+        analyze_document_output = final_output.get("analyze_document") or {}
         return {
             "reply": reply,
             "result": result,
             "artifacts": result.get("artifacts", []),
             "downloads": downloads,
+            "suppress_reply": bool(analyze_document_output.get("suppress_reply")),
         }
 
     async def _invoke_nesthub_stream(self, msg: BridgeMessage, *, base_url: str | None = None) -> dict[str, Any]:
@@ -130,6 +139,7 @@ class BridgeService:
         payload = {
             "input_text": msg.text,
             "context": {
+                "session_id": self._build_session_id(msg),
                 "metadata": {
                     "source_im": msg.source_im,
                     "external_user_id": msg.external_user_id,
@@ -202,6 +212,8 @@ class BridgeService:
 
         downloads = self.stage_result_downloads(final_result, base_url=base_url)
         reply = self._extract_reply_text(final_result)
+        final_output = (final_result.get("execution_result") or {}).get("final_output") or {}
+        analyze_document_output = final_output.get("analyze_document") or {}
 
         # Push the final response (with downloads if any) via LINE
         final_payload = {
@@ -209,9 +221,10 @@ class BridgeService:
             "result": final_result,
             "artifacts": final_result.get("artifacts", []),
             "downloads": downloads,
+            "suppress_reply": bool(analyze_document_output.get("suppress_reply")),
         }
         final_line_messages = self._build_line_messages(final_payload)
-        if access_token and user_id:
+        if access_token and user_id and final_line_messages:
             try:
                 async with httpx.AsyncClient(timeout=20.0) as client:
                     await client.post(
@@ -348,9 +361,11 @@ class BridgeService:
                 return final_answer
 
         final_output = execution_result.get("final_output") or {}
-        for key in ("manage_information_agent", "query_information_knowledge", "file_read", "file_generate", "generate_workflow_artifact", "single_step"):
+        for key in ("manage_information_agent", "query_information_knowledge", "file_read", "file_generate", "generate_workflow_artifact", "analyze_document", "single_step"):
             payload = final_output.get(key) or {}
-            for field in ("message", "answer", "summary", "artifact_path"):
+            if payload.get("suppress_reply"):
+                return ""
+            for field in ("message", "answer", "summary", "translation", "artifact_path"):
                 value = str(payload.get(field) or "").strip()
                 if value:
                     return f"Generated artifact: {value}" if field == "artifact_path" else value
@@ -369,6 +384,8 @@ class BridgeService:
 
     def _build_line_messages(self, result: dict[str, Any]) -> list[dict[str, Any]]:
         """Build LINE message objects (text + optional image) from result."""
+        if result.get("suppress_reply"):
+            return []
         downloads = result.get("downloads") or []
         image_downloads = [
             d for d in downloads
@@ -403,6 +420,8 @@ class BridgeService:
 
         event = msg.raw_payload or {}
         messages = self._build_line_messages(result)
+        if not messages:
+            return
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
@@ -426,6 +445,8 @@ class BridgeService:
                 )
 
     def _compose_line_reply_text(self, result: dict[str, Any]) -> str:
+        if result.get("suppress_reply"):
+            return ""
         reply_text = str(result.get("reply") or "收到您的消息！").strip()
         downloads = result.get("downloads") or []
         if not isinstance(downloads, list) or not downloads:

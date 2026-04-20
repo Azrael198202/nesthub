@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -107,3 +109,163 @@ def test_tvbox_app_starts_with_bridge_worker_when_configured(monkeypatch) -> Non
     with TestClient(app) as client:
         response = client.get("/api/dashboard")
         assert response.status_code == 200
+
+
+def test_tvbox_custom_agent_intake_persists_document_attachment(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeCore:
+        async def handle(self, input_text, context, fmt="dict", use_langraph=True):
+            captured["input_text"] = input_text
+            captured["context"] = context
+            return {
+                "task": {"intent": "file_upload_task"},
+                "artifacts": [],
+                "execution_result": {
+                    "execution_type": "workflow",
+                    "final_output": {
+                        "analyze_document": {
+                            "message": "已完成文档总结。",
+                            "summary": "文档摘要",
+                        }
+                    },
+                },
+            }
+
+    monkeypatch.setattr(tvbox_main, "_create_core_engine", lambda: FakeCore())
+    client = TestClient(_create_app())
+
+    response = client.post(
+        "/api/custom-agents/intake",
+        json={
+            "id": "agent-doc-case",
+            "locale": "zh-CN",
+            "attachments": [
+                {
+                    "name": "brief.txt",
+                    "mimeType": "text/plain",
+                    "sizeBytes": 12,
+                    "fileBase64": base64.b64encode("项目资料正文".encode("utf-8")).decode("utf-8"),
+                    "kind": "file",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["reply"] == "已完成文档总结。"
+    assert payload["sessionId"] == "tvbox:studio:agent-doc-case"
+    context = captured["context"]
+    assert isinstance(context, dict)
+    assert context["session_id"] == "tvbox:studio:agent-doc-case"
+    attachments = context["metadata"]["attachments"]
+    assert attachments[0]["input_type"] == "document"
+    received_path = Path(attachments[0]["received_path"])
+    assert received_path.exists()
+    assert received_path.read_text(encoding="utf-8") == "项目资料正文"
+
+
+def test_tvbox_voice_chat_accepts_attachment_payload(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeCore:
+        async def handle(self, input_text, context, fmt="dict", use_langraph=True):
+            captured["input_text"] = input_text
+            captured["context"] = context
+            return {
+                "task": {"intent": "file_upload_task"},
+                "artifacts": [],
+                "execution_result": {
+                    "execution_type": "workflow",
+                    "final_output": {
+                        "analyze_document": {
+                            "message": "已完成文档翻译。",
+                            "translation": "Translated content",
+                        }
+                    },
+                },
+            }
+
+    monkeypatch.setattr(tvbox_main, "_create_core_engine", lambda: FakeCore())
+    client = TestClient(_create_app())
+
+    response = client.post(
+        "/api/voice/chat",
+        json={
+            "locale": "zh-CN",
+            "agentId": "voice-doc-agent",
+            "attachments": [
+                {
+                    "name": "translate.md",
+                    "mimeType": "text/markdown",
+                    "sizeBytes": 20,
+                    "fileBase64": base64.b64encode("需要翻译的文档内容".encode("utf-8")).decode("utf-8"),
+                    "kind": "file",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["reply"] == "已完成文档翻译。"
+    assert captured["input_text"] == "收到文档: translate.md"
+    context = captured["context"]
+    assert isinstance(context, dict)
+    assert context["session_id"] == "tvbox:studio:voice-doc-agent"
+    attachments = context["metadata"]["attachments"]
+    assert attachments[0]["input_type"] == "document"
+
+
+def test_tvbox_custom_agent_intake_accepts_multipart_upload(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeCore:
+        async def handle(self, input_text, context, fmt="dict", use_langraph=True):
+            captured["input_text"] = input_text
+            captured["context"] = context
+            return {
+                "task": {"intent": "file_upload_task"},
+                "artifacts": [],
+                "execution_result": {
+                    "execution_type": "workflow",
+                    "final_output": {
+                        "analyze_document": {
+                            "message": "已完成文档总结。",
+                            "summary": "multipart summary",
+                        }
+                    },
+                },
+            }
+
+    monkeypatch.setattr(tvbox_main, "_create_core_engine", lambda: FakeCore())
+    client = TestClient(_create_app())
+
+    response = client.post(
+        "/api/custom-agents/intake",
+        data={
+            "id": "agent-multipart-case",
+            "locale": "zh-CN",
+            "message": "",
+            "attachment_kind": "file",
+        },
+        files={
+            "attachment": ("upload.md", b"# heading\ncontent body", "text/markdown"),
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["sessionId"] == "tvbox:studio:agent-multipart-case"
+    assert captured["input_text"] == "收到文档: upload.md"
+    context = captured["context"]
+    assert isinstance(context, dict)
+    attachments = context["metadata"]["attachments"]
+    assert attachments[0]["input_type"] == "document"
+    received_path = Path(attachments[0]["received_path"])
+    assert received_path.exists()
+    assert received_path.read_text(encoding="utf-8") == "# heading\ncontent body"

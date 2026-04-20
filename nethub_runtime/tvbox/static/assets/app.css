@@ -2663,6 +2663,46 @@ button {
   font-size: 13px;
 }
 
+.test-upload-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.test-upload-actions .test-action-secondary {
+  min-width: 132px;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 999px;
+}
+
+.test-upload-actions .test-action-secondary.is-active {
+  background: linear-gradient(135deg, rgba(255, 189, 92, 0.94), rgba(255, 132, 89, 0.96));
+  border-color: rgba(255, 207, 133, 0.38);
+  color: #08111a;
+}
+
+.test-upload-meta.is-pending-task {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.test-upload-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(101, 182, 255, 0.12);
+  border: 1px solid rgba(101, 182, 255, 0.24);
+  color: var(--text);
+  font-size: 12px;
+}
+
 .studio-list {
   flex: 1 1 auto;
   overflow: auto;

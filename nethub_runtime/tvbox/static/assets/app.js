@@ -39,6 +39,7 @@ let studioFeatureRuntime = { featureId: "", items: [], fieldNames: [], detail: n
 let activeBlueprintStudioTab = "creating";
 let activeRuntimeAgentId = "";
 let testUploadAttachment = null;
+let testUploadMode = "generic";
 let bootstrapPollTimer = null;
 let dashboardRefreshPromise = null;
 let mailTesterState = { to: "", subject: "", body: "", status: "", isSending: false, isSyncing: false };
@@ -1029,6 +1030,8 @@ function applyStaticTranslations() {
   setTextIfPresent("conversation-pill", t("top.transcript"));
   setTextIfPresent("test-title", t("top.testLab"));
   setTextIfPresent("test-pill", currentLocale === "zh-CN" ? "语音 / 文字 / 文件" : currentLocale === "ja-JP" ? "音声 / テキスト / ファイル" : "Voice / Text / Files");
+  setTextIfPresent("test-doc-summary-pick", currentLocale === "zh-CN" ? "文档总结" : currentLocale === "ja-JP" ? "文書要約" : "Document Summary");
+  setTextIfPresent("test-doc-translate-pick", currentLocale === "zh-CN" ? "文档翻译" : currentLocale === "ja-JP" ? "文書翻訳" : "Document Translation");
   setTextIfPresent("work-title", t("top.workLab"));
   setTextIfPresent("work-pill", t("top.workBoard"));
   setTextIfPresent("work-factory-title", t("top.workFactory"));
@@ -1965,10 +1968,45 @@ function renderTestLab() {
     actionsLog.innerHTML = "";
   }
   const uploadMeta = document.getElementById("test-upload-meta");
+  const summaryButton = document.getElementById("test-doc-summary-pick");
+  const translateButton = document.getElementById("test-doc-translate-pick");
+  summaryButton?.classList.toggle("is-active", testUploadMode === "summary");
+  translateButton?.classList.toggle("is-active", testUploadMode === "translation");
   if (uploadMeta) {
-    uploadMeta.textContent = testUploadAttachment
-      ? `${testUploadAttachment.kind === "file" ? "Attached file" : "Attached image"}: ${testUploadAttachment.name} (${Math.round((testUploadAttachment.sizeBytes || 0) / 1024)} KB)`
-      : "";
+    if (testUploadAttachment) {
+      const fileKindLabel = testUploadAttachment.kind === "file"
+        ? (currentLocale === "zh-CN" ? "文档已选择" : currentLocale === "ja-JP" ? "ファイル添付済み" : "Document attached")
+        : (currentLocale === "zh-CN" ? "图片已选择" : currentLocale === "ja-JP" ? "画像添付済み" : "Image attached");
+      const modeLabel = testUploadMode === "summary"
+        ? (currentLocale === "zh-CN" ? "文档总结" : currentLocale === "ja-JP" ? "要約" : "Summary")
+        : testUploadMode === "translation"
+          ? (currentLocale === "zh-CN" ? "文档翻译" : currentLocale === "ja-JP" ? "翻訳" : "Translation")
+          : (currentLocale === "zh-CN" ? "通用处理" : currentLocale === "ja-JP" ? "汎用处理" : "General");
+      uploadMeta.classList.add("is-pending-task");
+      uploadMeta.innerHTML = `
+        <span class="test-upload-mode-pill">${escapeHtml(modeLabel)}</span>
+        <span>${escapeHtml(fileKindLabel)}: ${escapeHtml(testUploadAttachment.name)} (${Math.round((testUploadAttachment.sizeBytes || 0) / 1024)} KB)</span>
+      `;
+    } else {
+      if (testUploadMode === "summary" || testUploadMode === "translation") {
+        const pendingLabel = testUploadMode === "summary"
+          ? (currentLocale === "zh-CN" ? "文档总结" : currentLocale === "ja-JP" ? "要約" : "Summary")
+          : (currentLocale === "zh-CN" ? "文档翻译" : currentLocale === "ja-JP" ? "翻訳" : "Translation");
+        const pendingHint = currentLocale === "zh-CN"
+          ? "已选择动作，请继续上传文档。"
+          : currentLocale === "ja-JP"
+            ? "アクションを選択しました。続けて文書をアップロードしてください。"
+            : "Action selected. Upload a document to continue.";
+        uploadMeta.classList.add("is-pending-task");
+        uploadMeta.innerHTML = `
+          <span class="test-upload-mode-pill">${escapeHtml(pendingLabel)}</span>
+          <span>${escapeHtml(pendingHint)}</span>
+        `;
+      } else {
+        uploadMeta.classList.remove("is-pending-task");
+        uploadMeta.textContent = "";
+      }
+    }
   }
   requestAnimationFrame(() => {
     if (studioContainer?.isConnected) {
@@ -3494,23 +3532,55 @@ async function sendTestAttachmentMessage(message) {
     updateSpokenLine(replyText);
     return;
   }
-  const userText = message || `[Image uploaded] ${testUploadAttachment?.name || ""}`.trim();
+  const fallbackMessage = testUploadMode === "summary"
+    ? (currentLocale === "zh-CN"
+      ? `请对这份文档进行总结，然后发给我：${testUploadAttachment?.name || ""}`
+      : currentLocale === "ja-JP"
+        ? `${testUploadAttachment?.name || ""} を要約して送ってください`
+        : `Summarize this document and send it to me: ${testUploadAttachment?.name || ""}`)
+    : testUploadMode === "translation"
+      ? (currentLocale === "zh-CN"
+        ? `请对这份文档进行翻译，然后发给我：${testUploadAttachment?.name || ""}`
+        : currentLocale === "ja-JP"
+          ? `${testUploadAttachment?.name || ""} を翻訳して送ってください`
+          : `Translate this document and send it to me: ${testUploadAttachment?.name || ""}`)
+      : (message || `[Image uploaded] ${testUploadAttachment?.name || ""}`.trim());
+  const effectiveMessage = message || fallbackMessage;
+  const userText = effectiveMessage;
   testConversation.push({
     speaker: "You",
     text: userText,
     time: new Date().toLocaleTimeString(currentLocale, { hour: "2-digit", minute: "2-digit" })
   });
   renderTestLab();
-  const response = await fetch("/api/custom-agents/intake", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      id: selected.id,
-      locale: currentLocale,
-      message,
-      attachments: [testUploadAttachment]
-    })
-  });
+  let response;
+  if (testUploadAttachment?.file instanceof File) {
+    const formData = new FormData();
+    formData.append("id", selected.id);
+    formData.append("locale", currentLocale);
+    formData.append("message", effectiveMessage || "");
+    formData.append("attachment_kind", testUploadAttachment.kind || "file");
+    formData.append(
+      "attachment",
+      testUploadAttachment.file,
+      testUploadAttachment.name || testUploadAttachment.file.name || "attachment.bin"
+    );
+    response = await fetch("/api/custom-agents/intake", {
+      method: "POST",
+      body: formData
+    });
+  } else {
+    response = await fetch("/api/custom-agents/intake", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: selected.id,
+        locale: currentLocale,
+        message: effectiveMessage,
+        attachments: [testUploadAttachment]
+      })
+    });
+  }
   const payload = await response.json();
   if (!response.ok) {
     updateSpokenLine(`HomeHub: ${payload.error || "Failed to process the uploaded image."}`);
@@ -3522,6 +3592,7 @@ async function sendTestAttachmentMessage(message) {
     time: new Date().toLocaleTimeString(currentLocale, { hour: "2-digit", minute: "2-digit" }),
     artifacts: Array.isArray(payload.artifacts) ? payload.artifacts : []
   });
+  testUploadMode = "generic";
   renderTestLab();
   updateSpokenLine(`HomeHub: ${payload.reply || "Image received."}`);
   await refreshCustomAgentStudio();
@@ -3835,6 +3906,7 @@ async function triggerRemoteAction(target) {
     return;
   }
   if (target.id === "test-image-pick") {
+    testUploadMode = "generic";
     const imageInput = document.getElementById("test-image-input");
     if (imageInput) {
       imageInput.value = "";
@@ -3843,6 +3915,25 @@ async function triggerRemoteAction(target) {
     return;
   }
   if (target.id === "test-file-pick") {
+    testUploadMode = "generic";
+    const fileInput = document.getElementById("test-file-input");
+    if (fileInput) {
+      fileInput.value = "";
+      fileInput.click();
+    }
+    return;
+  }
+  if (target.id === "test-doc-summary-pick") {
+    testUploadMode = "summary";
+    const fileInput = document.getElementById("test-file-input");
+    if (fileInput) {
+      fileInput.value = "";
+      fileInput.click();
+    }
+    return;
+  }
+  if (target.id === "test-doc-translate-pick") {
+    testUploadMode = "translation";
     const fileInput = document.getElementById("test-file-input");
     if (fileInput) {
       fileInput.value = "";
@@ -4040,22 +4131,16 @@ function setupRemoteNavigation() {
 
 function setupTestControls() {
   const applyAttachment = (file, kind) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || "");
-      const base64 = result.includes(",") ? result.split(",")[1] : "";
-      testUploadAttachment = {
-        name: file.name,
-        mimeType: file.type || (kind === "image" ? "image/png" : "application/octet-stream"),
-        sizeBytes: file.size || 0,
-        imageBase64: kind === "image" ? base64 : "",
-        fileBase64: kind === "file" ? base64 : "",
-        kind
-      };
-      updateSpokenLine(`HomeHub: Attached ${kind === "file" ? "file" : "image"} ${file.name}.`);
-      renderTestLab();
+    testUploadAttachment = {
+      name: file.name,
+      mimeType: file.type || (kind === "image" ? "image/png" : "application/octet-stream"),
+      sizeBytes: file.size || 0,
+      kind,
+      file
     };
-    reader.readAsDataURL(file);
+    if (kind === "image") testUploadMode = "generic";
+    updateSpokenLine(`HomeHub: Attached ${kind === "file" ? "file" : "image"} ${file.name}.`);
+    renderTestLab();
   };
   const imageInput = document.getElementById("test-image-input");
   if (imageInput) {
