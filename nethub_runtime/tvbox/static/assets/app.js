@@ -1139,6 +1139,11 @@ function localizeInline(zh, ja, en) {
   return en;
 }
 
+function isAgentReadyForExecution(item) {
+  const status = String(item?.status || "").trim().toLowerCase();
+  return ["complete", "completed", "active", "ready", "enabled"].includes(status);
+}
+
 function buildHomeWorkspaceSummary(data) {
   const assistantMemory = data?.assistantMemory || {};
   const dueReminders = Array.isArray(assistantMemory.dueReminders) ? assistantMemory.dueReminders : [];
@@ -1146,7 +1151,7 @@ function buildHomeWorkspaceSummary(data) {
   const upcomingEvents = Array.isArray(assistantMemory.upcomingEvents) ? assistantMemory.upcomingEvents : [];
   const customAgents = Array.isArray(data?.customAgents) ? data.customAgents : [];
   const collectingAgents = customAgents.filter((item) => ["collecting", "review"].includes(String(item?.status || "")));
-  const completedAgents = customAgents.filter((item) => String(item?.status || "") === "complete");
+  const completedAgents = customAgents.filter((item) => isAgentReadyForExecution(item));
   const features = Array.isArray(data?.features) ? data.features : [];
   const conversation = Array.isArray(data?.conversation) ? data.conversation : [];
   const externalChannels = data?.externalChannels || {};
@@ -1523,7 +1528,7 @@ function renderModules(modules) {
   const upcomingEvents = Array.isArray(assistantMemory.upcomingEvents) ? assistantMemory.upcomingEvents : [];
   const customAgents = Array.isArray(data.customAgents) ? data.customAgents : [];
   const collectingAgents = customAgents.filter((item) => ["collecting", "review"].includes(String(item?.status || "")));
-  const completedAgents = customAgents.filter((item) => String(item?.status || "") === "complete");
+  const completedAgents = customAgents.filter((item) => isAgentReadyForExecution(item));
   const featureNames = Array.isArray(data.features) ? data.features.map((item) => item?.name).filter(Boolean) : [];
   const externalChannels = data.externalChannels || {};
   const externalApps = externalChannels.apps || {};
@@ -1865,7 +1870,7 @@ function selectStudioAgent(agentId) {
 function getSelectedStudioAgent() {
   const items = customAgentStudio.items || [];
   return items.find((item) => item.id === customAgentStudio.selectedAgentId)
-    || items.find((item) => item.status === "complete")
+    || items.find((item) => isAgentReadyForExecution(item))
     || items[0]
     || null;
 }
@@ -1873,8 +1878,8 @@ function getSelectedStudioAgent() {
 function getBlueprintStudioGroups() {
   const items = Array.isArray(customAgentStudio.items) ? customAgentStudio.items : [];
   return {
-    creating: items.filter((item) => item.status !== "complete"),
-    created: items.filter((item) => item.status === "complete"),
+    creating: items.filter((item) => !isAgentReadyForExecution(item)),
+    created: items.filter((item) => isAgentReadyForExecution(item)),
     actions: Array.isArray(customAgentStudio.recentActions) ? customAgentStudio.recentActions : []
   };
 }
@@ -3843,7 +3848,7 @@ async function refreshCustomAgentStudio() {
     customAgentStudio.recentActions = Array.isArray(payload.recentActions) ? payload.recentActions : [];
     const selectedStillExists = customAgentStudio.items.some((item) => item.id === customAgentStudio.selectedAgentId);
     if (!selectedStillExists) {
-      const preferred = customAgentStudio.items.find((item) => item.status === "complete") || customAgentStudio.items[0];
+      const preferred = customAgentStudio.items.find((item) => isAgentReadyForExecution(item)) || customAgentStudio.items[0];
       customAgentStudio.selectedAgentId = preferred?.id || "";
     }
   } catch (error) {
@@ -3887,7 +3892,7 @@ async function sendTestMessage() {
 
 async function sendTestAgentMessage(message, selected = null) {
   const agent = selected || getSelectedStudioAgent();
-  if (!agent || agent.status !== "complete") {
+  if (!agent || !isAgentReadyForExecution(agent)) {
     updateSpokenLine("HomeHub: Select a completed blueprint before sending a test message.");
     return;
   }
@@ -3927,7 +3932,7 @@ async function sendTestAgentMessage(message, selected = null) {
 
 async function sendTestAttachmentMessage(message) {
   const selected = getSelectedStudioAgent();
-  if (!selected || selected.status !== "complete") {
+  if (!selected || !isAgentReadyForExecution(selected)) {
     const replyText = currentLocale === "zh-CN"
       ? "HomeHub：当前还没有可接收附件的已完成智能体，请先到“智能体”标签中完成一个蓝图。"
       : currentLocale === "ja-JP"
@@ -4011,7 +4016,7 @@ async function sendTestAttachmentMessage(message) {
 
 async function generateSelectedFeature() {
   const selected = getSelectedStudioAgent();
-  if (!selected || selected.status !== "complete") {
+  if (!selected || !isAgentReadyForExecution(selected)) {
     updateSpokenLine(t("test.noBlueprintSelected"));
     return;
   }
