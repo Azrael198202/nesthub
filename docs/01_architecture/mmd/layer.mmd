@@ -1,0 +1,100 @@
+graph TD
+    subgraph 输入层 Input
+        A1[📱 Mobile App]
+        A2[🖥️ TV Box UI\n浏览器 SPA]
+        A3[📧 Mail Channel\nSMTP/IMAP]
+        A4[🔌 公开 API\nPublic API]
+    end
+
+    subgraph 接入层 Gateway
+        B1[FastAPI App\ntvbox/main.py :7788]
+        B2[s1]
+        B3[s2]
+        B4[s3]
+    end
+
+    subgraph AI核心层 AI Core
+        C1[IntentAnalyzer\n意图识别]
+        C2[TaskDecomposer\n任务拆解]
+        C3[WorkflowPlanner\n工作流规划]
+        C4[CapabilityRouter\n能力路由]
+        C5[ExecutionCoordinator\n步骤执行]
+        C6[ResultIntegrator\n结果整合]
+    end
+
+    subgraph 模型层 Models
+        D1[ModelRouter\nLiteLLM 路由]
+        D2[Groq / Gemini / OpenAI]
+        D3[Ollama 本地模型]
+    end
+
+    subgraph 记忆层 Memory
+        E1[VectorStore\n向量语义搜索]
+        E2[RuntimeLearningStore\n运行时学习]
+        E3[SemanticPolicyStore\n策略记忆]
+        E4[SessionStore\n会话持久化]
+    end
+
+    subgraph 能力层 Capabilities
+        F1[DocumentPlugin\n文档工作流]
+        F2[LLMWorkflowPlanner\n通用 LLM 规划]
+        F3[InformationAgent\n信息查询]
+        F4[ImageGeneration\n图像生成]
+        F5[ExternalContactAgent\n外部联系人]
+        F6[Tools\nPython/Shell 工具]
+    end
+
+    subgraph 集成层 Integrations
+        G1[IM / LINE Bridge]
+        G2[Mail]
+        G3[External API]
+        G4[Web Scraper]
+    end
+
+    subgraph 输出层 Output
+        H1[📝 文字回复]
+        H2[🗂️ 文件/Artifact]
+        H3[🔊 TTS 语音]
+        H4[🖼️ 图像]
+    end
+
+    A1 --> B1
+    A2 --> B1
+    A3 --> B1
+    A4 --> B1
+    B1 --> B2
+    B1 --> B3
+    B1 --> B4
+    B2 --> C1
+    B3 --> C1
+    B4 --> C1
+    C1 --> C2
+    C2 --> C3
+    C3 --> C4
+    C4 --> C5
+    C5 --> C6
+    C5 --> F1
+    C5 --> F2
+    C5 --> F3
+    C5 --> F4
+    C5 --> F5
+    C5 --> F6
+    C5 --> D1
+    D1 --> D2
+    D1 --> D3
+    C1 --> E1
+    C1 --> E2
+    C1 --> E3
+    C1 --> E4
+    C5 --> E1
+    C5 --> E2
+    C5 --> E3
+    C5 --> E4
+    F5 --> G1
+    F5 --> G2
+    F3 --> G3
+    F3 --> G4
+    C6 --> H1
+    C6 --> H2
+    C6 --> H3
+    C6 --> H4

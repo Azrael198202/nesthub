@@ -1,0 +1,21 @@
+sequenceDiagram
+    participant U as 用户
+    participant GW as Gateway
+    participant IA as IntentAnalyzer
+    participant TD as TaskDecomposer
+    participant WP as WorkflowPlanner
+    participant CR as CapabilityRouter
+    participant EC as ExecutionCoordinator
+    participant RI as ResultIntegrator
+
+    U->>GW: 发送消息/文件
+    GW->>IA: handle(message, context)
+    IA->>TD: 分析意图 → Task
+    TD->>WP: 拆解任务 → WorkflowSchema
+    WP->>CR: 规划工作流 → 步骤列表
+    CR->>EC: 路由能力 → ExecutionPlan
+    EC->>EC: 逐步执行（asyncio.to_thread）
+    EC-->>GW: 实时步骤状态（/execution-progress）
+    EC->>RI: 汇总步骤结果
+    RI->>GW: 最终回复 + Artifacts
+    GW->>U: JSON 响应
