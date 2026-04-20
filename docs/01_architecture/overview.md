@@ -427,16 +427,36 @@ graph TD
 
 ### 3.8 训练流水线（core/services/training_*）
 
-NestHub 内置了自我改进闭环：
+> ⚠️ **落地状态说明**：数据集收集和 Manifest 生成已完整实现；实际的模型微调（Fine-Tuning）和深度学习训练**未在 NestHub 内部实现**，属于后续作业。
 
 ```mermaid
 graph LR
-    Exec[执行结果] --> Export[TrainingDatasetExportService\n导出训练数据集]
-    Export --> Pipeline[TrainingPipelineService\n构建训练任务]
-    Pipeline --> FineTune[TrainingFineTuneRunnerService\n触发微调]
-    FineTune --> Model[更新本地模型]
-    Model --> Exec
+    Exec[执行结果] --> Export["✅ TrainingDatasetExportService\n将高质量执行结果导出\n为 SFT / DPO 数据集 JSON"]
+    Export --> Pipeline["✅ TrainingPipelineService\n构建 training_manifest.json\n描述训练数据路径和阶段"]
+    Pipeline --> Runner["⚠️ TrainingFineTuneRunnerService\n生成命令预览\n默认 dry_run=True"]
+    Runner -->|"NETHUB_TRAINING_ALLOW_EXECUTION=true\n+ unsloth / llamafactory 已安装"| Exec2["🔲 外部训练器\nunsloth LoRA\nLLaMA-Factory"]
+    Exec2 --> Model["🔲 更新本地模型权重"]
+    Model -.->|未实现自动切换| Exec
 ```
+
+#### 已实现部分
+
+| 组件 | 文件 | 状态 | 说明 |
+| ---- | ---- | ---- | ---- |
+| `TrainingDatasetExportService` | `training_dataset_export_service.py` | ✅ 完整 | 每次执行后自动从 `final_output` 提取高质量结果，生成 SFT / Preference 样本 JSON |
+| `TrainingPipelineService` | `training_pipeline_service.py` | ✅ 完整 | 扫描 artifact store 中的 dataset，构建含 stages/profile 的 `training_manifest.json` |
+| `TrainingFineTuneRunnerService.inspect_runner()` | `training_fine_tune_runner_service.py` | ✅ 完整 | 生成命令预览 + manifest 检查，不触发真实训练 |
+| `TrainingFineTuneRunnerService.start_run()` | `training_fine_tune_runner_service.py` | ⚠️ 脚手架 | 默认 `dry_run=True`；若 `NETHUB_TRAINING_ALLOW_EXECUTION=true` 且外部 backend 已安装，才通过 `subprocess.run` 调用外部训练器 |
+| `nethub_runtime/training/run.py` | `training/run.py` | ✅ 完整 | CLI 入口，支持 `--inspect / --dry-run / --execute --backend=unsloth` |
+
+#### 未实现部分（后续作业）
+
+| 缺口 | 说明 |
+| ---- | ---- |
+| **实际模型微调** | NestHub 内部无梯度计算，依赖外部工具（`unsloth` / `llamafactory-cli`）安装后通过 subprocess 触发 |
+| **训练完成后自动切换模型** | `_execute_if_requested` 执行完 subprocess 后不会自动更新 `model_config.yaml` 或切换 Ollama 模型 |
+| **深度学习推理层** | 无自建 DL 推理，全部通过 LiteLLM → 云端 API 或 Ollama 本地进行 |
+| **训练监控** | 无 loss 曲线、checkpoint 保存、EarlyStopping 等训练过程监控 |
 
 ---
 

@@ -55,3 +55,15 @@ Rate Limiting	无限流保护，LLM API 费用容易超支
 唤醒词检测	本地 Wake Word（Porcupine / Vosk），无需手动点击发送语音
 LINE 主动发消息	external_contact_agent 已有接收，但主动推送给 LINE 联系人的逻辑不完整
 建议落地顺序：邮件（短平快，前端已有配置界面）→ STT API 入口补全 → 定时任务 → TTS 音质提升 → 结构化搜索 → 主动推送
+
+
+训练流水线真实落地状态：
+
+组件	实际状态
+数据集收集 (TrainingDatasetExportService)	✅ 真实实现 — 每次执行结果自动提取为 SFT/DPO 样本 JSON
+Manifest 构建 (TrainingPipelineService)	✅ 真实实现 — 生成 training_manifest.json 描述数据路径
+命令预览 (inspect_runner)	✅ 真实实现 — 生成可执行的命令
+实际微调执行	⚠️ 脚手架 — 默认 dry_run=True，类文档注释就写着 "without executing a real trainer yet"
+深度学习 / 梯度计算	❌ 未实现 — NestHub 内部无任何 DL 训练，完全依赖外部工具（unsloth / LLaMA-Factory）通过 subprocess 调用
+训练完成后自动切换模型	❌ 未实现 — subprocess 跑完后不会更新 model_config.yaml 或切换 Ollama 权重
+结论：当前训练流水线本质上是一个数据收集 + 命令生成器，真正的 Fine-Tuning 循环需要后续补全。
