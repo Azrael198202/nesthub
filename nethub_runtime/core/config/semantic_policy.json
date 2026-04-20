@@ -309,6 +309,20 @@
       "patterns": []
     }
   ],
+  "document_runtime": {
+    "summary_markers": ["总结", "摘要", "概述", "summarize", "summary"],
+    "translate_markers": ["翻译", "translate", "translation"],
+    "analyze_markers": ["分析", "解析", "阅读", "看看", "read", "analyze"],
+    "visual_analyze_markers": [
+      "图片内容", "图里", "图中", "画面", "里面", "有什么", "是什么", "动物", "人物", "场景", "看起来",
+      "what is in", "what's in", "what is this", "animal", "animals", "object", "scene", "describe this image"
+    ],
+    "multi_doc_markers": ["这些文档", "所有文档", "这些文件", "all documents", "all files"],
+    "document_reference_markers": [
+      "文档", "文件", "附件", "pdf", "word", "excel", "txt", "md", "图片", "image", "photo", "screenshot"
+    ],
+    "followup_reference_markers": ["这份", "这个", "刚刚", "上面", "前面", "那份", "那个"]
+  },
   "huggingface_image_models": [
     {
       "model_id": "hf-internal-testing/tiny-stable-diffusion-pipe",

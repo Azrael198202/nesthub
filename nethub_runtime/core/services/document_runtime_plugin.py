@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import mimetypes
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from nethub_runtime.core.config.settings import SEMANTIC_POLICY_PATH
+from nethub_runtime.core.memory.semantic_policy_store import SemanticPolicyStore
 from nethub_runtime.core.schemas.context_schema import CoreContextSchema
 from nethub_runtime.core.schemas.task_schema import SubTask, TaskSchema
 from nethub_runtime.core.schemas.workflow_schema import WorkflowSchema, WorkflowStepSchema
@@ -17,18 +20,22 @@ from nethub_runtime.core.services.execution_handler_registry import (
 from nethub_runtime.core.services.execution_step_handlers import extract_image_text_with_ocr
 from nethub_runtime.core.utils.id_generator import generate_id
 
-
-_SUMMARY_MARKERS = ("总结", "摘要", "概述", "summarize", "summary")
-_TRANSLATE_MARKERS = ("翻译", "translate", "translation")
-_ANALYZE_MARKERS = ("分析", "解析", "阅读", "看看", "read", "analyze")
-_MULTI_DOC_MARKERS = ("这些文档", "所有文档", "这些文件", "all documents", "all files")
-_DOCUMENT_REFERENCE_MARKERS = (
-    "文档", "文件", "附件", "pdf", "word", "excel", "txt", "md", "图片", "image", "photo", "screenshot",
-)
-_FOLLOWUP_REFERENCE_MARKERS = ("这份", "这个", "刚刚", "上面", "前面", "那份", "那个")
 _DOCUMENT_SUFFIXES = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".txt", ".md"}
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 _SUPPORTED_SUFFIXES = _DOCUMENT_SUFFIXES | _IMAGE_SUFFIXES
+_POLICY_STORE = SemanticPolicyStore(policy_path=SEMANTIC_POLICY_PATH)
+
+
+def _document_runtime_policy() -> dict[str, Any]:
+    try:
+        return _POLICY_STORE.load_runtime_policy().get("document_runtime") or {}
+    except Exception:
+        return {}
+
+
+def _policy_markers(key: str) -> tuple[str, ...]:
+    value = _document_runtime_policy().get(key) or []
+    return tuple(str(item) for item in value if str(item).strip())
 
 
 def _utc_now() -> datetime:
@@ -93,16 +100,21 @@ def _looks_like_explicit_document_request(text: str, *, has_context: bool) -> bo
     lowered = text.lower()
     if not lowered.strip():
         return False
+    summary_markers = _policy_markers("summary_markers")
+    translate_markers = _policy_markers("translate_markers")
+    analyze_markers = _policy_markers("analyze_markers")
     action_requested = (
-        any(marker in lowered for marker in _SUMMARY_MARKERS)
-        or any(marker in lowered for marker in _TRANSLATE_MARKERS)
-        or any(marker in lowered for marker in _ANALYZE_MARKERS)
+        any(marker in lowered for marker in summary_markers)
+        or any(marker in lowered for marker in translate_markers)
+        or any(marker in lowered for marker in analyze_markers)
     )
     if not action_requested:
         return False
+    document_reference_markers = _policy_markers("document_reference_markers")
+    followup_reference_markers = _policy_markers("followup_reference_markers")
     has_document_reference = (
-        any(marker in lowered for marker in _DOCUMENT_REFERENCE_MARKERS)
-        or any(marker in text for marker in _FOLLOWUP_REFERENCE_MARKERS)
+        any(marker in lowered for marker in document_reference_markers)
+        or any(marker in text for marker in followup_reference_markers)
         or any(_looks_like_document_name(token) for token in re.findall(r"[\w.-]+", lowered))
     )
     return has_document_reference or has_context
@@ -115,7 +127,7 @@ def _resolve_analysis_targets(text: str, context: CoreContextSchema) -> list[dic
     if not attachments:
         return []
     lowered = text.lower()
-    if any(marker in lowered for marker in _MULTI_DOC_MARKERS):
+    if any(marker in lowered for marker in _policy_markers("multi_doc_markers")):
         return attachments
     named_matches = []
     for item in attachments:
@@ -134,13 +146,34 @@ def _looks_like_document_name(value: str) -> bool:
 
 def _detect_document_action(text: str) -> str:
     lowered = text.lower()
-    if any(marker in lowered for marker in _TRANSLATE_MARKERS):
+    if any(marker in lowered for marker in _policy_markers("translate_markers")):
         return "translate"
-    if any(marker in lowered for marker in _SUMMARY_MARKERS):
+    if any(marker in lowered for marker in _policy_markers("summary_markers")):
         return "summarize"
-    if any(marker in lowered for marker in _ANALYZE_MARKERS):
+    if any(marker in lowered for marker in _policy_markers("analyze_markers")):
         return "analyze"
     return "summarize"
+
+
+def _looks_like_visual_analysis_request(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _policy_markers("visual_analyze_markers"))
+
+
+def _is_image_target(item: dict[str, Any]) -> bool:
+    input_type = str(item.get("input_type") or "").lower()
+    content_type = str(item.get("content_type") or "").lower()
+    file_name = str(item.get("file_name") or "").lower()
+    return input_type == "image" or content_type.startswith("image/") or any(file_name.endswith(suffix) for suffix in _IMAGE_SUFFIXES)
+
+
+def _image_to_data_url(path: Path, content_type: str) -> str:
+    resolved_type = content_type or mimetypes.guess_type(path.name)[0] or "image/png"
+    encoded = path.read_bytes().hex()
+    import base64
+
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{resolved_type};base64,{encoded}"
 
 
 def _detect_target_language(text: str, context: CoreContextSchema) -> str:
@@ -218,6 +251,31 @@ async def _invoke_document_model(coordinator: Any, *, task_type: str, prompt: st
         return ""
     try:
         return await router.invoke(task_type=task_type, prompt=prompt, system_prompt=system_prompt)
+    except Exception:
+        return ""
+
+
+async def _invoke_visual_model(
+    coordinator: Any,
+    *,
+    task_type: str,
+    prompt: str,
+    system_prompt: str,
+    image_path: Path,
+    content_type: str,
+) -> str:
+    router = getattr(coordinator, "model_router", None)
+    if router is None:
+        return ""
+    try:
+        return await router.invoke_multimodal(
+            task_type=task_type,
+            system_prompt=system_prompt,
+            user_content=[
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": _image_to_data_url(image_path, content_type)}},
+            ],
+        )
     except Exception:
         return ""
 
@@ -300,23 +358,61 @@ def handle_analyze_document_step(
     extracted_chunks: list[str] = []
     source_files: list[str] = []
     parsers: list[str] = []
+    image_targets: list[tuple[Path, str, str]] = []
     for item in targets:
         path_value = str(item.get("received_path") or item.get("stored_path") or "").strip()
         file_name = str(item.get("file_name") or Path(path_value).name or "document")
         source_files.append(file_name)
         if not path_value or not Path(path_value).exists():
             continue
+        if _is_image_target(item):
+            image_targets.append((Path(path_value), str(item.get("content_type") or "image/png"), file_name))
         content, parser_name = _extract_document_text(Path(path_value))
         parsers.append(parser_name)
         if content.strip():
             extracted_chunks.append(f"# {file_name}\n{content.strip()}")
 
     combined_text = "\n\n".join(extracted_chunks).strip()
-    operation = str(task.constraints.get("document_action") or pending_request.get("document_action") if pending_request else "summarize")
+    operation = str(task.constraints.get("document_action") or (pending_request.get("document_action") if pending_request else "summarize"))
     if operation not in {"summarize", "translate", "analyze"}:
         operation = "summarize"
     target_language = str(task.constraints.get("target_language") or (pending_request or {}).get("target_language") or _detect_target_language(task.input_text, context))
     analysis_text = combined_text[:12000]
+    use_visual_analysis = bool(image_targets) and operation == "analyze" and _looks_like_visual_analysis_request(task.input_text)
+
+    if use_visual_analysis:
+        system_prompt = (
+            "You analyze image content for the user. Identify visible subjects, objects, animals, scenes, and other important details. "
+            "Answer in concise plain text and do not fabricate details that are not visible."
+        )
+        prompt = f"Analyze this image and answer the user's request: {task.input_text.strip()}"
+        image_path, content_type, _image_name = image_targets[-1]
+        visual_output = _run_in_existing_loop(
+            _invoke_visual_model(
+                coordinator,
+                task_type="image_understanding",
+                prompt=prompt,
+                system_prompt=system_prompt,
+                image_path=image_path,
+                content_type=content_type,
+            )
+        )
+        summary = visual_output.strip() or _fallback_summary(analysis_text, source_files)
+        if session_store is not None and pending_request is not None:
+            session_store.patch(context.session_id, {"pending_document_request": None})
+        return {
+            "artifact_type": "document",
+            "status": "completed",
+            "message": f"已完成图片内容分析，共处理 {len(source_files)} 个文件。",
+            "summary": summary,
+            "translation": "",
+            "content": combined_text[:2000] if combined_text else "",
+            "source_documents": source_files,
+            "parsers": parsers,
+            "document_count": len(source_files),
+            "requested_action": "analyze_visual",
+            "target_language": "",
+        }
 
     if operation == "translate":
         system_prompt = (

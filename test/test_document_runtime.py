@@ -259,6 +259,65 @@ def test_document_plugin_uses_shared_ocr_for_image_followup(monkeypatch) -> None
     assert "mock_ocr" in output["parsers"]
 
 
+def test_document_plugin_uses_visual_analysis_for_image_content_questions(monkeypatch) -> None:
+    core = AICore(model_config_path="nethub_runtime/config/model_config.yaml")
+    session_id = f"image-visual-session-{uuid.uuid4().hex}"
+    image_path = Path("/tmp/visual_image.png")
+    image_path.write_bytes(b"fake-image-bytes")
+
+    monkeypatch.setattr(
+        document_runtime_plugin,
+        "extract_image_text_with_ocr",
+        lambda coordinator, path: ("票据 金额 100 元", "mock_ocr"),
+    )
+    async def _fake_visual(*args, **kwargs):
+        return "图片里是一只猫，坐在沙发上。"
+    monkeypatch.setattr(document_runtime_plugin, "_invoke_visual_model", _fake_visual)
+
+    first = asyncio.run(
+        core.handle(
+            input_text="收到图片: visual_image.png",
+            context={
+                "session_id": session_id,
+                "metadata": {
+                    "source_im": "line",
+                    "attachments": [
+                        {
+                            "file_name": "visual_image.png",
+                            "content_type": "image/png",
+                            "input_type": "image",
+                            "stored_path": str(image_path),
+                            "external_message_id": "msg-visual-1",
+                        }
+                    ],
+                },
+            },
+            fmt="dict",
+            use_langraph=False,
+        )
+    )
+    assert first["execution_result"]["final_output"]["analyze_document"]["status"] == "awaiting_request"
+
+    second = asyncio.run(
+        core.handle(
+            input_text="请分析这张图片里面的动物是什么",
+            context={
+                "session_id": session_id,
+                "metadata": {
+                    "source_im": "line",
+                },
+            },
+            fmt="dict",
+            use_langraph=False,
+        )
+    )
+
+    output = second["execution_result"]["final_output"]["analyze_document"]
+    assert output["status"] == "completed"
+    assert output["requested_action"] == "analyze_visual"
+    assert "一只猫" in output["summary"]
+
+
 def test_ocr_extract_step_uses_shared_ocr_helper(monkeypatch, tmp_path: Path) -> None:
     image_path = tmp_path / "ocr_case.png"
     image_path.write_bytes(b"fake")
