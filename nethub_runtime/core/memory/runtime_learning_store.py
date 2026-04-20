@@ -99,6 +99,7 @@ class RuntimeLearningStore:
         repair_iterations: int,
         unmet_requirements: list[str],
         solution_summary: str,
+        repair_preferences: dict[str, Any] | None = None,
     ) -> None:
         """
         Record the final outcome of a full execution cycle including repairs.
@@ -116,6 +117,7 @@ class RuntimeLearningStore:
             "repair_iterations": repair_iterations,
             "unmet_requirements": unmet_requirements,
             "solution_summary": solution_summary,
+            "repair_preferences": repair_preferences or {},
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
         confidence = 0.9 if outcome == "success" else 0.4
@@ -173,6 +175,40 @@ class RuntimeLearningStore:
             LOGGER.debug("learning_store: lookup_solution error: %s", exc)
             return None
 
+    def lookup_execution_guidance(
+        self,
+        *,
+        task_type: str,
+        intent: str,
+        min_confidence: float = 0.75,
+    ) -> dict[str, Any] | None:
+        """Return the most recent successful execution pattern for a task/intent pair."""
+        key = f"{self._KEY_PREFIX}execution:{task_type}:{intent}"
+        try:
+            candidates = self.store.inspect_memory(policy_key=key)
+            records = candidates.get("records") or []
+            successful = [
+                record
+                for record in records
+                if record.get("confidence", 0) >= min_confidence
+                and (record.get("payload") or {}).get("outcome") in {"success", "partial"}
+            ]
+            if not successful:
+                return None
+            best = max(successful, key=lambda record: record.get("timestamp") or "")
+            payload: dict[str, Any] = best.get("payload") or {}
+            LOGGER.info(
+                "learning_store: found execution guidance for %s/%s: outcome=%s repairs=%s",
+                task_type,
+                intent,
+                payload.get("outcome"),
+                payload.get("repair_iterations"),
+            )
+            return payload
+        except Exception as exc:
+            LOGGER.debug("learning_store: lookup_execution_guidance error: %s", exc)
+            return None
+
     def get_learning_summary(self) -> dict[str, Any]:
         """Return aggregate statistics about what the runtime has learned."""
         try:
@@ -189,11 +225,25 @@ class RuntimeLearningStore:
                 for r in learning_records
                 if (r.get("payload") or {}).get("task_type")
             }
+            repair_preference_counts = {
+                "analysis_before_retry": 0,
+                "prefer_tool_prepare": 0,
+                "prefer_patch_pipeline": 0,
+                "prefer_artifact_pipeline": 0,
+                "guided_repair": 0,
+            }
+            for record in learning_records:
+                payload = record.get("payload") or {}
+                preferences = payload.get("repair_preferences") if isinstance(payload.get("repair_preferences"), dict) else {}
+                for key in repair_preference_counts:
+                    if preferences.get(key):
+                        repair_preference_counts[key] += 1
             return {
                 "total_records": len(learning_records),
                 "successes": len(successes),
                 "failures": len(failures),
                 "known_task_types": sorted(task_types),
+                "repair_preference_counts": repair_preference_counts,
             }
         except Exception as exc:
             return {"error": str(exc)}

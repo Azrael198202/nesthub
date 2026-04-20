@@ -15,6 +15,10 @@ class GeneratedArtifactStore:
         "feature": "features",
         "trace": "traces",
         "code": "code",
+        "dataset_sft": "datasets_sft",
+        "dataset_preference": "datasets_preferences",
+        "dataset_manifest": "datasets_manifests",
+        "dataset_run": "datasets_runs",
     }
 
     def __init__(self) -> None:
@@ -70,6 +74,8 @@ class GeneratedArtifactStore:
             return payload.model_dump()
         if is_dataclass(payload):
             return asdict(payload)
+        if isinstance(payload, list):
+            return payload
         if isinstance(payload, dict):
             return payload
         return {"value": payload}

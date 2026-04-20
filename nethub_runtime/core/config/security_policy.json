@@ -17,6 +17,7 @@
     "web_automation",
     "summarizer",
     "session_store",
+    "shell_runner",
     "none"
   ],
   "allow_runtime_auto_install": true,

@@ -278,7 +278,7 @@ provider_policies:
     min_request_interval_ms: 0
     skip_unhealthy: true
     healthcheck_timeout_sec: 2
-    request_timeout_cap_sec: 8
+    request_timeout_cap_sec: 120
 
 agent_config:
   reasoning:

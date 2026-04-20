@@ -37,6 +37,8 @@ def _derive_input_type(content_type: str) -> str:
     ct = content_type.lower()
     if ct.startswith("image/"):
         return "image"
+    if ct.startswith("text/"):
+        return "document"
     if ct in (
         "application/pdf",
         "application/msword",
@@ -45,6 +47,7 @@ def _derive_input_type(content_type: str) -> str:
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "application/vnd.ms-powerpoint",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "text/csv",
     ):
         return "document"
     return "file"
@@ -192,9 +195,9 @@ async def im_inbound(request: Request, x_line_signature: str = Header(None)):
                             "message_id": external_message_id,
                         })
                         if input_type_label == "image":
-                            text = f"识别图片内容: {file_name}"
+                            text = f"收到图片: {file_name}"
                         else:
-                            text = f"分析文档: {file_name}"
+                            text = f"收到文档: {file_name}"
                     else:
                         append_event(request, {
                             "action": "line_content_api_download",

@@ -18,6 +18,8 @@ let latestDashboard = null;
 let latestCortexUnpacked = null;
 let currentLocale = "en-US";
 let generatedArtifactsRuntime = { items: {}, isLoading: false, error: "" };
+let runtimeMemoryInspection = { query: "", namespace: "*", result: null, isLoading: false, error: "" };
+let trainingAssetsInspection = { profile: "lora_sft", backend: "mock", result: null, isLoading: false, isRunning: false, error: "", notice: "" };
 let mediaRecorder = null;
 let mediaChunks = [];
 let isRecording = false;
@@ -39,6 +41,7 @@ let studioFeatureRuntime = { featureId: "", items: [], fieldNames: [], detail: n
 let activeBlueprintStudioTab = "creating";
 let activeRuntimeAgentId = "";
 let testUploadAttachment = null;
+let testUploadMode = "generic";
 let bootstrapPollTimer = null;
 let dashboardRefreshPromise = null;
 let mailTesterState = { to: "", subject: "", body: "", status: "", isSending: false, isSyncing: false };
@@ -247,6 +250,14 @@ function settingsSectionCatalog() {
     artifacts: {
       label: "Generated Artifacts",
       summary: "Browse runtime generated blueprints, agents, and features"
+    },
+    memory: {
+      label: "Runtime Memory",
+      summary: "Inspect promotion artifacts, promoted facts, and reusable experiences"
+    },
+    training: {
+      label: "Training Assets",
+      summary: "Review SFT datasets, preference sets, and train-ready manifests"
     }
   };
 }
@@ -288,6 +299,114 @@ async function deleteGeneratedArtifact(category, artifactId) {
   }
 }
 
+async function loadRuntimeMemoryInspection(query = runtimeMemoryInspection.query || "", namespace = runtimeMemoryInspection.namespace || "*") {
+  runtimeMemoryInspection.isLoading = true;
+  runtimeMemoryInspection.error = "";
+  runtimeMemoryInspection.query = String(query || "");
+  runtimeMemoryInspection.namespace = String(namespace || "*");
+  renderSettings(latestDashboard);
+  try {
+    const params = new URLSearchParams();
+    if (runtimeMemoryInspection.query) params.set("query", runtimeMemoryInspection.query);
+    if (runtimeMemoryInspection.namespace && runtimeMemoryInspection.namespace !== "*") params.set("namespace", runtimeMemoryInspection.namespace);
+    params.set("top_k", "8");
+    const response = await fetch(`/api/runtime-memory?${params.toString()}`);
+    const payload = await response.json();
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || "Failed to load runtime memory.");
+    }
+    runtimeMemoryInspection.result = payload.result || null;
+  } catch (error) {
+    runtimeMemoryInspection.error = String(error.message || error);
+  } finally {
+    runtimeMemoryInspection.isLoading = false;
+    renderSettings(latestDashboard);
+  }
+}
+
+async function loadTrainingAssetsInspection(profile = trainingAssetsInspection.profile || "lora_sft") {
+  trainingAssetsInspection.isLoading = true;
+  trainingAssetsInspection.error = "";
+  trainingAssetsInspection.notice = "";
+  trainingAssetsInspection.profile = String(profile || "lora_sft");
+  renderSettings(latestDashboard);
+  try {
+    const params = new URLSearchParams();
+    params.set("profile", trainingAssetsInspection.profile);
+    const response = await fetch(`/api/training-assets?${params.toString()}`);
+    const payload = await response.json();
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || "Failed to load training assets.");
+    }
+    trainingAssetsInspection.result = payload.result || null;
+  } catch (error) {
+    trainingAssetsInspection.error = String(error.message || error);
+  } finally {
+    trainingAssetsInspection.isLoading = false;
+    renderSettings(latestDashboard);
+  }
+}
+
+async function rebuildTrainingAssets(profile = trainingAssetsInspection.profile || "lora_sft") {
+  trainingAssetsInspection.isLoading = true;
+  trainingAssetsInspection.error = "";
+  trainingAssetsInspection.notice = "";
+  trainingAssetsInspection.profile = String(profile || "lora_sft");
+  renderSettings(latestDashboard);
+  try {
+    const response = await fetch("/api/training-assets/rebuild", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile: trainingAssetsInspection.profile }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || "Failed to rebuild training manifest.");
+    }
+    trainingAssetsInspection.result = payload.result || null;
+    trainingAssetsInspection.notice = "Training manifest rebuilt.";
+  } catch (error) {
+    trainingAssetsInspection.error = String(error.message || error);
+  } finally {
+    trainingAssetsInspection.isLoading = false;
+    renderSettings(latestDashboard);
+  }
+}
+
+async function runTrainingAssetsDryRun(profile = trainingAssetsInspection.profile || "lora_sft", backend = trainingAssetsInspection.backend || "mock") {
+  trainingAssetsInspection.isRunning = true;
+  trainingAssetsInspection.error = "";
+  trainingAssetsInspection.notice = "";
+  trainingAssetsInspection.profile = String(profile || "lora_sft");
+  trainingAssetsInspection.backend = String(backend || "mock");
+  renderSettings(latestDashboard);
+  try {
+    const response = await fetch("/api/training-assets/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        profile: trainingAssetsInspection.profile,
+        backend: trainingAssetsInspection.backend,
+        dryRun: true,
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || "Failed to generate training run skeleton.");
+    }
+    trainingAssetsInspection.result = payload.trainingAssets || trainingAssetsInspection.result;
+    if (trainingAssetsInspection.result) {
+      trainingAssetsInspection.result.last_run = payload.result || null;
+    }
+    trainingAssetsInspection.notice = payload?.result?.message || "Training run skeleton generated.";
+  } catch (error) {
+    trainingAssetsInspection.error = String(error.message || error);
+  } finally {
+    trainingAssetsInspection.isRunning = false;
+    renderSettings(latestDashboard);
+  }
+}
+
 function renderGeneratedArtifactGroups() {
   const groups = generatedArtifactsRuntime.items || {};
   const order = ["blueprint", "agent", "feature", "trace", "code"];
@@ -313,6 +432,146 @@ function renderGeneratedArtifactGroups() {
       </div>
     `;
   }).join("");
+}
+
+function renderRuntimeMemoryHits(result) {
+  const hits = Array.isArray(result?.vector_hits) ? result.vector_hits : [];
+  if (!hits.length) return `<div class="settings-card"><p>No runtime memory hits yet.</p></div>`;
+  return hits.map((hit) => `
+    <article class="settings-card memory-hit-card">
+      <div class="agent-row">
+        <strong>${escapeHtml(hit.namespace || "memory")}</strong>
+        <span class="pill">${escapeHtml(hit.id || "-")}</span>
+      </div>
+      <p>${escapeHtml(hit.content || "")}</p>
+      <pre class="cortex-json-view">${escapeHtml(JSON.stringify(hit.metadata || {}, null, 2))}</pre>
+    </article>
+  `).join("");
+}
+
+function renderRuntimeMemoryArtifacts(result) {
+  const items = Array.isArray(result?.promotion_artifacts) ? result.promotion_artifacts : [];
+  if (!items.length) return `<div class="settings-card"><p>No promotion artifacts yet.</p></div>`;
+  return items.map((item) => `
+    <article class="settings-card memory-hit-card">
+      <strong>${escapeHtml(item.name || item.artifactId || "memory artifact")}</strong>
+      <p>${escapeHtml(item.path || "")}</p>
+      <p>${escapeHtml(item.contentPreview || "")}</p>
+    </article>
+  `).join("");
+}
+
+function renderTrainingArtifactRows(items, emptyText) {
+  if (!Array.isArray(items) || !items.length) return `<div class="settings-card"><p>${escapeHtml(emptyText)}</p></div>`;
+  return items.map((item) => `
+    <article class="settings-card memory-hit-card">
+      <div class="agent-row">
+        <strong>${escapeHtml(item.name || item.artifact_id || item.artifactId || "artifact")}</strong>
+        <span class="pill">${escapeHtml(String(item.sample_count || item.count || item.size || 0))}</span>
+      </div>
+      <p>${escapeHtml(item.path || "")}</p>
+      <p>${escapeHtml(item.profile || item.kind || "")}</p>
+    </article>
+  `).join("");
+}
+
+function renderRepairPreferenceCounts(counts) {
+  const entries = Object.entries(counts || {});
+  if (!entries.length) return `<div class="settings-card"><p>No repair preference signals recorded yet.</p></div>`;
+  return entries.map(([key, value]) => `
+    <article class="settings-card memory-hit-card">
+      <div class="agent-row">
+        <strong>${escapeHtml(key)}</strong>
+        <span class="pill">${escapeHtml(String(value || 0))}</span>
+      </div>
+    </article>
+  `).join("");
+}
+
+function renderTrainingMetricCards(summary, manifest, runner) {
+  const cards = [
+    { label: "SFT Samples", value: summary.sft_samples || 0, meta: `${manifest.counts?.sft || 0} datasets` },
+    { label: "Preference Samples", value: summary.preference_samples || 0, meta: `${manifest.counts?.preference || 0} datasets` },
+    { label: "Manifest Builds", value: summary.training_manifests || 0, meta: runner?.backend?.label || "Runner pending" },
+    { label: "Run Specs", value: summary.training_runs || 0, meta: runner?.ready ? "Ready for dry-run" : "Waiting for datasets" },
+  ];
+  return cards.map((card) => `
+    <article class="training-metric-card">
+      <span class="training-metric-label">${escapeHtml(card.label)}</span>
+      <strong class="training-metric-value">${escapeHtml(String(card.value))}</strong>
+      <p class="training-metric-meta">${escapeHtml(card.meta)}</p>
+    </article>
+  `).join("");
+}
+
+function renderTrainingPlan(plan) {
+  const steps = Array.isArray(plan?.stages) ? plan.stages : [];
+  if (!steps.length) return `<div class="settings-card"><p>No training plan available yet.</p></div>`;
+  return `
+    <article class="settings-card training-plan-card">
+      <div class="agent-row">
+        <strong>Execution Plan</strong>
+        <span class="pill ${plan.preference_objective && plan.preference_objective !== "none" ? "is-active" : "is-ready"}">${escapeHtml(plan.preference_objective || "sft")}</span>
+      </div>
+      <div class="training-stage-row">
+        ${steps.map((step) => `<span class="training-stage-pill">${escapeHtml(step)}</span>`).join("")}
+      </div>
+      <p>Required assets: ${escapeHtml((plan.requires || []).join(", "))}</p>
+    </article>
+  `;
+}
+
+function renderCommandPreview(lines) {
+  const items = Array.isArray(lines) ? lines : [];
+  if (!items.length) return `<div class="settings-card"><p>No runner command preview available yet.</p></div>`;
+  return `
+    <article class="settings-card training-command-card">
+      <strong>Command Preview</strong>
+      <pre class="cortex-json-view">${escapeHtml(items.join(" "))}</pre>
+    </article>
+  `;
+}
+
+function renderTrainingBackendOptions(runner) {
+  const runtimeConfig = runner?.runtime_config || {};
+  const backends = Object.keys(runtimeConfig.backends || {});
+  const items = backends.length ? backends : ["mock", "unsloth", "llamafactory"];
+  return items.map((item) => `<option value="${escapeHtml(item)}" ${trainingAssetsInspection.backend === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("");
+}
+
+function renderTrainingRunTimeline(runs, lastRun) {
+  const merged = [];
+  if (lastRun) {
+    merged.push({
+      name: lastRun.run_id || "latest run",
+      created_at: lastRun.created_at || "",
+      status: lastRun.status || "unknown",
+      path: lastRun.artifact_path || "",
+      preview: lastRun.message || "",
+    });
+  }
+  (Array.isArray(runs) ? runs : []).forEach((item) => {
+    if (merged.some((existing) => existing.path && existing.path === item.path)) return;
+    merged.push({
+      name: item.name || item.artifactId || "run",
+      created_at: item.created_at || "",
+      status: item.status || "artifact",
+      path: item.path || "",
+      preview: item.contentPreview || "",
+    });
+  });
+  if (!merged.length) return `<div class="settings-card"><p>No training runs yet.</p></div>`;
+  return merged.map((item) => `
+    <article class="settings-card training-timeline-card">
+      <div class="agent-row">
+        <strong>${escapeHtml(item.name)}</strong>
+        <span class="pill ${item.status === "completed" ? "is-ready" : item.status === "failed" ? "is-attention" : "is-active"}">${escapeHtml(item.status)}</span>
+      </div>
+      <p>${escapeHtml(item.created_at || "Pending timestamp")}</p>
+      <p>${escapeHtml(item.path || "")}</p>
+      <p>${escapeHtml(item.preview || "")}</p>
+    </article>
+  `).join("");
 }
 
 function localizeCatalogText(entry) {
@@ -880,6 +1139,11 @@ function localizeInline(zh, ja, en) {
   return en;
 }
 
+function isAgentReadyForExecution(item) {
+  const status = String(item?.status || "").trim().toLowerCase();
+  return ["complete", "completed", "active", "ready", "enabled"].includes(status);
+}
+
 function buildHomeWorkspaceSummary(data) {
   const assistantMemory = data?.assistantMemory || {};
   const dueReminders = Array.isArray(assistantMemory.dueReminders) ? assistantMemory.dueReminders : [];
@@ -887,7 +1151,7 @@ function buildHomeWorkspaceSummary(data) {
   const upcomingEvents = Array.isArray(assistantMemory.upcomingEvents) ? assistantMemory.upcomingEvents : [];
   const customAgents = Array.isArray(data?.customAgents) ? data.customAgents : [];
   const collectingAgents = customAgents.filter((item) => ["collecting", "review"].includes(String(item?.status || "")));
-  const completedAgents = customAgents.filter((item) => String(item?.status || "") === "complete");
+  const completedAgents = customAgents.filter((item) => isAgentReadyForExecution(item));
   const features = Array.isArray(data?.features) ? data.features : [];
   const conversation = Array.isArray(data?.conversation) ? data.conversation : [];
   const externalChannels = data?.externalChannels || {};
@@ -1029,6 +1293,8 @@ function applyStaticTranslations() {
   setTextIfPresent("conversation-pill", t("top.transcript"));
   setTextIfPresent("test-title", t("top.testLab"));
   setTextIfPresent("test-pill", currentLocale === "zh-CN" ? "语音 / 文字 / 文件" : currentLocale === "ja-JP" ? "音声 / テキスト / ファイル" : "Voice / Text / Files");
+  setTextIfPresent("test-doc-summary-pick", currentLocale === "zh-CN" ? "文档总结" : currentLocale === "ja-JP" ? "文書要約" : "Document Summary");
+  setTextIfPresent("test-doc-translate-pick", currentLocale === "zh-CN" ? "文档翻译" : currentLocale === "ja-JP" ? "文書翻訳" : "Document Translation");
   setTextIfPresent("work-title", t("top.workLab"));
   setTextIfPresent("work-pill", t("top.workBoard"));
   setTextIfPresent("work-factory-title", t("top.workFactory"));
@@ -1262,7 +1528,7 @@ function renderModules(modules) {
   const upcomingEvents = Array.isArray(assistantMemory.upcomingEvents) ? assistantMemory.upcomingEvents : [];
   const customAgents = Array.isArray(data.customAgents) ? data.customAgents : [];
   const collectingAgents = customAgents.filter((item) => ["collecting", "review"].includes(String(item?.status || "")));
-  const completedAgents = customAgents.filter((item) => String(item?.status || "") === "complete");
+  const completedAgents = customAgents.filter((item) => isAgentReadyForExecution(item));
   const featureNames = Array.isArray(data.features) ? data.features.map((item) => item?.name).filter(Boolean) : [];
   const externalChannels = data.externalChannels || {};
   const externalApps = externalChannels.apps || {};
@@ -1604,7 +1870,7 @@ function selectStudioAgent(agentId) {
 function getSelectedStudioAgent() {
   const items = customAgentStudio.items || [];
   return items.find((item) => item.id === customAgentStudio.selectedAgentId)
-    || items.find((item) => item.status === "complete")
+    || items.find((item) => isAgentReadyForExecution(item))
     || items[0]
     || null;
 }
@@ -1612,8 +1878,8 @@ function getSelectedStudioAgent() {
 function getBlueprintStudioGroups() {
   const items = Array.isArray(customAgentStudio.items) ? customAgentStudio.items : [];
   return {
-    creating: items.filter((item) => item.status !== "complete"),
-    created: items.filter((item) => item.status === "complete"),
+    creating: items.filter((item) => !isAgentReadyForExecution(item)),
+    created: items.filter((item) => isAgentReadyForExecution(item)),
     actions: Array.isArray(customAgentStudio.recentActions) ? customAgentStudio.recentActions : []
   };
 }
@@ -1965,10 +2231,45 @@ function renderTestLab() {
     actionsLog.innerHTML = "";
   }
   const uploadMeta = document.getElementById("test-upload-meta");
+  const summaryButton = document.getElementById("test-doc-summary-pick");
+  const translateButton = document.getElementById("test-doc-translate-pick");
+  summaryButton?.classList.toggle("is-active", testUploadMode === "summary");
+  translateButton?.classList.toggle("is-active", testUploadMode === "translation");
   if (uploadMeta) {
-    uploadMeta.textContent = testUploadAttachment
-      ? `${testUploadAttachment.kind === "file" ? "Attached file" : "Attached image"}: ${testUploadAttachment.name} (${Math.round((testUploadAttachment.sizeBytes || 0) / 1024)} KB)`
-      : "";
+    if (testUploadAttachment) {
+      const fileKindLabel = testUploadAttachment.kind === "file"
+        ? (currentLocale === "zh-CN" ? "文档已选择" : currentLocale === "ja-JP" ? "ファイル添付済み" : "Document attached")
+        : (currentLocale === "zh-CN" ? "图片已选择" : currentLocale === "ja-JP" ? "画像添付済み" : "Image attached");
+      const modeLabel = testUploadMode === "summary"
+        ? (currentLocale === "zh-CN" ? "文档总结" : currentLocale === "ja-JP" ? "要約" : "Summary")
+        : testUploadMode === "translation"
+          ? (currentLocale === "zh-CN" ? "文档翻译" : currentLocale === "ja-JP" ? "翻訳" : "Translation")
+          : (currentLocale === "zh-CN" ? "通用处理" : currentLocale === "ja-JP" ? "汎用处理" : "General");
+      uploadMeta.classList.add("is-pending-task");
+      uploadMeta.innerHTML = `
+        <span class="test-upload-mode-pill">${escapeHtml(modeLabel)}</span>
+        <span>${escapeHtml(fileKindLabel)}: ${escapeHtml(testUploadAttachment.name)} (${Math.round((testUploadAttachment.sizeBytes || 0) / 1024)} KB)</span>
+      `;
+    } else {
+      if (testUploadMode === "summary" || testUploadMode === "translation") {
+        const pendingLabel = testUploadMode === "summary"
+          ? (currentLocale === "zh-CN" ? "文档总结" : currentLocale === "ja-JP" ? "要約" : "Summary")
+          : (currentLocale === "zh-CN" ? "文档翻译" : currentLocale === "ja-JP" ? "翻訳" : "Translation");
+        const pendingHint = currentLocale === "zh-CN"
+          ? "已选择动作，请继续上传文档。"
+          : currentLocale === "ja-JP"
+            ? "アクションを選択しました。続けて文書をアップロードしてください。"
+            : "Action selected. Upload a document to continue.";
+        uploadMeta.classList.add("is-pending-task");
+        uploadMeta.innerHTML = `
+          <span class="test-upload-mode-pill">${escapeHtml(pendingLabel)}</span>
+          <span>${escapeHtml(pendingHint)}</span>
+        `;
+      } else {
+        uploadMeta.classList.remove("is-pending-task");
+        uploadMeta.textContent = "";
+      }
+    }
   }
   requestAnimationFrame(() => {
     if (studioContainer?.isConnected) {
@@ -2668,6 +2969,12 @@ function activateSettingsSection(sectionId, focusButton = false) {
   if (activeSettingsSection === "artifacts" && !generatedArtifactsRuntime.isLoading) {
     loadGeneratedArtifacts().catch(() => {});
   }
+  if (activeSettingsSection === "memory" && !runtimeMemoryInspection.isLoading) {
+    loadRuntimeMemoryInspection().catch(() => {});
+  }
+  if (activeSettingsSection === "training" && !trainingAssetsInspection.isLoading) {
+    loadTrainingAssetsInspection().catch(() => {});
+  }
   if (latestDashboard) {
     renderSettings(latestDashboard);
   }
@@ -3005,6 +3312,152 @@ function renderSettingsDetail(data) {
         if (category && artifactId) await deleteGeneratedArtifact(category, artifactId);
       };
     });
+    return;
+  }
+
+  if (activeSettingsSection === "memory") {
+    const result = runtimeMemoryInspection.result || {};
+    const semanticSummary = result.semantic_memory_summary || {};
+    detail.innerHTML = `
+      ${overview}
+      <div class="settings-section-header">
+        <div>
+          <p class="eyebrow">Runtime Memory</p>
+          <h3>Runtime Memory</h3>
+        </div>
+        <span class="pill">promotion + facts</span>
+      </div>
+      <p class="settings-section-copy">Inspect what HomeHub promoted into long-term memory, including artifacts, structured facts, and reusable experiences.</p>
+      <div class="mail-tester-grid">
+        <input id="runtime-memory-query" class="settings-input full-span" type="text" placeholder="Search memory, e.g. 供应商甲 / 联调 / project" value="${escapeHtml(runtimeMemoryInspection.query || "")}" />
+        <select id="runtime-memory-namespace" class="settings-input">
+          ${["*", "document_analysis", "information_agent", "information_agent_fact"].map((item) => `<option value="${escapeHtml(item)}" ${runtimeMemoryInspection.namespace === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="studio-actions">
+        <button id="runtime-memory-refresh" class="test-action remote-target" type="button">Inspect</button>
+      </div>
+      ${runtimeMemoryInspection.isLoading ? `<div class="settings-card"><p>Loading runtime memory...</p></div>` : ""}
+      ${runtimeMemoryInspection.error ? `<div class="settings-card"><p>${escapeHtml(runtimeMemoryInspection.error)}</p></div>` : ""}
+      <div class="settings-detail-grid">
+        <div class="settings-card">
+          <strong>Semantic Memory Summary</strong>
+          <pre class="cortex-json-view">${escapeHtml(JSON.stringify(semanticSummary, null, 2))}</pre>
+        </div>
+        <div class="settings-card">
+          <strong>Latest Rollback</strong>
+          <pre class="cortex-json-view">${escapeHtml(JSON.stringify(result.semantic_memory_latest_rollback || {}, null, 2))}</pre>
+        </div>
+      </div>
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>Promotion Artifacts</h3></div>
+        ${renderRuntimeMemoryArtifacts(result)}
+      </div>
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>Vector Hits</h3></div>
+        ${renderRuntimeMemoryHits(result)}
+      </div>
+    `;
+    const refreshButton = document.getElementById("runtime-memory-refresh");
+    const queryInput = document.getElementById("runtime-memory-query");
+    const namespaceInput = document.getElementById("runtime-memory-namespace");
+    if (refreshButton) {
+      refreshButton.onclick = () => loadRuntimeMemoryInspection(queryInput?.value || "", namespaceInput?.value || "*");
+    }
+    return;
+  }
+
+  if (activeSettingsSection === "training") {
+    const result = trainingAssetsInspection.result || {};
+    const summary = result.summary || {};
+    const manifest = result.manifest || {};
+    const runner = result.runner || {};
+    const artifacts = result.artifacts || {};
+    const lastRun = result.last_run || result.lastRun || null;
+    const latestRuns = result.latest_runs || [];
+    detail.innerHTML = `
+      ${overview}
+      <div class="settings-section-header">
+        <div>
+          <p class="eyebrow">Training Assets</p>
+          <h3>Training Assets</h3>
+        </div>
+        <span class="pill">manifest + datasets</span>
+      </div>
+      <p class="settings-section-copy">Inspect the private-brain training pipeline outputs, including SFT/preference datasets, repair preference signals, and the train-ready manifest profile.</p>
+      <div class="mail-tester-grid training-controls-grid">
+        <select id="training-assets-profile" class="settings-input">
+          ${["lora_sft"].map((item) => `<option value="${escapeHtml(item)}" ${trainingAssetsInspection.profile === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+        </select>
+        <select id="training-assets-backend" class="settings-input">
+          ${renderTrainingBackendOptions(runner)}
+        </select>
+      </div>
+      <div class="studio-actions training-action-row">
+        <button id="training-assets-refresh" class="test-action remote-target" type="button">Inspect</button>
+        <button id="training-assets-rebuild" class="test-action remote-target is-secondary" type="button">Rebuild Manifest</button>
+        <button id="training-assets-dry-run" class="test-action remote-target" type="button">Generate Dry Run</button>
+      </div>
+      ${trainingAssetsInspection.isLoading ? `<div class="settings-card"><p>Loading training assets...</p></div>` : ""}
+      ${trainingAssetsInspection.isRunning ? `<div class="settings-card"><p>Generating training run skeleton...</p></div>` : ""}
+      ${trainingAssetsInspection.error ? `<div class="settings-card"><p>${escapeHtml(trainingAssetsInspection.error)}</p></div>` : ""}
+      ${trainingAssetsInspection.notice ? `<div class="settings-card"><p>${escapeHtml(trainingAssetsInspection.notice)}</p></div>` : ""}
+      <div class="training-metrics-grid">
+        ${renderTrainingMetricCards(summary, manifest, runner)}
+      </div>
+      <div class="settings-detail-grid">
+        ${renderTrainingPlan(manifest.training_plan || {})}
+        ${renderCommandPreview(runner.command_preview || lastRun?.command_preview || [])}
+      </div>
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>Repair Preferences</h3></div>
+        ${renderRepairPreferenceCounts(result.repair_preference_counts || summary.repair_preference_counts || {})}
+      </div>
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>SFT Datasets</h3></div>
+        ${renderTrainingArtifactRows(manifest.datasets?.sft || artifacts.dataset_sft || [], "No SFT datasets yet.")}
+      </div>
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>Preference Datasets</h3></div>
+        ${renderTrainingArtifactRows(manifest.datasets?.preference || artifacts.dataset_preference || [], "No preference datasets yet.")}
+      </div>
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>Manifest Artifacts</h3></div>
+        ${renderTrainingArtifactRows(artifacts.dataset_manifest || [], "No manifest artifacts yet.")}
+      </div>
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>Run Specs</h3></div>
+        ${lastRun ? renderTrainingArtifactRows([{ name: lastRun.run_id || "run", path: lastRun.artifact_path || "", profile: lastRun.status || "", sample_count: lastRun.ready ? 1 : 0 }], "No run specs yet.") : renderTrainingArtifactRows(artifacts.dataset_run || [], "No run specs yet.")}
+      </div>
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>Latest Run Timeline</h3></div>
+        ${renderTrainingRunTimeline(latestRuns, lastRun)}
+      </div>
+      <div class="settings-detail-grid">
+        <div class="settings-card">
+          <strong>Layer Summary</strong>
+          <pre class="cortex-json-view">${escapeHtml(JSON.stringify(summary, null, 2))}</pre>
+        </div>
+        <div class="settings-card">
+          <strong>Training Manifest</strong>
+          <pre class="cortex-json-view">${escapeHtml(JSON.stringify(manifest, null, 2))}</pre>
+        </div>
+      </div>
+    `;
+    const refreshButton = document.getElementById("training-assets-refresh");
+    const rebuildButton = document.getElementById("training-assets-rebuild");
+    const dryRunButton = document.getElementById("training-assets-dry-run");
+    const profileInput = document.getElementById("training-assets-profile");
+    const backendInput = document.getElementById("training-assets-backend");
+    if (refreshButton) {
+      refreshButton.onclick = () => loadTrainingAssetsInspection(profileInput?.value || "lora_sft");
+    }
+    if (rebuildButton) {
+      rebuildButton.onclick = () => rebuildTrainingAssets(profileInput?.value || "lora_sft");
+    }
+    if (dryRunButton) {
+      dryRunButton.onclick = () => runTrainingAssetsDryRun(profileInput?.value || "lora_sft", backendInput?.value || "mock");
+    }
     return;
   }
 
@@ -3395,7 +3848,7 @@ async function refreshCustomAgentStudio() {
     customAgentStudio.recentActions = Array.isArray(payload.recentActions) ? payload.recentActions : [];
     const selectedStillExists = customAgentStudio.items.some((item) => item.id === customAgentStudio.selectedAgentId);
     if (!selectedStillExists) {
-      const preferred = customAgentStudio.items.find((item) => item.status === "complete") || customAgentStudio.items[0];
+      const preferred = customAgentStudio.items.find((item) => isAgentReadyForExecution(item)) || customAgentStudio.items[0];
       customAgentStudio.selectedAgentId = preferred?.id || "";
     }
   } catch (error) {
@@ -3439,7 +3892,7 @@ async function sendTestMessage() {
 
 async function sendTestAgentMessage(message, selected = null) {
   const agent = selected || getSelectedStudioAgent();
-  if (!agent || agent.status !== "complete") {
+  if (!agent || !isAgentReadyForExecution(agent)) {
     updateSpokenLine("HomeHub: Select a completed blueprint before sending a test message.");
     return;
   }
@@ -3479,7 +3932,7 @@ async function sendTestAgentMessage(message, selected = null) {
 
 async function sendTestAttachmentMessage(message) {
   const selected = getSelectedStudioAgent();
-  if (!selected || selected.status !== "complete") {
+  if (!selected || !isAgentReadyForExecution(selected)) {
     const replyText = currentLocale === "zh-CN"
       ? "HomeHub：当前还没有可接收附件的已完成智能体，请先到“智能体”标签中完成一个蓝图。"
       : currentLocale === "ja-JP"
@@ -3494,23 +3947,55 @@ async function sendTestAttachmentMessage(message) {
     updateSpokenLine(replyText);
     return;
   }
-  const userText = message || `[Image uploaded] ${testUploadAttachment?.name || ""}`.trim();
+  const fallbackMessage = testUploadMode === "summary"
+    ? (currentLocale === "zh-CN"
+      ? `请对这份文档进行总结，然后发给我：${testUploadAttachment?.name || ""}`
+      : currentLocale === "ja-JP"
+        ? `${testUploadAttachment?.name || ""} を要約して送ってください`
+        : `Summarize this document and send it to me: ${testUploadAttachment?.name || ""}`)
+    : testUploadMode === "translation"
+      ? (currentLocale === "zh-CN"
+        ? `请对这份文档进行翻译，然后发给我：${testUploadAttachment?.name || ""}`
+        : currentLocale === "ja-JP"
+          ? `${testUploadAttachment?.name || ""} を翻訳して送ってください`
+          : `Translate this document and send it to me: ${testUploadAttachment?.name || ""}`)
+      : (message || `[Image uploaded] ${testUploadAttachment?.name || ""}`.trim());
+  const effectiveMessage = message || fallbackMessage;
+  const userText = effectiveMessage;
   testConversation.push({
     speaker: "You",
     text: userText,
     time: new Date().toLocaleTimeString(currentLocale, { hour: "2-digit", minute: "2-digit" })
   });
   renderTestLab();
-  const response = await fetch("/api/custom-agents/intake", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      id: selected.id,
-      locale: currentLocale,
-      message,
-      attachments: [testUploadAttachment]
-    })
-  });
+  let response;
+  if (testUploadAttachment?.file instanceof File) {
+    const formData = new FormData();
+    formData.append("id", selected.id);
+    formData.append("locale", currentLocale);
+    formData.append("message", effectiveMessage || "");
+    formData.append("attachment_kind", testUploadAttachment.kind || "file");
+    formData.append(
+      "attachment",
+      testUploadAttachment.file,
+      testUploadAttachment.name || testUploadAttachment.file.name || "attachment.bin"
+    );
+    response = await fetch("/api/custom-agents/intake", {
+      method: "POST",
+      body: formData
+    });
+  } else {
+    response = await fetch("/api/custom-agents/intake", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: selected.id,
+        locale: currentLocale,
+        message: effectiveMessage,
+        attachments: [testUploadAttachment]
+      })
+    });
+  }
   const payload = await response.json();
   if (!response.ok) {
     updateSpokenLine(`HomeHub: ${payload.error || "Failed to process the uploaded image."}`);
@@ -3522,6 +4007,7 @@ async function sendTestAttachmentMessage(message) {
     time: new Date().toLocaleTimeString(currentLocale, { hour: "2-digit", minute: "2-digit" }),
     artifacts: Array.isArray(payload.artifacts) ? payload.artifacts : []
   });
+  testUploadMode = "generic";
   renderTestLab();
   updateSpokenLine(`HomeHub: ${payload.reply || "Image received."}`);
   await refreshCustomAgentStudio();
@@ -3530,7 +4016,7 @@ async function sendTestAttachmentMessage(message) {
 
 async function generateSelectedFeature() {
   const selected = getSelectedStudioAgent();
-  if (!selected || selected.status !== "complete") {
+  if (!selected || !isAgentReadyForExecution(selected)) {
     updateSpokenLine(t("test.noBlueprintSelected"));
     return;
   }
@@ -3835,6 +4321,7 @@ async function triggerRemoteAction(target) {
     return;
   }
   if (target.id === "test-image-pick") {
+    testUploadMode = "generic";
     const imageInput = document.getElementById("test-image-input");
     if (imageInput) {
       imageInput.value = "";
@@ -3843,6 +4330,25 @@ async function triggerRemoteAction(target) {
     return;
   }
   if (target.id === "test-file-pick") {
+    testUploadMode = "generic";
+    const fileInput = document.getElementById("test-file-input");
+    if (fileInput) {
+      fileInput.value = "";
+      fileInput.click();
+    }
+    return;
+  }
+  if (target.id === "test-doc-summary-pick") {
+    testUploadMode = "summary";
+    const fileInput = document.getElementById("test-file-input");
+    if (fileInput) {
+      fileInput.value = "";
+      fileInput.click();
+    }
+    return;
+  }
+  if (target.id === "test-doc-translate-pick") {
+    testUploadMode = "translation";
     const fileInput = document.getElementById("test-file-input");
     if (fileInput) {
       fileInput.value = "";
@@ -4040,22 +4546,16 @@ function setupRemoteNavigation() {
 
 function setupTestControls() {
   const applyAttachment = (file, kind) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || "");
-      const base64 = result.includes(",") ? result.split(",")[1] : "";
-      testUploadAttachment = {
-        name: file.name,
-        mimeType: file.type || (kind === "image" ? "image/png" : "application/octet-stream"),
-        sizeBytes: file.size || 0,
-        imageBase64: kind === "image" ? base64 : "",
-        fileBase64: kind === "file" ? base64 : "",
-        kind
-      };
-      updateSpokenLine(`HomeHub: Attached ${kind === "file" ? "file" : "image"} ${file.name}.`);
-      renderTestLab();
+    testUploadAttachment = {
+      name: file.name,
+      mimeType: file.type || (kind === "image" ? "image/png" : "application/octet-stream"),
+      sizeBytes: file.size || 0,
+      kind,
+      file
     };
-    reader.readAsDataURL(file);
+    if (kind === "image") testUploadMode = "generic";
+    updateSpokenLine(`HomeHub: Attached ${kind === "file" ? "file" : "image"} ${file.name}.`);
+    renderTestLab();
   };
   const imageInput = document.getElementById("test-image-input");
   if (imageInput) {

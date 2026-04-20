@@ -24,7 +24,7 @@ class DefaultWorkflowPlannerPlugin:
             return "knowledge_retrieval"
         if step_name in {"analyze_workflow_context"}:
             return "llm"
-        if step_name in {"generate_workflow_artifact", "persist_workflow_output"}:
+        if step_name in {"generate_workflow_artifact", "generate_runtime_patch", "persist_workflow_output", "validate_runtime_patch", "verify_runtime_patch"}:
             return "tool"
         if step_name in {"extract_records", "parse_query", "aggregate_query", "persist_records"}:
             return "tool"
@@ -42,7 +42,10 @@ class DefaultWorkflowPlannerPlugin:
             "query_information_knowledge": (["input_text", "session_state", "knowledge_store"], ["message", "answer", "knowledge_hits"]),
             "analyze_workflow_context": (["input_text", "session_state", "step_outputs"], ["analysis", "summary"]),
             "generate_workflow_artifact": (["analysis", "step_outputs"], ["artifact_type", "artifact_path", "status"]),
+            "generate_runtime_patch": (["analysis", "step_outputs"], ["patch_plan", "patch_artifact_path", "status"]),
             "persist_workflow_output": (["artifact_path", "session_state"], ["delivery_status", "stored_output"]),
+            "validate_runtime_patch": (["patch_plan", "session_state"], ["validation_results", "status"]),
+            "verify_runtime_patch": (["validation_results", "step_outputs"], ["verified", "status"]),
             "ocr_extract": (["input_text"], ["artifact_type", "status", "message"]),
             "stt_transcribe": (["input_text"], ["artifact_type", "status", "message"]),
             "tts_synthesize": (["input_text"], ["artifact_type", "status", "message"]),

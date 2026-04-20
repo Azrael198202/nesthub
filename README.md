@@ -86,6 +86,50 @@ Flow:
 3. `public_api` calls NestHub core through `NESTHUB_CORE_HANDLE_URL`.
 4. `public_api` replies to LINE with the NestHub result using `replyToken`, and falls back to push when needed.
 
+## Delayed Document And Image Follow-Up
+
+NestHub now supports split-turn document and image processing in the same session.
+
+Supported sequences:
+
+1. User sends the business request first, then uploads a document or image.
+2. User uploads the document or image first, then sends the business request.
+
+Runtime behavior:
+
+1. A request such as `帮我分析一下文件` or `请对这份文档进行翻译` creates a session-scoped pending request instead of executing immediately when no attachment is present.
+2. An attachment-only turn such as LINE file upload or TVBox upload enters standby instead of forcing analysis immediately.
+3. When both the request and a session attachment are available within the wait window, NestHub continues automatically.
+
+Configuration:
+
+```bash
+export NETHUB_DOCUMENT_WAIT_TIMEOUT_SECONDS=300
+```
+
+Notes:
+
+1. The effective wait window is clamped to `120` to `300` seconds.
+2. LINE standby turns are silent by design, so NestHub does not send a meaningless intermediate reply before the matching document/image or request arrives.
+3. Session attachments are persisted under `received/<session_id>/` and reused for follow-up turns.
+
+## Image OCR Chain
+
+Image attachments now use an explicit OCR path instead of ad hoc inline parsing.
+
+OCR order:
+
+1. `PaddleOCR`
+2. `pytesseract`
+3. Capability acquisition / graceful fallback when no OCR engine is available
+
+This OCR path is shared by:
+
+1. The standalone `ocr_extract` runtime step
+2. The document analysis plugin when the session attachment is an image
+
+If no OCR engine is installed, NestHub keeps the main flow intact and returns a controlled fallback instead of crashing.
+
 ## Railway Deployment For Public API
 
 If you deploy the public bridge on Railway, do not rely on Railway's default Python dependency detection, because it will pick the root `requirements.txt`.

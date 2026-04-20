@@ -16,6 +16,7 @@ from nethub_runtime.core.services.execution_step_handlers import (
     handle_file_read_step,
     handle_file_generate_step,
     handle_generate_workflow_artifact_step,
+    handle_generate_runtime_patch_step,
     handle_image_generate_step,
     handle_ocr_extract_step,
     handle_parse_query_step,
@@ -24,6 +25,8 @@ from nethub_runtime.core.services.execution_step_handlers import (
     handle_prepare_runtime_tools_step,
     handle_stt_transcribe_step,
     handle_tts_synthesize_step,
+    handle_validate_runtime_patch_step,
+    handle_verify_runtime_patch_step,
     handle_video_generate_step,
     handle_web_retrieve_step,
     handle_web_summarize_step,
@@ -199,8 +202,11 @@ def build_execution_handler_registry(coordinator: Any) -> ExecutionHandlerRegist
     registry.register_step("tool", "file_generate", lambda step, task, context, step_outputs: handle_file_generate_step(coordinator, step, task, context, step_outputs))
     registry.register_step("tool", "file_read", lambda step, task, context, step_outputs: handle_file_read_step(coordinator, step, task, context, step_outputs))
     registry.register_step("tool", "generate_workflow_artifact", lambda step, task, context, step_outputs: handle_generate_workflow_artifact_step(coordinator, step, task, context, step_outputs))
+    registry.register_step("tool", "generate_runtime_patch", lambda step, task, context, step_outputs: handle_generate_runtime_patch_step(coordinator, step, task, context, step_outputs))
     registry.register_step("tool", "persist_workflow_output", lambda step, task, context, step_outputs: handle_persist_workflow_output_step(coordinator, step, task, context, step_outputs))
     registry.register_step("tool", "prepare_runtime_tools", lambda step, task, context, step_outputs: handle_prepare_runtime_tools_step(coordinator, step, task, context, step_outputs))
+    registry.register_step("tool", "validate_runtime_patch", lambda step, task, context, step_outputs: handle_validate_runtime_patch_step(coordinator, step, task, context, step_outputs))
+    registry.register_step("tool", "verify_runtime_patch", lambda step, task, context, step_outputs: handle_verify_runtime_patch_step(coordinator, step, task, context, step_outputs))
     registry.register_step("tool", "web_retrieve", lambda step, task, context, step_outputs: handle_web_retrieve_step(coordinator, step, task, context, step_outputs))
     registry.register_step("tool", "web_summarize", lambda step, task, context, step_outputs: handle_web_summarize_step(coordinator, step, task, context, step_outputs))
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -20,6 +22,142 @@ def test_tvbox_generated_artifacts_api_lists_generated_files() -> None:
     payload = response.json()
     assert payload["ok"] is True
     assert any(item["artifactId"] == "tvbox_blueprint_case" for item in payload["items"]["blueprint"])
+
+
+def test_tvbox_runtime_memory_api_proxies_core_memory_inspection(monkeypatch) -> None:
+    class FakeCore:
+        def inspect_runtime_memory(self, query=None, namespace=None, top_k=5):
+            return {
+                "query": query or "",
+                "namespace": namespace or "*",
+                "promotion_artifacts": [{"artifactId": "memory_promotion_demo", "name": "memory_promotion_demo.json", "contentPreview": "demo"}],
+                "vector_hits": [{"id": "fact_1", "namespace": "information_agent_fact", "content": "item_name: 供应商甲", "metadata": {"record": {"item_name": "供应商甲"}}}],
+                "semantic_memory_summary": {"active": 1},
+                "semantic_memory_latest_rollback": None,
+            }
+
+    monkeypatch.setattr(tvbox_main, "_create_core_engine", lambda: FakeCore())
+    client = TestClient(_create_app())
+
+    response = client.get("/api/runtime-memory", params={"query": "供应商甲", "namespace": "information_agent_fact"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["result"]["vector_hits"][0]["namespace"] == "information_agent_fact"
+    assert payload["result"]["promotion_artifacts"][0]["artifactId"] == "memory_promotion_demo"
+
+
+def test_tvbox_training_assets_api_proxies_private_brain_summary_and_manifest(monkeypatch) -> None:
+    class FakeCore:
+        def inspect_private_brain_summary(self):
+            return {
+                "layers": {
+                    "training_assets": {
+                        "sft_sample_count": 6,
+                        "preference_sample_count": 3,
+                        "manifest_count": 1,
+                        "repair_preference_counts": {"prefer_analysis": 2, "prefer_patch_pipeline": 1},
+                    }
+                },
+                "artifacts": {
+                    "dataset_sft": [{"artifactId": "sft_demo", "name": "sft_demo.json", "path": "runtime/generated/datasets/sft_demo.json"}],
+                    "dataset_preference": [{"artifactId": "pref_demo", "name": "pref_demo.json", "path": "runtime/generated/datasets/pref_demo.json"}],
+                    "dataset_manifest": [{"artifactId": "manifest_demo", "name": "manifest_demo.json", "path": "runtime/generated/datasets/manifest_demo.json"}],
+                    "dataset_run": [{"artifactId": "run_demo", "name": "run_demo.json", "path": "runtime/generated/datasets/run_demo.json", "contentPreview": "dry_run"}],
+                },
+            }
+
+        def build_training_manifest(self, profile="lora_sft"):
+            return {
+                "profile": profile,
+                "datasets": {
+                    "sft": [{"artifact_id": "sft_demo", "name": "sft_demo.json", "sample_count": 6}],
+                    "preference": [{"artifact_id": "pref_demo", "name": "pref_demo.json", "sample_count": 3}],
+                },
+                "training_plan": {"strategy": "lora_sft"},
+            }
+
+        def inspect_training_runner(self, profile="lora_sft", backend="mock"):
+            return {
+                "profile": profile,
+                "backend": {"backend": backend, "label": "Mock Runner", "supports_execution": False},
+                "command_preview": ["python", "-m", "nethub_runtime.training.run", "--mode=dry-run"],
+                "runtime_config": {"default_backend": "mock", "backends": {"mock": {}}},
+                "ready": True,
+            }
+
+        def start_training_run(self, profile="lora_sft", backend="mock", dry_run=True, note=None):
+            return {
+                "run_id": "training_run_lora_sft_demo",
+                "profile": profile,
+                "backend": {"backend": backend, "label": "Mock Runner", "supports_execution": False},
+                "dry_run": dry_run,
+                "status": "dry_run",
+                "ready": True,
+                "note": note or "",
+                "artifact_path": "runtime/generated/datasets/runs/training_run_lora_sft_demo.json",
+                "command_preview": ["python", "-m", "nethub_runtime.training.run", "--mode=dry-run"],
+                "message": "Training run skeleton generated. No trainer was executed.",
+            }
+
+    monkeypatch.setattr(tvbox_main, "_create_core_engine", lambda: FakeCore())
+    client = TestClient(_create_app())
+
+    response = client.get("/api/training-assets", params={"profile": "lora_sft"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["result"]["summary"]["sft_sample_count"] == 6
+    assert payload["result"]["repair_preference_counts"]["prefer_analysis"] == 2
+    assert payload["result"]["manifest"]["profile"] == "lora_sft"
+    assert payload["result"]["artifacts"]["dataset_manifest"][0]["artifactId"] == "manifest_demo"
+    assert payload["result"]["runner"]["backend"]["backend"] == "mock"
+    assert payload["result"]["latest_runs"][0]["artifactId"] == "run_demo"
+
+
+def test_tvbox_training_assets_rebuild_and_run_actions(monkeypatch) -> None:
+    class FakeCore:
+        def inspect_private_brain_summary(self):
+            return {
+                "layers": {
+                    "training_assets": {
+                        "sft_samples": 2,
+                        "preference_samples": 1,
+                        "training_manifests": 1,
+                        "training_runs": 0,
+                        "repair_preference_counts": {"prefer_analysis": 1},
+                    }
+                },
+                "artifacts": {
+                    "dataset_sft": [],
+                    "dataset_preference": [],
+                    "dataset_manifest": [],
+                    "dataset_run": [],
+                },
+            }
+
+        def build_training_manifest(self, profile="lora_sft"):
+            return {"profile": profile, "ready": True, "datasets": {"sft": [], "preference": []}, "counts": {"sft": 0, "preference": 0}, "training_plan": {"stages": ["prepare", "train"]}}
+
+        def inspect_training_runner(self, profile="lora_sft", backend="mock"):
+            return {"profile": profile, "backend": {"backend": backend, "label": "Mock Runner", "supports_execution": False}, "command_preview": ["python", "-m", "nethub_runtime.training.run"], "ready": True}
+
+        def start_training_run(self, profile="lora_sft", backend="mock", dry_run=True, note=None):
+            return {"run_id": "run_demo", "profile": profile, "dry_run": dry_run, "status": "dry_run", "artifact_path": "runtime/generated/datasets/runs/run_demo.json", "command_preview": ["python"], "message": "Training run skeleton generated. No trainer was executed."}
+
+    monkeypatch.setattr(tvbox_main, "_create_core_engine", lambda: FakeCore())
+    client = TestClient(_create_app())
+
+    rebuild_response = client.post("/api/training-assets/rebuild", json={"profile": "lora_sft"})
+    run_response = client.post("/api/training-assets/run", json={"profile": "lora_sft", "backend": "mock", "dryRun": True})
+
+    assert rebuild_response.status_code == 200
+    assert rebuild_response.json()["result"]["manifest"]["profile"] == "lora_sft"
+    assert run_response.status_code == 200
+    assert run_response.json()["result"]["status"] == "dry_run"
+    assert run_response.json()["trainingAssets"]["runner"]["backend"]["backend"] == "mock"
 
 
 def test_tvbox_generated_artifacts_api_deletes_generated_files() -> None:
@@ -107,3 +245,163 @@ def test_tvbox_app_starts_with_bridge_worker_when_configured(monkeypatch) -> Non
     with TestClient(app) as client:
         response = client.get("/api/dashboard")
         assert response.status_code == 200
+
+
+def test_tvbox_custom_agent_intake_persists_document_attachment(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeCore:
+        async def handle(self, input_text, context, fmt="dict", use_langraph=True):
+            captured["input_text"] = input_text
+            captured["context"] = context
+            return {
+                "task": {"intent": "file_upload_task"},
+                "artifacts": [],
+                "execution_result": {
+                    "execution_type": "workflow",
+                    "final_output": {
+                        "analyze_document": {
+                            "message": "已完成文档总结。",
+                            "summary": "文档摘要",
+                        }
+                    },
+                },
+            }
+
+    monkeypatch.setattr(tvbox_main, "_create_core_engine", lambda: FakeCore())
+    client = TestClient(_create_app())
+
+    response = client.post(
+        "/api/custom-agents/intake",
+        json={
+            "id": "agent-doc-case",
+            "locale": "zh-CN",
+            "attachments": [
+                {
+                    "name": "brief.txt",
+                    "mimeType": "text/plain",
+                    "sizeBytes": 12,
+                    "fileBase64": base64.b64encode("项目资料正文".encode("utf-8")).decode("utf-8"),
+                    "kind": "file",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["reply"] == "已完成文档总结。"
+    assert payload["sessionId"] == "tvbox:studio:agent-doc-case"
+    context = captured["context"]
+    assert isinstance(context, dict)
+    assert context["session_id"] == "tvbox:studio:agent-doc-case"
+    attachments = context["metadata"]["attachments"]
+    assert attachments[0]["input_type"] == "document"
+    received_path = Path(attachments[0]["received_path"])
+    assert received_path.exists()
+    assert received_path.read_text(encoding="utf-8") == "项目资料正文"
+
+
+def test_tvbox_voice_chat_accepts_attachment_payload(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeCore:
+        async def handle(self, input_text, context, fmt="dict", use_langraph=True):
+            captured["input_text"] = input_text
+            captured["context"] = context
+            return {
+                "task": {"intent": "file_upload_task"},
+                "artifacts": [],
+                "execution_result": {
+                    "execution_type": "workflow",
+                    "final_output": {
+                        "analyze_document": {
+                            "message": "已完成文档翻译。",
+                            "translation": "Translated content",
+                        }
+                    },
+                },
+            }
+
+    monkeypatch.setattr(tvbox_main, "_create_core_engine", lambda: FakeCore())
+    client = TestClient(_create_app())
+
+    response = client.post(
+        "/api/voice/chat",
+        json={
+            "locale": "zh-CN",
+            "agentId": "voice-doc-agent",
+            "attachments": [
+                {
+                    "name": "translate.md",
+                    "mimeType": "text/markdown",
+                    "sizeBytes": 20,
+                    "fileBase64": base64.b64encode("需要翻译的文档内容".encode("utf-8")).decode("utf-8"),
+                    "kind": "file",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["reply"] == "已完成文档翻译。"
+    assert captured["input_text"] == "收到文档: translate.md"
+    context = captured["context"]
+    assert isinstance(context, dict)
+    assert context["session_id"] == "tvbox:studio:voice-doc-agent"
+    attachments = context["metadata"]["attachments"]
+    assert attachments[0]["input_type"] == "document"
+
+
+def test_tvbox_custom_agent_intake_accepts_multipart_upload(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeCore:
+        async def handle(self, input_text, context, fmt="dict", use_langraph=True):
+            captured["input_text"] = input_text
+            captured["context"] = context
+            return {
+                "task": {"intent": "file_upload_task"},
+                "artifacts": [],
+                "execution_result": {
+                    "execution_type": "workflow",
+                    "final_output": {
+                        "analyze_document": {
+                            "message": "已完成文档总结。",
+                            "summary": "multipart summary",
+                        }
+                    },
+                },
+            }
+
+    monkeypatch.setattr(tvbox_main, "_create_core_engine", lambda: FakeCore())
+    client = TestClient(_create_app())
+
+    response = client.post(
+        "/api/custom-agents/intake",
+        data={
+            "id": "agent-multipart-case",
+            "locale": "zh-CN",
+            "message": "",
+            "attachment_kind": "file",
+        },
+        files={
+            "attachment": ("upload.md", b"# heading\ncontent body", "text/markdown"),
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["sessionId"] == "tvbox:studio:agent-multipart-case"
+    assert captured["input_text"] == "收到文档: upload.md"
+    context = captured["context"]
+    assert isinstance(context, dict)
+    attachments = context["metadata"]["attachments"]
+    assert attachments[0]["input_type"] == "document"
+    received_path = Path(attachments[0]["received_path"])
+    assert received_path.exists()
+    assert received_path.read_text(encoding="utf-8") == "# heading\ncontent body"

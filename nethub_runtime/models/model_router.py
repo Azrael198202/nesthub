@@ -579,6 +579,97 @@ class ModelRouter:
 
         LOGGER.error("Model invoke failed for task %s: %s", task_type, last_exc)
         raise last_exc or RuntimeError("Model invoke failed")
+
+    async def invoke_multimodal(
+        self,
+        task_type: str,
+        user_content: list[dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        **kwargs,
+    ) -> str:
+        task_params = self.get_model_params(task_type)
+        timeout_sec = (
+            self.config.get("routing_policies", {}).get(task_type, {}).get("timeout_sec")
+            or self.config.get("routing_policies", {}).get("default", {}).get("timeout_sec")
+            or 30
+        )
+        merged_params = {**task_params}
+        merged_params.update(kwargs)
+
+        if self.mock_llm_calls:
+            model = self.select_model(task_type)
+            LOGGER.info("mock_llm_calls enabled, returning multimodal mock response for %s", model)
+            text_parts = [str(item.get("text") or "") for item in user_content if item.get("type") == "text"]
+            preview = " ".join(part for part in text_parts if part).strip()
+            return f"Model response (mock): {preview[:80]}..."
+
+        try:
+            from litellm import acompletion
+        except ImportError:
+            LOGGER.warning("litellm is not installed, using multimodal mock response")
+            text_parts = [str(item.get("text") or "") for item in user_content if item.get("type") == "text"]
+            preview = " ".join(part for part in text_parts if part).strip()
+            return f"Model response (mock): {preview[:50]}..."
+
+        messages: list[dict[str, Any]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": user_content})
+
+        candidates = self.get_candidate_models(task_type)
+        if not candidates:
+            raise RuntimeError(f"No available models configured for task_type={task_type}")
+
+        last_exc: Exception | None = None
+        for model in candidates:
+            if self.cooldown_tracker.is_in_cooldown(model):
+                remaining = self.cooldown_tracker.status().get(model, {}).get("remaining_seconds", "?")
+                LOGGER.info("Skipping model %s — in cooldown (%.0fs remaining)", model, remaining)
+                continue
+            model_config = self.get_model_config(model)
+            provider_policy = self._get_provider_policy(model)
+            max_retries = int(provider_policy.get("max_retries", 1))
+            retry_backoff_sec = float(provider_policy.get("retry_backoff_sec", 1.0))
+            min_interval_ms = int(provider_policy.get("min_request_interval_ms", 0))
+            litellm_model = self._to_litellm_model(model)
+            request_timeout_sec = self._effective_timeout_sec(model, timeout_sec)
+
+            if not await self._candidate_is_ready(model, timeout_sec):
+                continue
+
+            for attempt in range(max_retries + 1):
+                try:
+                    if min_interval_ms > 0:
+                        await asyncio.sleep(min_interval_ms / 1000.0)
+                    response = await acompletion(
+                        model=litellm_model,
+                        messages=messages,
+                        timeout=request_timeout_sec,
+                        api_base=model_config.get("base_url"),
+                        api_key=model_config.get("api_key"),
+                        **merged_params,
+                    )
+                    self.cooldown_tracker.reset(model)
+                    return response.choices[0].message.content or ""
+                except Exception as exc:
+                    last_exc = exc
+                    if attempt < max_retries:
+                        wait_sec = retry_backoff_sec * (2**attempt)
+                        LOGGER.warning(
+                            "Multimodal invoke retrying (%s) attempt=%s wait=%.2fs error=%s",
+                            litellm_model,
+                            attempt + 1,
+                            wait_sec,
+                            exc,
+                        )
+                        await asyncio.sleep(wait_sec)
+                        continue
+                    self.cooldown_tracker.record_failure(model)
+                    LOGGER.warning("Multimodal invoke failed for candidate %s: %s", litellm_model, exc)
+                    break
+
+        LOGGER.error("Multimodal invoke failed for task %s: %s", task_type, last_exc)
+        raise last_exc or RuntimeError("Multimodal invoke failed")
     
     def list_available_models(self) -> list[str]:
         """列出所有可用模型"""

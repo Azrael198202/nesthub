@@ -11,6 +11,7 @@ import copy
 import json
 import re
 import base64
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 import asyncio
 from typing import Any
@@ -123,6 +124,8 @@ def _create_app() -> Any:
         "bootstrap": {"approved": True, "inProgress": False, "blocking": False, "completed": True, "message": "Demo mode"},
         "externalChannels": {"mailConfig": {}, "mail": {"inbox": [], "outbox": [], "lastSyncAt": ""}, "apps": {"line": {"inbox": [], "outbox": []}, "wechatOfficial": {"inbox": [], "outbox": []}}, "recentActions": []},
         "assistantMemory": {"dueReminders": [], "pendingReminders": [], "upcomingEvents": [], "recentActions": []},
+        "runtimeMemory": {"query": "", "namespace": "*", "promotionArtifacts": [], "vectorHits": [], "semanticMemorySummary": {}, "semanticMemoryLatestRollback": None},
+        "trainingAssets": {"summary": {}, "manifest": {}, "repairPreferenceCounts": {}},
         "customAgents": [],
         "customAgentRecentActions": [],
         "studyPlanAgents": [],
@@ -137,6 +140,129 @@ def _create_app() -> Any:
     core_engine = _create_core_engine()
     bridge_api, bridge_token, bridge_poll_interval = _load_bridge_config()
     bridge_worker: dict[str, asyncio.Task[Any] | None] = {"task": None}
+
+    @asynccontextmanager
+    async def lifespan(_app: Any):
+        if bridge_api and bridge_token and bridge_worker["task"] is None:
+            bridge_worker["task"] = asyncio.create_task(_bridge_poll_loop())
+        try:
+            yield
+        finally:
+            task = bridge_worker.get("task")
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                bridge_worker["task"] = None
+
+    app.router.lifespan_context = lifespan
+
+    def _tvbox_session_id(agent_id: str | None = None) -> str:
+        raw = str(agent_id or "default").strip() or "default"
+        normalized = re.sub(r"[^a-zA-Z0-9:_-]", "_", raw)
+        return f"tvbox:studio:{normalized}"
+
+    def _tvbox_received_dir(session_id: str) -> Path:
+        directory = repo_root / "received" / "tvbox" / session_id
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+
+    def _derive_attachment_input_type(file_name: str, mime_type: str, kind: str) -> str:
+        lowered_name = file_name.lower()
+        lowered_mime = mime_type.lower()
+        if kind == "image" or lowered_mime.startswith("image/"):
+            return "image"
+        if lowered_mime.startswith("text/"):
+            return "document"
+        if lowered_mime in {
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "text/csv",
+        }:
+            return "document"
+        if lowered_name.endswith((".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".txt", ".md")):
+            return "document"
+        return "file"
+
+    def _persist_tvbox_attachment(raw_attachment: dict[str, Any], *, session_id: str) -> dict[str, Any]:
+        file_name = str(raw_attachment.get("name") or "attachment.bin").strip() or "attachment.bin"
+        mime_type = str(raw_attachment.get("mimeType") or "application/octet-stream").strip() or "application/octet-stream"
+        kind = str(raw_attachment.get("kind") or "file").strip() or "file"
+        payload_base64 = str(raw_attachment.get("imageBase64") or raw_attachment.get("fileBase64") or "").strip()
+        if not payload_base64:
+            raise ValueError("attachment payload is empty")
+        content = base64.b64decode(payload_base64)
+
+        target_dir = _tvbox_received_dir(session_id)
+        timestamp_prefix = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+        safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", file_name)
+        target_path = target_dir / f"{timestamp_prefix}_{safe_name}"
+        target_path.write_bytes(content)
+
+        input_type = _derive_attachment_input_type(file_name, mime_type, kind)
+        return {
+            "file_name": file_name,
+            "content_type": mime_type,
+            "input_type": input_type,
+            "received_path": str(target_path),
+            "stored_path": str(target_path),
+            "source_message_type": kind,
+            "size_bytes": len(content),
+        }
+
+    def _normalize_tvbox_attachments(raw_attachments: list[dict[str, Any]] | None, *, session_id: str) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for item in raw_attachments or []:
+            if not isinstance(item, dict):
+                continue
+            normalized.append(_persist_tvbox_attachment(item, session_id=session_id))
+        return normalized
+
+    async def _normalize_tvbox_upload_form(form: Any, *, session_id: str) -> list[dict[str, Any]]:
+        uploaded = form.get("attachment")
+        if uploaded is None or not hasattr(uploaded, "read"):
+            return []
+        file_name = str(getattr(uploaded, "filename", "") or "attachment.bin").strip() or "attachment.bin"
+        mime_type = str(getattr(uploaded, "content_type", "") or "application/octet-stream").strip() or "application/octet-stream"
+        kind = str(form.get("attachment_kind") or "file").strip() or "file"
+        content = await uploaded.read()
+
+        target_dir = _tvbox_received_dir(session_id)
+        timestamp_prefix = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+        safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", file_name)
+        target_path = target_dir / f"{timestamp_prefix}_{safe_name}"
+        target_path.write_bytes(content)
+
+        return [
+            {
+                "file_name": file_name,
+                "content_type": mime_type,
+                "input_type": _derive_attachment_input_type(file_name, mime_type, kind),
+                "received_path": str(target_path),
+                "stored_path": str(target_path),
+                "source_message_type": kind,
+                "size_bytes": len(content),
+            }
+        ]
+
+    def _default_attachment_message(message: str, attachments: list[dict[str, Any]]) -> str:
+        if message.strip():
+            return message.strip()
+        if not attachments:
+            return ""
+        first = attachments[0]
+        file_name = str(first.get("file_name") or "attachment")
+        input_type = str(first.get("input_type") or "file")
+        if input_type == "image":
+            return f"收到图片: {file_name}"
+        if input_type == "document":
+            return f"收到文档: {file_name}"
+        return f"处理文件: {file_name}"
 
     def _now_time() -> str:
         return datetime.now(UTC).astimezone().strftime("%H:%M")
@@ -179,9 +305,9 @@ def _create_app() -> Any:
             if final_answer:
                 return final_answer
         final_output = execution_result.get("final_output") or {}
-        for key in ("manage_information_agent", "query_information_knowledge", "file_read", "file_generate", "generate_workflow_artifact", "single_step"):
+        for key in ("manage_information_agent", "query_information_knowledge", "file_read", "file_generate", "generate_workflow_artifact", "analyze_document", "single_step"):
             payload = final_output.get(key) or {}
-            for field in ("content", "message", "answer", "summary", "artifact_path"):
+            for field in ("content", "message", "answer", "summary", "translation", "artifact_path"):
                 value = str(payload.get(field) or "").strip()
                 if value:
                     return f"Generated artifact: {value}" if field == "artifact_path" else value
@@ -289,6 +415,10 @@ def _create_app() -> Any:
                 result = await core_engine.handle(
                     text,
                     {
+                        "session_id": "bridge:line:" + "".join(
+                            char if char.isalnum() or char in {"-", "_", ":"} else "_"
+                            for char in str(message.get("external_chat_id") or message.get("external_user_id") or bridge_message_id)
+                        ),
                         "metadata": {
                             "source": "line_bridge",
                             "bridge_message_id": bridge_message_id,
@@ -392,22 +522,6 @@ def _create_app() -> Any:
                 pass
             await asyncio.sleep(bridge_poll_interval)
 
-    @app.on_event("startup")
-    async def startup_bridge_worker() -> None:
-        if bridge_api and bridge_token and bridge_worker["task"] is None:
-            bridge_worker["task"] = asyncio.create_task(_bridge_poll_loop())
-
-    @app.on_event("shutdown")
-    async def shutdown_bridge_worker() -> None:
-        task = bridge_worker.get("task")
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            bridge_worker["task"] = None
-
     def _dashboard_snapshot() -> dict[str, Any]:
         snapshot = copy.deepcopy(dashboard_state)
         supported_languages = get_supported_languages()
@@ -494,6 +608,112 @@ def _create_app() -> Any:
     @app.get("/api/generated-artifacts")
     def api_generated_artifacts():
         return {"ok": True, "items": artifact_store.list_artifacts()}
+
+    @app.get("/api/runtime-memory")
+    def api_runtime_memory(query: str | None = None, namespace: str | None = None, top_k: int = 5):
+        payload = core_engine.inspect_runtime_memory(query=query, namespace=namespace, top_k=top_k)
+        dashboard_state["runtimeMemory"] = {
+            "query": payload.get("query", ""),
+            "namespace": payload.get("namespace", "*"),
+            "promotionArtifacts": payload.get("promotion_artifacts", []),
+            "vectorHits": payload.get("vector_hits", []),
+            "semanticMemorySummary": payload.get("semantic_memory_summary", {}),
+            "semanticMemoryLatestRollback": payload.get("semantic_memory_latest_rollback"),
+        }
+        return {"ok": True, "result": payload}
+
+    @app.get("/api/training-assets")
+    def api_training_assets(profile: str = "lora_sft"):
+        summary = core_engine.inspect_private_brain_summary()
+        manifest = core_engine.build_training_manifest(profile=profile)
+        runner = core_engine.inspect_training_runner(profile=profile, backend="mock")
+        training_assets = (summary.get("layers") or {}).get("training_assets") or {}
+        latest_runs = (summary.get("artifacts") or {}).get("dataset_run") or []
+        dashboard_state["trainingAssets"] = {
+            "summary": training_assets,
+            "manifest": manifest,
+            "runner": runner,
+            "latestRuns": latest_runs,
+            "repairPreferenceCounts": training_assets.get("repair_preference_counts") or {},
+        }
+        return {
+            "ok": True,
+            "result": {
+                "summary": training_assets,
+                "manifest": manifest,
+                "runner": runner,
+                "latest_runs": latest_runs,
+                "repair_preference_counts": training_assets.get("repair_preference_counts") or {},
+                "artifacts": (summary.get("artifacts") or {}),
+            },
+        }
+
+    @app.post("/api/training-assets/rebuild")
+    async def api_training_assets_rebuild(request: Request):
+        body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        profile = str(body.get("profile", "lora_sft") or "lora_sft")
+        summary = core_engine.inspect_private_brain_summary()
+        manifest = core_engine.build_training_manifest(profile=profile)
+        runner = core_engine.inspect_training_runner(profile=profile, backend="mock")
+        training_assets = (summary.get("layers") or {}).get("training_assets") or {}
+        latest_runs = (summary.get("artifacts") or {}).get("dataset_run") or []
+        dashboard_state["trainingAssets"] = {
+            "summary": training_assets,
+            "manifest": manifest,
+            "runner": runner,
+            "latestRuns": latest_runs,
+            "repairPreferenceCounts": training_assets.get("repair_preference_counts") or {},
+        }
+        return {
+            "ok": True,
+            "result": {
+                "summary": training_assets,
+                "manifest": manifest,
+                "runner": runner,
+                "latest_runs": latest_runs,
+                "repair_preference_counts": training_assets.get("repair_preference_counts") or {},
+                "artifacts": (summary.get("artifacts") or {}),
+            },
+        }
+
+    @app.post("/api/training-assets/run")
+    async def api_training_assets_run(request: Request):
+        body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        profile = str(body.get("profile", "lora_sft") or "lora_sft")
+        backend = str(body.get("backend", "mock") or "mock")
+        dry_run = bool(body.get("dryRun", True))
+        note = str(body.get("note", "") or "")
+        run_result = core_engine.start_training_run(
+            profile=profile,
+            backend=backend,
+            dry_run=dry_run,
+            note=note,
+        )
+        summary = core_engine.inspect_private_brain_summary()
+        manifest = core_engine.build_training_manifest(profile=profile)
+        runner = core_engine.inspect_training_runner(profile=profile, backend=backend)
+        training_assets = (summary.get("layers") or {}).get("training_assets") or {}
+        latest_runs = (summary.get("artifacts") or {}).get("dataset_run") or []
+        dashboard_state["trainingAssets"] = {
+            "summary": training_assets,
+            "manifest": manifest,
+            "runner": runner,
+            "lastRun": run_result,
+            "latestRuns": latest_runs,
+            "repairPreferenceCounts": training_assets.get("repair_preference_counts") or {},
+        }
+        return {
+            "ok": True,
+            "result": run_result,
+            "trainingAssets": {
+                "summary": training_assets,
+                "manifest": manifest,
+                "runner": runner,
+                "latest_runs": latest_runs,
+                "repair_preference_counts": training_assets.get("repair_preference_counts") or {},
+                "artifacts": (summary.get("artifacts") or {}),
+            },
+        }
 
     @app.get("/api/generated-artifacts/open/{category}/{artifact_id}")
     def api_generated_artifact_open(category: str, artifact_id: str):
@@ -607,19 +827,34 @@ def _create_app() -> Any:
         body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
         message = str(body.get("message", "")).strip()
         locale = str(body.get("locale", dashboard_state.get("languageSettings", {}).get("current", "zh-CN")))
-        if not message:
+        raw_attachments = body.get("attachments") or []
+        session_id = str(body.get("sessionId") or _tvbox_session_id(body.get("agentId") or "voice-chat"))
+        try:
+            attachments = _normalize_tvbox_attachments(raw_attachments if isinstance(raw_attachments, list) else [], session_id=session_id)
+        except Exception as exc:
+            return JSONResponse(status_code=400, content={"ok": False, "error": f"invalid attachment payload: {exc}"})
+        runtime_message = _default_attachment_message(message, attachments)
+        if not runtime_message:
             return JSONResponse(status_code=400, content={"ok": False, "error": "message is required"})
         try:
             result = await core_engine.handle(
-                message,
-                {"metadata": {"source": "tvbox_debug_console", "locale": locale}},
+                runtime_message,
+                {
+                    "session_id": session_id,
+                    "metadata": {
+                        "source": "tvbox_debug_console",
+                        "locale": locale,
+                        "attachments": attachments,
+                        **({"input_type": attachments[0].get("input_type", "file")} if attachments else {}),
+                    },
+                },
                 fmt="dict",
                 use_langraph=True,
             )
         except Exception as exc:
             return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
 
-        runtime_response = _record_runtime_result(message, result if isinstance(result, dict) else {})
+        runtime_response = _record_runtime_result(runtime_message, result if isinstance(result, dict) else {})
         conversation = copy.deepcopy(dashboard_state.get("conversation", []))
         dashboard_state.setdefault("voiceProfile", {})["locale"] = locale
         return {
@@ -638,8 +873,65 @@ def _create_app() -> Any:
         }
 
     @app.post("/api/custom-agents/intake")
-    async def api_custom_agents_intake():
-        return {"ok": True, "item": None}
+    async def api_custom_agents_intake(request: Request):
+        content_type = request.headers.get("content-type", "")
+        body: dict[str, Any] = {}
+        form: Any | None = None
+        if content_type.startswith("application/json"):
+            body = await request.json()
+        elif content_type.startswith("multipart/form-data"):
+            form = await request.form()
+
+        agent_id = str((body.get("id") if body else None) or (form.get("id") if form else None) or "default").strip() or "default"
+        locale = normalize_locale(
+            str((body.get("locale") if body else None) or (form.get("locale") if form else None) or dashboard_state.get("languageSettings", {}).get("current", "en-US")),
+            "en-US",
+        )
+        raw_message = str((body.get("message") if body else None) or (form.get("message") if form else None) or "").strip()
+        raw_attachments = body.get("attachments") or []
+        session_id = _tvbox_session_id(agent_id)
+
+        try:
+            if form is not None:
+                attachments = await _normalize_tvbox_upload_form(form, session_id=session_id)
+            else:
+                attachments = _normalize_tvbox_attachments(raw_attachments if isinstance(raw_attachments, list) else [], session_id=session_id)
+        except Exception as exc:
+            return JSONResponse(status_code=400, content={"ok": False, "error": f"invalid attachment payload: {exc}"})
+
+        runtime_message = _default_attachment_message(raw_message, attachments)
+        if not runtime_message:
+            return JSONResponse(status_code=400, content={"ok": False, "error": "message or attachment is required"})
+
+        try:
+            result = await core_engine.handle(
+                runtime_message,
+                {
+                    "session_id": session_id,
+                    "metadata": {
+                        "source": "tvbox_custom_agent_intake",
+                        "locale": locale,
+                        "agent_id": agent_id,
+                        "attachments": attachments,
+                        **({"input_type": attachments[0].get("input_type", "file")} if attachments else {}),
+                    },
+                },
+                fmt="dict",
+                use_langraph=True,
+            )
+        except Exception as exc:
+            return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
+
+        runtime_response = _record_runtime_result(runtime_message, result if isinstance(result, dict) else {})
+        return {
+            "ok": True,
+            "reply": runtime_response["reply"],
+            "artifacts": runtime_response["artifacts"],
+            "result": result,
+            "sessionId": session_id,
+            "attachments": attachments,
+            "item": None,
+        }
 
     @app.post("/api/custom-agents/generate-feature")
     async def api_custom_agents_generate_feature():

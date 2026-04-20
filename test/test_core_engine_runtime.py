@@ -182,3 +182,51 @@ def test_runtime_blueprint_generation_contains_synthesis_metadata() -> None:
     assert synthesis["purpose_summary"]
     assert synthesis["reasoning"]
     assert isinstance(synthesis["execution_profile"], dict)
+
+
+def test_core_engine_attaches_runtime_learning_guidance_during_repair() -> None:
+    core = AICore(model_config_path="nethub_runtime/config/model_config.yaml")
+
+    execute_calls = {"count": 0}
+
+    def fake_execute(execution_plan, task, ctx):
+        execute_calls["count"] += 1
+        return {
+            "steps": [],
+            "final_output": {},
+        }
+
+    outcome_calls = {"count": 0}
+
+    def fake_evaluate(task, workflow, execution_result):
+        outcome_calls["count"] += 1
+        if outcome_calls["count"] == 1:
+            return {"should_repair": True, "unmet_requirements": ["analysis"], "failed_steps": []}
+        return {"should_repair": False, "unmet_requirements": [], "failed_steps": []}
+
+    core.execution_coordinator.execute = fake_execute
+    core.runtime_outcome_evaluator.evaluate = fake_evaluate
+    core.user_goal_evaluator.evaluate = lambda task, execution_result: {"satisfied": True}
+    core.runtime_learning_store.lookup_execution_guidance = lambda task_type, intent: {
+        "task_type": task_type,
+        "intent": intent,
+        "outcome": "success",
+        "repair_iterations": 1,
+        "solution_summary": "inject analysis step before retry",
+        "repair_preferences": {"analysis_before_retry": True},
+    }
+
+    result = asyncio.run(
+        core.handle(
+            input_text="记录一下今天中午吃饭花了50元",
+            context={"user_id": "u_guidance", "use_langgraph_runtime": False},
+            fmt="dict",
+            use_langraph=False,
+        )
+    )
+
+    repair_history = result["execution_result"].get("repair_history") or []
+    assert execute_calls["count"] >= 2
+    assert repair_history
+    assert repair_history[0]["runtime_learning_guidance"]["solution_summary"] == "inject analysis step before retry"
+    assert result["execution_result"]["repair_preferences"]["analysis_before_retry"] is True

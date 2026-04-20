@@ -30,6 +30,29 @@ class ReloadPluginsResponse(BaseModel):
 class SemanticMemoryResponse(BaseModel):
     result: dict[str, Any]
 
+
+class RuntimeMemoryResponse(BaseModel):
+    result: dict[str, Any]
+
+
+class PrivateBrainSummaryResponse(BaseModel):
+    result: dict[str, Any]
+
+
+class TrainingManifestResponse(BaseModel):
+    result: dict[str, Any]
+
+
+class TrainingRunnerResponse(BaseModel):
+    result: dict[str, Any]
+
+
+class TrainingRunStartRequest(BaseModel):
+    profile: str = "lora_sft"
+    backend: str = "mock"
+    dry_run: bool = True
+    note: str = ""
+
 core_engine = AICore()
 
 @router.post("/handle")
@@ -91,3 +114,46 @@ async def get_semantic_memory(
     status: str | None = Query(default=None),
 ) -> SemanticMemoryResponse:
     return SemanticMemoryResponse(result=core_engine.inspect_semantic_memory(policy_key=policy_key, status=status))
+
+
+@router.get("/admin/runtime-memory")
+async def get_runtime_memory(
+    query: str | None = Query(default=None),
+    namespace: str | None = Query(default=None),
+    top_k: int = Query(default=5, ge=1, le=20),
+) -> RuntimeMemoryResponse:
+    return RuntimeMemoryResponse(
+        result=core_engine.inspect_runtime_memory(query=query, namespace=namespace, top_k=top_k)
+    )
+
+
+@router.get("/admin/private-brain-summary")
+async def get_private_brain_summary() -> PrivateBrainSummaryResponse:
+    return PrivateBrainSummaryResponse(result=core_engine.inspect_private_brain_summary())
+
+
+@router.get("/admin/training-manifest")
+async def get_training_manifest(
+    profile: str = Query(default="lora_sft"),
+) -> TrainingManifestResponse:
+    return TrainingManifestResponse(result=core_engine.build_training_manifest(profile=profile))
+
+
+@router.get("/admin/training-runner")
+async def get_training_runner(
+    profile: str = Query(default="lora_sft"),
+    backend: str = Query(default="mock"),
+) -> TrainingRunnerResponse:
+    return TrainingRunnerResponse(result=core_engine.inspect_training_runner(profile=profile, backend=backend))
+
+
+@router.post("/admin/training-runner/start")
+async def start_training_runner(payload: TrainingRunStartRequest) -> TrainingRunnerResponse:
+    return TrainingRunnerResponse(
+        result=core_engine.start_training_run(
+            profile=payload.profile,
+            backend=payload.backend,
+            dry_run=payload.dry_run,
+            note=payload.note,
+        )
+    )

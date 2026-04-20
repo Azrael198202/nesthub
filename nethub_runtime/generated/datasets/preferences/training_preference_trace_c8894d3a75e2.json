@@ -1,0 +1,21 @@
+{
+  "value": [
+    {
+      "sample_type": "repair_preference",
+      "input": {
+        "user_text": "帮我生成一个文件处理流程",
+        "context": {
+          "session_id": "default",
+          "trace_id": "trace_c8894d3a75e2"
+        }
+      },
+      "chosen": "Model response (mock): Execute the requested workflow step and return a concise plain-text result.\nstep...",
+      "rejected": "['text']",
+      "quality": {
+        "outcome": "success",
+        "repair_iterations": 2,
+        "user_goal_satisfied": true
+      }
+    }
+  ]
+}

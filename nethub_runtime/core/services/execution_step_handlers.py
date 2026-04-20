@@ -15,6 +15,50 @@ from nethub_runtime.core.schemas.task_schema import TaskSchema
 logger = logging.getLogger("nethub_runtime.core.execution_step_handlers")
 
 
+def _received_dir(session_id: str) -> Path:
+    base = Path(__file__).resolve().parents[3] / "received" / session_id
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def extract_image_text_with_ocr(coordinator: Any, image_path: Path) -> tuple[str, str]:
+    if not image_path.exists():
+        return "", "image_not_found"
+
+    try:
+        from paddleocr import PaddleOCR  # type: ignore
+
+        ocr = PaddleOCR(use_angle_cls=True, lang="ch")
+        raw = ocr.ocr(str(image_path), cls=True) or []
+        lines: list[str] = []
+        for block in raw:
+            for item in block or []:
+                if not item or len(item) < 2:
+                    continue
+                text_part = item[1]
+                if isinstance(text_part, (list, tuple)) and text_part:
+                    line = str(text_part[0] or "").strip()
+                    if line:
+                        lines.append(line)
+        content = "\n".join(lines).strip()
+        if content:
+            return content, "paddleocr"
+    except Exception:
+        pass
+
+    try:
+        from PIL import Image  # type: ignore
+        import pytesseract  # type: ignore
+
+        content = pytesseract.image_to_string(Image.open(image_path)).strip()
+        if content:
+            return content, "pytesseract"
+    except Exception:
+        pass
+
+    return "", "ocr_unavailable"
+
+
 def handle_extract_records_step(
     coordinator: Any,
     _step: dict[str, Any],
@@ -69,7 +113,7 @@ def handle_ocr_extract_step(
     context: CoreContextSchema,
     _step_outputs: dict[str, Any],
 ) -> dict[str, Any]:
-    """OCR placeholder: copy image to received/, content extraction to be implemented."""
+    """Extract text from image input via OCR engines with fallback."""
     import shutil
     import re as _re
 
@@ -127,16 +171,46 @@ def handle_ocr_extract_step(
             "message": f"图片文件未找到且无附件信息: {image_path}",
         }
 
-    # TODO: 接入 OCR 引擎（PaddleOCR / Qwen2.5-VL / EasyOCR）
+    extracted_text, method = extract_image_text_with_ocr(coordinator, image_path)
+    if extracted_text:
+        return {
+            "artifact_type": "text",
+            "status": "completed",
+            "method": method,
+            "artifact_path": str(image_path),
+            "file_name": image_path.name,
+            "file_size": image_path.stat().st_size,
+            "content": extracted_text,
+            "message": f"已完成图片文字提取: {image_path.name}",
+        }
+
+    svc = getattr(coordinator, "capability_acquisition_service", None)
+    if svc is not None:
+        try:
+            acq = svc.acquire(task_type="ocr", gap="no_ocr_engine")
+            return {
+                "artifact_type": "text",
+                "status": "acquisition_triggered",
+                "method": method,
+                "artifact_path": str(image_path),
+                "file_name": image_path.name,
+                "file_size": image_path.stat().st_size,
+                "content": "",
+                "detail": getattr(acq, "detail", ""),
+                "message": "OCR 引擎缺失，已触发能力补齐，请稍后重试。",
+            }
+        except Exception:
+            pass
+
     return {
         "artifact_type": "text",
         "status": "received",
-        "method": "placeholder",
+        "method": method,
         "artifact_path": str(image_path),
         "file_name": image_path.name,
         "file_size": image_path.stat().st_size,
-        "content": f"[图片已接收: {image_path.name}，内容提取待实现]",
-        "message": f"文件已保存至 {image_path}",
+        "content": f"[图片已接收: {image_path.name}，OCR 暂不可用]",
+        "message": f"文件已保存至 {image_path}，但当前无法完成 OCR。",
     }
 
 
@@ -937,6 +1011,39 @@ def handle_generate_workflow_artifact_step(
         "status": "generated",
         "summary": str(summary),
     }
+
+
+def handle_generate_runtime_patch_step(
+    coordinator: Any,
+    _step: dict[str, Any],
+    task: TaskSchema,
+    context: CoreContextSchema,
+    step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    return coordinator._generate_runtime_patch(task=task, context=context, step_outputs=step_outputs)
+
+
+def handle_validate_runtime_patch_step(
+    coordinator: Any,
+    _step: dict[str, Any],
+    _task: TaskSchema,
+    context: CoreContextSchema,
+    step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    patch_payload = step_outputs.get("generate_runtime_patch", {})
+    return coordinator._run_runtime_validation(context=context, patch_payload=patch_payload)
+
+
+def handle_verify_runtime_patch_step(
+    coordinator: Any,
+    _step: dict[str, Any],
+    _task: TaskSchema,
+    context: CoreContextSchema,
+    step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    patch_payload = step_outputs.get("generate_runtime_patch", {})
+    validation_payload = step_outputs.get("validate_runtime_patch", {})
+    return coordinator._verify_runtime_patch(context=context, patch_payload=patch_payload, validation_payload=validation_payload)
 
 
 def handle_persist_workflow_output_step(
