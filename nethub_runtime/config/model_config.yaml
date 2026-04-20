@@ -72,7 +72,24 @@ model_providers:
         enabled: true
         latency_ms: 150
 
+provider_policies:
+  # Per-provider behaviour overrides (used by ModelRouter._get_provider_policy)
+  ollama:
+    # Do NOT retry on failure — GPU OOM / timeout means a retry won't help
+    max_retries: 0
+    # Hard cap per single request so we fall through to remote quickly
+    request_timeout_cap_sec: 15
+    skip_unhealthy: true
+
 routing_policies:
+  # ----------------------------------------------------------------
+  # Escalation gate (global defaults):
+  #   allow_cloud: true  — permit falling back to cloud when all local models fail
+  #   Per-task override: add  allow_cloud_escalation: false  inside any task block
+  # ----------------------------------------------------------------
+  escalation:
+    allow_cloud: true
+
   # ----------------------------------------------------------------
   # Local-first priority:
   #   1. Ollama local (DeepSeek-R1 / Qwen2.5 — free, private, fast)
@@ -109,12 +126,13 @@ routing_policies:
     timeout_sec: 60
 
   document_analysis:
-    # DeepSeek-R1 for deep analysis; Qwen2.5 for multilingual fast path
+    # DeepSeek-R1 for deep analysis; fall to Groq quickly on M2 GPU OOM
     primary: "ollama:deepseek-r1:7b"
     fallback:
-      - "ollama:qwen2.5:7b-instruct"
       - "groq:llama-3.3-70b-versatile"
+      - "groq:llama-3.1-8b-instant"
       - "gemini:gemini-2.0-flash"
+      - "ollama:qwen2.5:7b-instruct"
       - "openai:gpt-4o"
     timeout_sec: 90
 

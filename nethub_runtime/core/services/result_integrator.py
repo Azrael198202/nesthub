@@ -133,6 +133,23 @@ class ResultIntegrator:
                 )
             )
 
+        doc_output = final_output.get("analyze_document") or {}
+        doc_artifact_path = doc_output.get("artifact_path")
+        if doc_artifact_path:
+            artifact_id = str(Path(str(doc_artifact_path)).stem)
+            artifacts.append(
+                self._artifact_record(
+                    artifact_type="feature",
+                    artifact_id=artifact_id,
+                    path=str(doc_artifact_path),
+                    source="document_analysis_output",
+                    metadata={
+                        "status": doc_output.get("status", "completed"),
+                        "requested_action": doc_output.get("requested_action", "summarize"),
+                    },
+                )
+            )
+
         file_read_output = final_output.get("file_read") or {}
         file_read_path = file_read_output.get("artifact_path")
         if file_read_path:

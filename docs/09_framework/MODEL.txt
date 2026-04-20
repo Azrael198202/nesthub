@@ -1,0 +1,11 @@
+新增核心方法：
+
+方法	职责
+_is_local_model()	判断是否 Ollama 本地模型
+_split_local_cloud()	按层拆分候选列表
+_cloud_escalation_allowed()	升级许可三层检查
+_validate_invoke_result()	结果质量门控
+_write_invoke_knowledge()	成功后写入 RuntimeLearningStore
+_invoke_single()	单模型调用（重试由 provider_policy 控制）
+_invoke_candidates()	按层遍历候选 + 校验 + 知识写入
+invoke_multimodal() 同样使用相同的分层逻辑，两条路径统一收敛。

@@ -196,42 +196,159 @@ def _read_text_file(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="ignore")
 
 
+def _pip_install(package: str) -> bool:
+    """Run `pip install <package>` in a subprocess. Returns True on success."""
+    import importlib
+    import logging
+    import subprocess
+    import sys
+
+    logging.getLogger(__name__).info("Installing parser package via pip: %s", package)
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--quiet", package],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode == 0:
+            importlib.invalidate_caches()
+            return True
+        logging.getLogger(__name__).warning("pip install %s failed: %s", package, result.stderr.strip())
+        return False
+    except Exception as exc:
+        logging.getLogger(__name__).warning("pip install %s error: %s", package, exc)
+        return False
+
+
+def _ask_llm_for_parser_package(file_suffix: str, error: Exception) -> str | None:
+    """Ask Groq / Gemini / OpenAI which pip package is needed to parse *file_suffix* files.
+    Returns a pip package name string, or None if all LLM calls fail.
+    Uses only cloud providers so that an M2 GPU OOM on Ollama does not block this helper.
+    """
+    import logging
+    import os
+
+    logger = logging.getLogger(__name__)
+    prompt = (
+        f"A Python program failed to parse a `{file_suffix}` file.\n"
+        f"Error: {type(error).__name__}: {error}\n"
+        f"What is the single pip package name to install so Python can parse `{file_suffix}` files? "
+        f"Reply with ONLY the pip package name — no explanation, no punctuation."
+    )
+    candidates: list[tuple[str, str | None]] = []
+    if os.getenv("GROQ_API_KEY"):
+        candidates.append(("groq/llama-3.1-8b-instant", os.getenv("GROQ_API_KEY")))
+    if os.getenv("GEMINI_API_KEY"):
+        candidates.append(("gemini/gemini-2.0-flash-lite", os.getenv("GEMINI_API_KEY")))
+    if os.getenv("OPENAI_API_KEY"):
+        candidates.append(("openai/gpt-4o-mini", os.getenv("OPENAI_API_KEY")))
+
+    for model, api_key in candidates:
+        try:
+            from litellm import completion  # type: ignore
+
+            resp = completion(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                api_key=api_key,
+                timeout=15,
+                max_tokens=20,
+            )
+            raw = resp.choices[0].message.content.strip().split("\n")[0].strip("`\"' ")
+            # Accept only a plausible single-token package name
+            if raw and len(raw) < 64 and " " not in raw:
+                logger.info("LLM (%s) suggested parser package '%s' for %s", model, raw, file_suffix)
+                return raw
+        except Exception as exc:
+            logger.debug("LLM %s failed for parser resolution: %s", model, exc)
+            continue
+    logger.warning("No LLM could suggest a parser package for %s", file_suffix)
+    return None
+
+
+def _resolve_and_install_parser(file_suffix: str, error: Exception) -> bool:
+    """Ask an LLM for the right package and install it. Returns True if install succeeded."""
+    package = _ask_llm_for_parser_package(file_suffix, error)
+    if not package:
+        return False
+    return _pip_install(package)
+
+
 def _extract_document_text(path: Path) -> tuple[str, str]:
+    import importlib
+
     suffix = path.suffix.lower()
     if suffix in {".txt", ".md", ".csv"}:
         return _read_text_file(path), "plain_text"
+
     if suffix == ".pdf":
-        try:
-            from pypdf import PdfReader  # type: ignore
+        for attempt in range(2):
+            try:
+                importlib.invalidate_caches()
+                from pypdf import PdfReader  # type: ignore
 
-            reader = PdfReader(str(path))
-            content = "\n".join((page.extract_text() or "") for page in reader.pages)
-            return content, "pypdf"
-        except Exception:
-            return "", "pdf_unavailable"
+                reader = PdfReader(str(path))
+                content = "\n".join((page.extract_text() or "") for page in reader.pages)
+                return content, "pypdf"
+            except ModuleNotFoundError as exc:
+                if attempt == 0 and _resolve_and_install_parser(suffix, exc):
+                    continue
+                return "", "pdf_unavailable"
+            except Exception:
+                return "", "pdf_unavailable"
+
     if suffix in {".docx", ".doc"}:
-        try:
-            import docx  # type: ignore
+        for attempt in range(2):
+            try:
+                importlib.invalidate_caches()
+                import docx  # type: ignore
 
-            document = docx.Document(str(path))
-            return "\n".join(paragraph.text for paragraph in document.paragraphs), "python_docx"
-        except Exception:
-            return "", "docx_unavailable"
+                document = docx.Document(str(path))
+                return "\n".join(paragraph.text for paragraph in document.paragraphs), "python_docx"
+            except ModuleNotFoundError as exc:
+                if attempt == 0 and _resolve_and_install_parser(suffix, exc):
+                    continue
+                return "", "docx_unavailable"
+            except Exception:
+                return "", "docx_unavailable"
+
     if suffix in {".xlsx", ".xls"}:
-        try:
-            from openpyxl import load_workbook  # type: ignore
+        for attempt in range(2):
+            try:
+                importlib.invalidate_caches()
+                from openpyxl import load_workbook  # type: ignore
 
-            workbook = load_workbook(str(path), data_only=True)
-            lines: list[str] = []
-            for sheet in workbook.worksheets:
-                lines.append(f"# Sheet: {sheet.title}")
-                for row in sheet.iter_rows(values_only=True):
-                    values = [str(cell).strip() for cell in row if cell is not None and str(cell).strip()]
-                    if values:
-                        lines.append(" | ".join(values))
-            return "\n".join(lines), "openpyxl"
-        except Exception:
-            return "", "excel_unavailable"
+                workbook = load_workbook(str(path), data_only=True)
+                lines: list[str] = []
+                for sheet in workbook.worksheets:
+                    lines.append(f"# Sheet: {sheet.title}")
+                    for row in sheet.iter_rows(values_only=True):
+                        values = [str(cell).strip() for cell in row if cell is not None and str(cell).strip()]
+                        if values:
+                            lines.append(" | ".join(values))
+                return "\n".join(lines), "openpyxl"
+            except ModuleNotFoundError as exc:
+                if attempt == 0 and _resolve_and_install_parser(suffix, exc):
+                    continue
+                return "", "excel_unavailable"
+            except Exception:
+                return "", "excel_unavailable"
+
+    # Unknown / other file types: ask LLM what to do, attempt one dynamic install + eval
+    try:
+        _unknown_exc = ModuleNotFoundError(f"No parser for {suffix}")
+        pkg = _ask_llm_for_parser_package(suffix, _unknown_exc)
+        if pkg and _pip_install(pkg):
+            importlib.invalidate_caches()
+            # Best-effort: try reading as plain text after install (generic fallback)
+            try:
+                return _read_text_file(path), f"{pkg}_text_fallback"
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     if suffix in _IMAGE_SUFFIXES:
         return extract_image_text_with_ocr(None, path)
     return "", "unsupported"
@@ -243,6 +360,48 @@ def _fallback_summary(text: str, file_names: list[str]) -> str:
         return f"已接收文件 {', '.join(file_names)}，但当前环境缺少可用解析器，暂时无法提取正文。"
     excerpt = cleaned[:400]
     return f"文件 {', '.join(file_names)} 的内容摘录：{excerpt}"
+
+
+def _detect_output_file_format(text: str) -> str | None:
+    """Return a file extension if the user explicitly wants output saved as a file, else None."""
+    lowered = text.lower()
+    for pattern, ext in (
+        ("txt文档", ".txt"),
+        ("txt文件", ".txt"),
+        ("txt格式", ".txt"),
+        ("整理成txt", ".txt"),
+        ("保存为txt", ".txt"),
+        ("保存成txt", ".txt"),
+        ("生成txt", ".txt"),
+        ("输出txt", ".txt"),
+        ("md文档", ".md"),
+        ("markdown文档", ".md"),
+        ("整理成md", ".md"),
+    ):
+        if pattern in lowered:
+            return ext
+    # "发给我" together with file-delivery words implies a file output
+    if "发给我" in lowered and any(w in lowered for w in ("整理", "生成文档", "生成文件", "存成", "保存")):
+        return ".txt"
+    return None
+
+
+def _persist_document_artifact(
+    coordinator: Any,
+    content: str,
+    trace_id: str,
+    extension: str,
+) -> str | None:
+    """Write content to the artifact store and return the file path, or None on failure."""
+    store = getattr(coordinator, "generated_artifact_store", None)
+    if store is None or not content.strip():
+        return None
+    artifact_id = f"doc_summary_{trace_id}"
+    try:
+        path = store.persist("feature", artifact_id, content, extension=extension)
+        return str(path)
+    except Exception:
+        return None
 
 
 async def _invoke_document_model(coordinator: Any, *, task_type: str, prompt: str, system_prompt: str) -> str:
@@ -447,6 +606,12 @@ def handle_analyze_document_step(
     if session_store is not None and pending_request is not None:
         session_store.patch(context.session_id, {"pending_document_request": None})
 
+    output_file_ext = _detect_output_file_format(task.input_text)
+    artifact_path: str | None = None
+    if output_file_ext:
+        file_content = summary or translation
+        artifact_path = _persist_document_artifact(coordinator, file_content, context.trace_id, output_file_ext)
+
     return {
         "artifact_type": "document",
         "status": "completed",
@@ -459,6 +624,7 @@ def handle_analyze_document_step(
         "document_count": len(source_files),
         "requested_action": operation,
         "target_language": target_language if operation == "translate" else "",
+        "artifact_path": artifact_path or "",
     }
 
 

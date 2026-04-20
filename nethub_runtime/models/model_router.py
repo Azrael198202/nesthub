@@ -475,141 +475,483 @@ class ModelRouter:
         if provider_type == "groq":
             return f"groq/{model_name}"
         return f"{provider_type}/{model_name}"
-    
+
+    # ======================================================================
+    # Validation layer
+    # ======================================================================
+
+    def validate_schema(
+        self,
+        text: str,
+        schema: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Validate *text* (assumed JSON) against *schema* using jsonschema.
+
+        Returns::
+
+            {
+                "valid": bool,
+                "errors": [str, ...],   # empty on success
+                "parsed": dict | None,  # parsed object on success
+            }
+        """
+        if schema is None:
+            return {"valid": True, "errors": [], "parsed": None}
+        try:
+            import json as _json
+            parsed = _json.loads(text)
+        except Exception as exc:
+            return {"valid": False, "errors": [f"JSON parse error: {exc}"], "parsed": None}
+        try:
+            import jsonschema  # type: ignore
+            jsonschema.validate(instance=parsed, schema=schema)
+            return {"valid": True, "errors": [], "parsed": parsed}
+        except ImportError:
+            # jsonschema not installed — best-effort key presence check
+            missing = [k for k in schema.get("required", []) if k not in parsed]
+            if missing:
+                return {"valid": False, "errors": [f"Missing required keys: {missing}"], "parsed": parsed}
+            return {"valid": True, "errors": [], "parsed": parsed}
+        except Exception as exc:
+            messages = [str(e.message) for e in exc.context] if hasattr(exc, "context") else [str(exc)]
+            return {"valid": False, "errors": messages, "parsed": parsed}
+
+    def score_result(
+        self,
+        text: str,
+        *,
+        task_type: str,
+        prompt: str,
+        min_length: int = 4,
+    ) -> dict[str, Any]:
+        """Compute a heuristic quality score (0.0–1.0) for *text*.
+
+        Scoring dimensions (each 0–1, equal weight):
+        - length_ok     : len(text) >= min_length
+        - non_trivial   : not a pure repetition of the prompt
+        - no_error_blurb: does not start with an error keyword
+        - has_content   : passes the basic _validate_invoke_result gate
+        - task_relevant : shares at least one non-stop token with the prompt
+
+        Returns::
+
+            {
+                "score": float,       # 0.0 – 1.0
+                "dimensions": dict,   # per-dimension bool flags
+                "passed": bool,       # score >= threshold (0.5)
+            }
+        """
+        stripped = text.strip()
+        error_markers = ("error:", "exception:", "traceback", "connection refused", "timed out")
+
+        length_ok = len(stripped) >= min_length
+        non_trivial = stripped.lower() != prompt.lower()[:len(stripped)]
+        no_error_blurb = not any(stripped.lower().startswith(m) for m in error_markers)
+        has_content = bool(stripped) and len(stripped) >= min_length
+
+        # simple token overlap (ignore very short tokens)
+        prompt_tokens = {t.lower() for t in prompt.split() if len(t) > 3}
+        result_tokens = {t.lower() for t in stripped.split() if len(t) > 3}
+        task_relevant = bool(prompt_tokens & result_tokens) if prompt_tokens else True
+
+        dims = {
+            "length_ok": length_ok,
+            "non_trivial": non_trivial,
+            "no_error_blurb": no_error_blurb,
+            "has_content": has_content,
+            "task_relevant": task_relevant,
+        }
+        score = round(sum(dims.values()) / len(dims), 3)
+        return {"score": score, "dimensions": dims, "passed": score >= 0.5}
+
+    def validate_tool_calls(
+        self,
+        response_raw: Any,
+    ) -> dict[str, Any]:
+        """Inspect a raw LiteLLM response for tool/function calls and validate them.
+
+        Checks:
+        - tool_calls present in choices[0].message
+        - each call has a non-empty name
+        - each call has parseable JSON arguments
+
+        Returns::
+
+            {
+                "has_tool_calls": bool,
+                "tool_calls": [{"name": str, "args": dict, "valid": bool, "error": str}],
+                "all_valid": bool,
+            }
+        """
+        import json as _json
+
+        tool_calls_out: list[dict[str, Any]] = []
+        try:
+            msg = response_raw.choices[0].message
+            raw_calls = getattr(msg, "tool_calls", None) or []
+        except Exception:
+            return {"has_tool_calls": False, "tool_calls": [], "all_valid": True}
+
+        if not raw_calls:
+            return {"has_tool_calls": False, "tool_calls": [], "all_valid": True}
+
+        all_valid = True
+        for call in raw_calls:
+            name = ""
+            args: dict[str, Any] = {}
+            error = ""
+            try:
+                fn = getattr(call, "function", call)
+                name = str(getattr(fn, "name", "") or "")
+                raw_args = getattr(fn, "arguments", "{}") or "{}"
+                args = _json.loads(raw_args)
+                valid = bool(name)
+                if not valid:
+                    error = "empty function name"
+            except Exception as exc:
+                valid = False
+                error = str(exc)
+            if not valid:
+                all_valid = False
+            tool_calls_out.append({"name": name, "args": args, "valid": valid, "error": error})
+
+        return {"has_tool_calls": True, "tool_calls": tool_calls_out, "all_valid": all_valid}
+
+    def _is_local_model(self, model_id: str) -> bool:
+        """Return True if *model_id* runs on a local Ollama instance."""
+        cfg = self.get_model_config(model_id)
+        return str(cfg.get("provider_type", "")).lower() == "ollama"
+
+    def _cloud_escalation_allowed(self, task_type: str) -> bool:
+        """Return True when cloud escalation is permitted for *task_type*.
+
+        Checks (in order):
+        1. Per-task override in routing_policies.<task_type>.allow_cloud_escalation
+        2. Global flag routing_policies.escalation.allow_cloud (default True)
+        3. At least one cloud API key must be present in env.
+        """
+        policies = self.config.get("routing_policies", {})
+        task_policy = policies.get(task_type) or {}
+        task_flag = task_policy.get("allow_cloud_escalation")
+        if task_flag is not None:
+            if not task_flag:
+                return False
+        else:
+            global_flag = (policies.get("escalation") or {}).get("allow_cloud", True)
+            if not global_flag:
+                return False
+
+        cloud_keys = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY")
+        return any(os.getenv(k) for k in cloud_keys)
+
+    def _split_local_cloud(self, candidates: list[str]) -> tuple[list[str], list[str]]:
+        """Partition *candidates* into (local, cloud) lists preserving order."""
+        local = [m for m in candidates if self._is_local_model(m)]
+        cloud = [m for m in candidates if not self._is_local_model(m)]
+        return local, cloud
+
+    def _validate_invoke_result(self, text: str) -> bool:
+        """Basic quality gate — returns False if the result looks empty or like an error blurb."""
+        stripped = text.strip()
+        if not stripped or len(stripped) < 4:
+            return False
+        error_markers = ("error:", "exception:", "traceback", "connection refused", "timed out")
+        lowered = stripped.lower()
+        if any(lowered.startswith(m) for m in error_markers):
+            return False
+        return True
+
+    def _write_invoke_knowledge(
+        self,
+        *,
+        task_type: str,
+        model_id: str,
+        prompt_preview: str,
+        result_preview: str,
+        tier: str,
+        score: float = 1.0,
+        schema_valid: bool = True,
+        schema_errors: list[str] | None = None,
+        tool_calls_valid: bool = True,
+        tool_calls: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Persist a full invocation record (score + schema + tool calls) to the runtime learning store."""
+        try:
+            from nethub_runtime.core.memory.runtime_learning_store import RuntimeLearningStore
+            from nethub_runtime.core.config.settings import SEMANTIC_POLICY_PATH
+
+            store = RuntimeLearningStore(SEMANTIC_POLICY_PATH)
+            detail_parts = [
+                f"prompt={prompt_preview[:80]}",
+                f"result={result_preview[:80]}",
+                f"score={score:.3f}",
+                f"schema_valid={schema_valid}",
+                f"tool_calls_valid={tool_calls_valid}",
+            ]
+            if schema_errors:
+                detail_parts.append(f"schema_errors={schema_errors[:3]}")
+            if tool_calls:
+                detail_parts.append(f"tool_calls={[c['name'] for c in tool_calls]}")
+            store.record_attempt(
+                task_type=task_type,
+                gap="model_invocation",
+                strategy=f"{tier}_model:{model_id}",
+                outcome="success",
+                detail="; ".join(detail_parts),
+                model_id=model_id,
+            )
+        except Exception as exc:
+            LOGGER.debug("Write to knowledge store skipped: %s", exc)
+
+    async def _invoke_single(
+        self,
+        model: str,
+        messages: list[dict],
+        merged_params: dict,
+        timeout_sec: float,
+    ) -> tuple[str, Any]:
+        """Attempt one model invocation (with per-provider retry policy).
+        Returns (text, raw_response). Raises on failure.
+        """
+        from litellm import acompletion
+
+        model_config = self.get_model_config(model)
+        provider_policy = self._get_provider_policy(model)
+        max_retries = int(provider_policy.get("max_retries", 1))
+        retry_backoff_sec = float(provider_policy.get("retry_backoff_sec", 1.0))
+        min_interval_ms = int(provider_policy.get("min_request_interval_ms", 0))
+        litellm_model = self._to_litellm_model(model)
+        request_timeout_sec = self._effective_timeout_sec(model, timeout_sec)
+
+        last_exc: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                if min_interval_ms > 0:
+                    await asyncio.sleep(min_interval_ms / 1000.0)
+                response = await acompletion(
+                    model=litellm_model,
+                    messages=messages,
+                    timeout=request_timeout_sec,
+                    api_base=model_config.get("base_url"),
+                    api_key=model_config.get("api_key"),
+                    **merged_params,
+                )
+                return response.choices[0].message.content or "", response
+            except Exception as exc:
+                last_exc = exc
+                if attempt < max_retries:
+                    wait_sec = retry_backoff_sec * (2 ** attempt)
+                    LOGGER.warning(
+                        "Model invoke retrying (%s) attempt=%s wait=%.2fs error=%s",
+                        litellm_model, attempt + 1, wait_sec, exc,
+                    )
+                    await asyncio.sleep(wait_sec)
+        raise last_exc or RuntimeError(f"Invoke failed for {model}")
+
+    async def _invoke_candidates(
+        self,
+        candidates: list[str],
+        messages: list[dict],
+        merged_params: dict,
+        timeout_sec: float,
+        tier: str,
+        task_type: str,
+        prompt_preview: str,
+        output_schema: dict[str, Any] | None = None,
+    ) -> str | None:
+        """Try *candidates* in order.
+
+        For each candidate:
+          1. Call the model
+          2. Schema-validate the output (if output_schema provided)
+          3. Score the result
+          4. Validate tool calls in the raw response
+          5. Write everything to the knowledge store
+        Returns the first result that passes the score gate, or None.
+        """
+        for model in candidates:
+            if self.cooldown_tracker.is_in_cooldown(model):
+                rem = self.cooldown_tracker.status().get(model, {}).get("remaining_seconds", "?")
+                LOGGER.info("Skipping %s — cooldown %.0fs remaining", model, rem)
+                continue
+            if not await self._candidate_is_ready(model, timeout_sec):
+                continue
+            try:
+                LOGGER.info("[%s tier] invoking %s for %s", tier, model, task_type)
+                text, raw_response = await self._invoke_single(model, messages, merged_params, timeout_sec)
+
+                # ── Schema validation ────────────────────────────────────────
+                schema_result = self.validate_schema(text, output_schema)
+                if output_schema and not schema_result["valid"]:
+                    LOGGER.warning(
+                        "[%s tier] %s schema invalid: %s", tier, model, schema_result["errors"]
+                    )
+
+                # ── Result scoring ───────────────────────────────────────────
+                user_prompt = next(
+                    (m["content"] for m in reversed(messages) if m.get("role") == "user"
+                     and isinstance(m.get("content"), str)),
+                    prompt_preview,
+                )
+                score_result = self.score_result(text, task_type=task_type, prompt=user_prompt)
+
+                # ── Tool-call validation ────────────────────────────────────
+                tool_result = self.validate_tool_calls(raw_response)
+                if tool_result["has_tool_calls"] and not tool_result["all_valid"]:
+                    LOGGER.warning(
+                        "[%s tier] %s has invalid tool calls: %s",
+                        tier, model,
+                        [c for c in tool_result["tool_calls"] if not c["valid"]],
+                    )
+
+                passed = score_result["passed"] or (output_schema is None and self._validate_invoke_result(text))
+                if passed:
+                    self.cooldown_tracker.reset(model)
+                    self._write_invoke_knowledge(
+                        task_type=task_type,
+                        model_id=model,
+                        prompt_preview=prompt_preview,
+                        result_preview=text[:120],
+                        tier=tier,
+                        score=score_result["score"],
+                        schema_valid=schema_result["valid"],
+                        schema_errors=schema_result["errors"],
+                        tool_calls_valid=tool_result["all_valid"],
+                        tool_calls=tool_result["tool_calls"],
+                    )
+                    LOGGER.info(
+                        "[%s tier] %s accepted — score=%.3f schema_valid=%s tool_calls_valid=%s",
+                        tier, model, score_result["score"],
+                        schema_result["valid"], tool_result["all_valid"],
+                    )
+                    return text
+
+                LOGGER.warning(
+                    "[%s tier] %s rejected — score=%.3f dims=%s",
+                    tier, model, score_result["score"], score_result["dimensions"],
+                )
+                self.cooldown_tracker.reset(model)
+            except Exception as exc:
+                self.cooldown_tracker.record_failure(model)
+                LOGGER.warning("[%s tier] %s failed: %s", tier, self._to_litellm_model(model), exc)
+        return None
+
     async def invoke(
         self,
         task_type: str,
         prompt: str,
         system_prompt: Optional[str] = None,
+        output_schema: dict[str, Any] | None = None,
         **kwargs
     ) -> str:
-        """
-        调用模型
-        
+        """Tiered model invocation.
+
         Args:
-            task_type: 任务类型
-            prompt: 用户提示
-            system_prompt: 系统提示
-            **kwargs: 其他参数（temperature, top_p等）
-        
-        Returns:
-            模型响应
+            output_schema: Optional JSON Schema dict. When provided the response
+                text is parsed as JSON and validated; schema errors are logged
+                and written to the knowledge store.
+
+        Flow:
+          1. Rule layer  — mock / fast-path guard
+          2. Local tier  — Ollama models (Qwen / DeepSeek)
+          3. Escalation  — check allow_cloud_escalation gate
+          4. Cloud tier  — Groq / Gemini / OpenAI / Anthropic
+          5. Schema validation + scoring + tool-call check + knowledge-base write
         """
         task_params = self.get_model_params(task_type)
-        timeout_sec = (
+        timeout_sec = float(
             self.config.get("routing_policies", {}).get(task_type, {}).get("timeout_sec")
             or self.config.get("routing_policies", {}).get("default", {}).get("timeout_sec")
             or 30
         )
-        # 合并参数
-        merged_params = {**task_params}
-        merged_params.update(kwargs)
+        merged_params = {**task_params, **kwargs}
 
+        # ── 1. Rule layer: mock fast-path ──────────────────────────────────
         if self.mock_llm_calls:
             model = self.select_model(task_type)
             LOGGER.info("mock_llm_calls enabled, returning mock response for %s", model)
             return f"Model response (mock): {prompt[:80]}..."
-        
+
+        try:
+            from litellm import acompletion as _  # noqa: F401 — ensure litellm available
+        except ImportError:
+            LOGGER.warning("litellm is not installed, using mock response")
+            return f"Model response (mock): {prompt[:50]}..."
+
         messages: list[dict[str, str]] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        try:
-            from litellm import acompletion
-        except ImportError:
-            LOGGER.warning("litellm is not installed, using mock response")
-            return f"Model response (mock): {prompt[:50]}..."
-
         candidates = self.get_candidate_models(task_type)
         if not candidates:
             raise RuntimeError(f"No available models configured for task_type={task_type}")
 
-        last_exc: Exception | None = None
-        for model in candidates:
-            if self.cooldown_tracker.is_in_cooldown(model):
-                remaining = self.cooldown_tracker.status().get(model, {}).get("remaining_seconds", "?")
-                LOGGER.info("Skipping model %s — in cooldown (%.0fs remaining)", model, remaining)
-                continue
-            model_config = self.get_model_config(model)
-            provider_policy = self._get_provider_policy(model)
-            max_retries = int(provider_policy.get("max_retries", 1))
-            retry_backoff_sec = float(provider_policy.get("retry_backoff_sec", 1.0))
-            min_interval_ms = int(provider_policy.get("min_request_interval_ms", 0))
-            litellm_model = self._to_litellm_model(model)
-            request_timeout_sec = self._effective_timeout_sec(model, timeout_sec)
+        local_models, cloud_models = self._split_local_cloud(candidates)
+        prompt_preview = prompt[:120]
 
-            if not await self._candidate_is_ready(model, timeout_sec):
-                continue
+        # ── 2. Local tier ──────────────────────────────────────────────────
+        if local_models:
+            result = await self._invoke_candidates(
+                local_models, messages, merged_params, timeout_sec,
+                tier="local", task_type=task_type, prompt_preview=prompt_preview,
+                output_schema=output_schema,
+            )
+            if result is not None:
+                return result
+            LOGGER.info("Local tier exhausted for %s — checking escalation", task_type)
 
-            LOGGER.debug("Invoking %s for %s", model, task_type)
-            LOGGER.debug("Params: %s", merged_params)
+        # ── 3. Escalation gate ─────────────────────────────────────────────
+        if not cloud_models:
+            raise RuntimeError(f"All local models failed for task_type={task_type} and no cloud models configured")
 
-            for attempt in range(max_retries + 1):
-                try:
-                    if min_interval_ms > 0:
-                        await asyncio.sleep(min_interval_ms / 1000.0)
+        if not self._cloud_escalation_allowed(task_type):
+            raise RuntimeError(
+                f"Local models failed for task_type={task_type} and cloud escalation is disabled"
+            )
+        LOGGER.info("Escalating to cloud tier for %s (%d candidates)", task_type, len(cloud_models))
 
-                    response = await acompletion(
-                        model=litellm_model,
-                        messages=messages,
-                        timeout=request_timeout_sec,
-                        api_base=model_config.get("base_url"),
-                        api_key=model_config.get("api_key"),
-                        **merged_params,
-                    )
-                    self.cooldown_tracker.reset(model)
-                    return response.choices[0].message.content or ""
-                except Exception as exc:
-                    last_exc = exc
-                    if attempt < max_retries:
-                        wait_sec = retry_backoff_sec * (2**attempt)
-                        LOGGER.warning(
-                            "Model invoke retrying (%s) attempt=%s wait=%.2fs error=%s",
-                            litellm_model,
-                            attempt + 1,
-                            wait_sec,
-                            exc,
-                        )
-                        await asyncio.sleep(wait_sec)
-                        continue
-                    self.cooldown_tracker.record_failure(model)
-                    LOGGER.warning("Model invoke failed for candidate %s: %s", litellm_model, exc)
-                    break
+        # ── 4. Cloud tier ──────────────────────────────────────────────────
+        result = await self._invoke_candidates(
+            cloud_models, messages, merged_params, timeout_sec,
+            tier="cloud", task_type=task_type, prompt_preview=prompt_preview,
+            output_schema=output_schema,
+        )
+        if result is not None:
+            return result
 
-        LOGGER.error("Model invoke failed for task %s: %s", task_type, last_exc)
-        raise last_exc or RuntimeError("Model invoke failed")
+        raise RuntimeError(f"All model tiers exhausted for task_type={task_type}")
 
     async def invoke_multimodal(
         self,
         task_type: str,
         user_content: list[dict[str, Any]],
         system_prompt: Optional[str] = None,
+        output_schema: dict[str, Any] | None = None,
         **kwargs,
     ) -> str:
+        """Tiered multimodal invocation (same local → cloud escalation flow as invoke())."""
         task_params = self.get_model_params(task_type)
-        timeout_sec = (
+        timeout_sec = float(
             self.config.get("routing_policies", {}).get(task_type, {}).get("timeout_sec")
             or self.config.get("routing_policies", {}).get("default", {}).get("timeout_sec")
             or 30
         )
-        merged_params = {**task_params}
-        merged_params.update(kwargs)
+        merged_params = {**task_params, **kwargs}
 
         if self.mock_llm_calls:
             model = self.select_model(task_type)
             LOGGER.info("mock_llm_calls enabled, returning multimodal mock response for %s", model)
             text_parts = [str(item.get("text") or "") for item in user_content if item.get("type") == "text"]
-            preview = " ".join(part for part in text_parts if part).strip()
+            preview = " ".join(p for p in text_parts if p).strip()
             return f"Model response (mock): {preview[:80]}..."
 
         try:
-            from litellm import acompletion
+            from litellm import acompletion as _  # noqa: F401
         except ImportError:
             LOGGER.warning("litellm is not installed, using multimodal mock response")
             text_parts = [str(item.get("text") or "") for item in user_content if item.get("type") == "text"]
-            preview = " ".join(part for part in text_parts if part).strip()
-            return f"Model response (mock): {preview[:50]}..."
+            return f"Model response (mock): {' '.join(text_parts)[:50]}..."
 
         messages: list[dict[str, Any]] = []
         if system_prompt:
@@ -620,56 +962,39 @@ class ModelRouter:
         if not candidates:
             raise RuntimeError(f"No available models configured for task_type={task_type}")
 
-        last_exc: Exception | None = None
-        for model in candidates:
-            if self.cooldown_tracker.is_in_cooldown(model):
-                remaining = self.cooldown_tracker.status().get(model, {}).get("remaining_seconds", "?")
-                LOGGER.info("Skipping model %s — in cooldown (%.0fs remaining)", model, remaining)
-                continue
-            model_config = self.get_model_config(model)
-            provider_policy = self._get_provider_policy(model)
-            max_retries = int(provider_policy.get("max_retries", 1))
-            retry_backoff_sec = float(provider_policy.get("retry_backoff_sec", 1.0))
-            min_interval_ms = int(provider_policy.get("min_request_interval_ms", 0))
-            litellm_model = self._to_litellm_model(model)
-            request_timeout_sec = self._effective_timeout_sec(model, timeout_sec)
+        local_models, cloud_models = self._split_local_cloud(candidates)
+        text_preview = " ".join(
+            str(item.get("text") or "") for item in user_content if item.get("type") == "text"
+        )[:120]
 
-            if not await self._candidate_is_ready(model, timeout_sec):
-                continue
+        # ── Local tier ─────────────────────────────────────────────────────
+        if local_models:
+            result = await self._invoke_candidates(
+                local_models, messages, merged_params, timeout_sec,
+                tier="local", task_type=task_type, prompt_preview=text_preview,
+                output_schema=output_schema,
+            )
+            if result is not None:
+                return result
 
-            for attempt in range(max_retries + 1):
-                try:
-                    if min_interval_ms > 0:
-                        await asyncio.sleep(min_interval_ms / 1000.0)
-                    response = await acompletion(
-                        model=litellm_model,
-                        messages=messages,
-                        timeout=request_timeout_sec,
-                        api_base=model_config.get("base_url"),
-                        api_key=model_config.get("api_key"),
-                        **merged_params,
-                    )
-                    self.cooldown_tracker.reset(model)
-                    return response.choices[0].message.content or ""
-                except Exception as exc:
-                    last_exc = exc
-                    if attempt < max_retries:
-                        wait_sec = retry_backoff_sec * (2**attempt)
-                        LOGGER.warning(
-                            "Multimodal invoke retrying (%s) attempt=%s wait=%.2fs error=%s",
-                            litellm_model,
-                            attempt + 1,
-                            wait_sec,
-                            exc,
-                        )
-                        await asyncio.sleep(wait_sec)
-                        continue
-                    self.cooldown_tracker.record_failure(model)
-                    LOGGER.warning("Multimodal invoke failed for candidate %s: %s", litellm_model, exc)
-                    break
+        # ── Escalation gate ────────────────────────────────────────────────
+        if not cloud_models:
+            raise RuntimeError(f"All local models failed for task_type={task_type} and no cloud models configured")
+        if not self._cloud_escalation_allowed(task_type):
+            raise RuntimeError(f"Local models failed and cloud escalation is disabled for {task_type}")
+        LOGGER.info("Escalating multimodal to cloud tier for %s", task_type)
 
-        LOGGER.error("Multimodal invoke failed for task %s: %s", task_type, last_exc)
-        raise last_exc or RuntimeError("Multimodal invoke failed")
+        # ── Cloud tier ─────────────────────────────────────────────────────
+        result = await self._invoke_candidates(
+            cloud_models, messages, merged_params, timeout_sec,
+            tier="cloud", task_type=task_type, prompt_preview=text_preview,
+            output_schema=output_schema,
+        )
+        if result is not None:
+            return result
+
+        raise RuntimeError(f"All model tiers exhausted for task_type={task_type}")
+
     
     def list_available_models(self) -> list[str]:
         """列出所有可用模型"""

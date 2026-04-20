@@ -1293,8 +1293,7 @@ function applyStaticTranslations() {
   setTextIfPresent("conversation-pill", t("top.transcript"));
   setTextIfPresent("test-title", t("top.testLab"));
   setTextIfPresent("test-pill", currentLocale === "zh-CN" ? "语音 / 文字 / 文件" : currentLocale === "ja-JP" ? "音声 / テキスト / ファイル" : "Voice / Text / Files");
-  setTextIfPresent("test-doc-summary-pick", currentLocale === "zh-CN" ? "文档总结" : currentLocale === "ja-JP" ? "文書要約" : "Document Summary");
-  setTextIfPresent("test-doc-translate-pick", currentLocale === "zh-CN" ? "文档翻译" : currentLocale === "ja-JP" ? "文書翻訳" : "Document Translation");
+
   setTextIfPresent("work-title", t("top.workLab"));
   setTextIfPresent("work-pill", t("top.workBoard"));
   setTextIfPresent("work-factory-title", t("top.workFactory"));
@@ -1905,8 +1904,10 @@ function resetStudioFeatureRuntime(featureId = "") {
 }
 
 function getStudioFeatureApiRoot(agent) {
-  const featureId = String(agent?.generatedFeatureId || "").trim();
-  return featureId ? `/api/${featureId}` : "";
+  void agent;
+  // TV Box does not expose the legacy public_api-style dynamic feature routes
+  // such as /api/<featureId> and /api/<featureId>/items.
+  return "";
 }
 
 async function loadStudioFeatureRuntime(agent, force = false) {
@@ -1976,6 +1977,35 @@ function renderStudioFeatureRuntime(agent) {
       <div class="studio-feature-panel is-empty">
         <strong>${escapeHtml(t("test.featurePanelTitle"))}</strong>
         <p>${escapeHtml(t("test.featurePanelEmpty"))}</p>
+      </div>
+    `;
+  }
+  const apiRoot = getStudioFeatureApiRoot(agent);
+  if (!apiRoot) {
+    return `
+      <div class="studio-feature-panel">
+        <div class="studio-detail-head">
+          <div>
+            <p class="eyebrow">${escapeHtml(t("test.featurePanelTitle"))}</p>
+            <h3>${escapeHtml(agent.name || "Feature")}</h3>
+          </div>
+          <span class="pill is-ready">${escapeHtml(agent.generatedFeatureId || "")}</span>
+        </div>
+        <div class="studio-feature-meta">
+          <div class="studio-detail-section">
+            <strong>${escapeHtml(t("test.detailFeaturePath"))}</strong>
+            <p>${escapeHtml(agent.generatedFeaturePath || "-")}</p>
+          </div>
+          <div class="studio-detail-section">
+            <strong>${escapeHtml(t("test.featureGeneratedRoot"))}</strong>
+            <p>${escapeHtml(agent.generatedFeaturePath || "-")}</p>
+          </div>
+        </div>
+        <p>${escapeHtml(localizeInline(
+          "TV Box 不提供 public_api 那套动态 feature 路由，当前只展示已生成文件路径。",
+          "TV Box では public_api の動的 feature ルートを提供していないため、ここでは生成済みファイルのパスのみ表示します。",
+          "TV Box does not expose the dynamic feature routes used by public_api, so this panel only shows the generated file path."
+        ))}</p>
       </div>
     `;
   }
@@ -2231,44 +2261,16 @@ function renderTestLab() {
     actionsLog.innerHTML = "";
   }
   const uploadMeta = document.getElementById("test-upload-meta");
-  const summaryButton = document.getElementById("test-doc-summary-pick");
-  const translateButton = document.getElementById("test-doc-translate-pick");
-  summaryButton?.classList.toggle("is-active", testUploadMode === "summary");
-  translateButton?.classList.toggle("is-active", testUploadMode === "translation");
   if (uploadMeta) {
     if (testUploadAttachment) {
       const fileKindLabel = testUploadAttachment.kind === "file"
         ? (currentLocale === "zh-CN" ? "文档已选择" : currentLocale === "ja-JP" ? "ファイル添付済み" : "Document attached")
         : (currentLocale === "zh-CN" ? "图片已选择" : currentLocale === "ja-JP" ? "画像添付済み" : "Image attached");
-      const modeLabel = testUploadMode === "summary"
-        ? (currentLocale === "zh-CN" ? "文档总结" : currentLocale === "ja-JP" ? "要約" : "Summary")
-        : testUploadMode === "translation"
-          ? (currentLocale === "zh-CN" ? "文档翻译" : currentLocale === "ja-JP" ? "翻訳" : "Translation")
-          : (currentLocale === "zh-CN" ? "通用处理" : currentLocale === "ja-JP" ? "汎用处理" : "General");
       uploadMeta.classList.add("is-pending-task");
-      uploadMeta.innerHTML = `
-        <span class="test-upload-mode-pill">${escapeHtml(modeLabel)}</span>
-        <span>${escapeHtml(fileKindLabel)}: ${escapeHtml(testUploadAttachment.name)} (${Math.round((testUploadAttachment.sizeBytes || 0) / 1024)} KB)</span>
-      `;
+      uploadMeta.innerHTML = `<span>${escapeHtml(fileKindLabel)}: ${escapeHtml(testUploadAttachment.name)} (${Math.round((testUploadAttachment.sizeBytes || 0) / 1024)} KB)</span>`;
     } else {
-      if (testUploadMode === "summary" || testUploadMode === "translation") {
-        const pendingLabel = testUploadMode === "summary"
-          ? (currentLocale === "zh-CN" ? "文档总结" : currentLocale === "ja-JP" ? "要約" : "Summary")
-          : (currentLocale === "zh-CN" ? "文档翻译" : currentLocale === "ja-JP" ? "翻訳" : "Translation");
-        const pendingHint = currentLocale === "zh-CN"
-          ? "已选择动作，请继续上传文档。"
-          : currentLocale === "ja-JP"
-            ? "アクションを選択しました。続けて文書をアップロードしてください。"
-            : "Action selected. Upload a document to continue.";
-        uploadMeta.classList.add("is-pending-task");
-        uploadMeta.innerHTML = `
-          <span class="test-upload-mode-pill">${escapeHtml(pendingLabel)}</span>
-          <span>${escapeHtml(pendingHint)}</span>
-        `;
-      } else {
-        uploadMeta.classList.remove("is-pending-task");
-        uploadMeta.textContent = "";
-      }
+      uploadMeta.classList.remove("is-pending-task");
+      uploadMeta.textContent = "";
     }
   }
   requestAnimationFrame(() => {
@@ -3932,84 +3934,58 @@ async function sendTestAgentMessage(message, selected = null) {
 
 async function sendTestAttachmentMessage(message) {
   const selected = getSelectedStudioAgent();
-  if (!selected || !isAgentReadyForExecution(selected)) {
-    const replyText = currentLocale === "zh-CN"
-      ? "HomeHub：当前还没有可接收附件的已完成智能体，请先到“智能体”标签中完成一个蓝图。"
-      : currentLocale === "ja-JP"
-        ? "HomeHub: 添付を受け取れる完成済みエージェントがまだありません。先に「エージェント」タブでブループリントを完成させてください。"
-        : "HomeHub: There is no completed smart unit ready for attachments yet. Finish one in the Agents tab first.";
-    testConversation.push({
-      speaker: "HomeHub",
-      text: replyText,
-      time: new Date().toLocaleTimeString(currentLocale, { hour: "2-digit", minute: "2-digit" })
-    });
-    renderTestLab();
-    updateSpokenLine(replyText);
-    return;
-  }
-  const fallbackMessage = testUploadMode === "summary"
-    ? (currentLocale === "zh-CN"
-      ? `请对这份文档进行总结，然后发给我：${testUploadAttachment?.name || ""}`
-      : currentLocale === "ja-JP"
-        ? `${testUploadAttachment?.name || ""} を要約して送ってください`
-        : `Summarize this document and send it to me: ${testUploadAttachment?.name || ""}`)
-    : testUploadMode === "translation"
-      ? (currentLocale === "zh-CN"
-        ? `请对这份文档进行翻译，然后发给我：${testUploadAttachment?.name || ""}`
-        : currentLocale === "ja-JP"
-          ? `${testUploadAttachment?.name || ""} を翻訳して送ってください`
-          : `Translate this document and send it to me: ${testUploadAttachment?.name || ""}`)
-      : (message || `[Image uploaded] ${testUploadAttachment?.name || ""}`.trim());
-  const effectiveMessage = message || fallbackMessage;
-  const userText = effectiveMessage;
+  const fileName = testUploadAttachment?.name || "";
+  const effectiveMessage = (message && message.trim())
+    ? message.trim()
+    : (testUploadAttachment?.kind === "image"
+        ? (currentLocale === "zh-CN" ? `收到图片: ${fileName}` : currentLocale === "ja-JP" ? `画像を受け取りました: ${fileName}` : `Image uploaded: ${fileName}`)
+        : (currentLocale === "zh-CN" ? `收到文档: ${fileName}` : currentLocale === "ja-JP" ? `ファイルを受け取りました: ${fileName}` : `File uploaded: ${fileName}`));
+  const userText = (message && message.trim()) ? message.trim() : effectiveMessage;
   testConversation.push({
     speaker: "You",
     text: userText,
     time: new Date().toLocaleTimeString(currentLocale, { hour: "2-digit", minute: "2-digit" })
   });
   renderTestLab();
-  let response;
+  let attachments = [];
   if (testUploadAttachment?.file instanceof File) {
-    const formData = new FormData();
-    formData.append("id", selected.id);
-    formData.append("locale", currentLocale);
-    formData.append("message", effectiveMessage || "");
-    formData.append("attachment_kind", testUploadAttachment.kind || "file");
-    formData.append(
-      "attachment",
-      testUploadAttachment.file,
-      testUploadAttachment.name || testUploadAttachment.file.name || "attachment.bin"
-    );
-    response = await fetch("/api/custom-agents/intake", {
-      method: "POST",
-      body: formData
-    });
-  } else {
-    response = await fetch("/api/custom-agents/intake", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: selected.id,
-        locale: currentLocale,
-        message: effectiveMessage,
-        attachments: [testUploadAttachment]
-      })
-    });
+    const base64Payload = await blobToBase64(testUploadAttachment.file);
+    attachments = [{
+      name: testUploadAttachment.name || testUploadAttachment.file.name || "attachment.bin",
+      mimeType: testUploadAttachment.mimeType || testUploadAttachment.file.type || "application/octet-stream",
+      sizeBytes: testUploadAttachment.sizeBytes || testUploadAttachment.file.size || 0,
+      kind: testUploadAttachment.kind || "file",
+      ...(testUploadAttachment.kind === "image"
+        ? { imageBase64: base64Payload }
+        : { fileBase64: base64Payload }),
+    }];
+  } else if (testUploadAttachment) {
+    attachments = [testUploadAttachment];
   }
+  const response = await fetch("/api/custom-agents/intake", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: selected?.id || "voice-chat",
+      locale: currentLocale,
+      message: effectiveMessage,
+      attachments
+    })
+  });
   const payload = await response.json();
   if (!response.ok) {
-    updateSpokenLine(`HomeHub: ${payload.error || "Failed to process the uploaded image."}`);
+    updateSpokenLine(`HomeHub: ${payload.error || "Failed to process the uploaded file."}`);
     return;
   }
   testConversation.push({
     speaker: "HomeHub",
-    text: payload.reply || "Image received.",
+    text: payload.reply || "File received.",
     time: new Date().toLocaleTimeString(currentLocale, { hour: "2-digit", minute: "2-digit" }),
     artifacts: Array.isArray(payload.artifacts) ? payload.artifacts : []
   });
   testUploadMode = "generic";
   renderTestLab();
-  updateSpokenLine(`HomeHub: ${payload.reply || "Image received."}`);
+  updateSpokenLine(`HomeHub: ${payload.reply || "File received."}`);
   await refreshCustomAgentStudio();
   refreshDashboardInBackground();
 }
@@ -4338,24 +4314,7 @@ async function triggerRemoteAction(target) {
     }
     return;
   }
-  if (target.id === "test-doc-summary-pick") {
-    testUploadMode = "summary";
-    const fileInput = document.getElementById("test-file-input");
-    if (fileInput) {
-      fileInput.value = "";
-      fileInput.click();
-    }
-    return;
-  }
-  if (target.id === "test-doc-translate-pick") {
-    testUploadMode = "translation";
-    const fileInput = document.getElementById("test-file-input");
-    if (fileInput) {
-      fileInput.value = "";
-      fileInput.click();
-    }
-    return;
-  }
+
   if (target.id === "test-generate-feature") {
     await generateSelectedFeature();
     return;
@@ -4944,15 +4903,15 @@ async function sendVoiceMessage(message, options = {}) {
   return payload;
 }
 
-async function transcribeBlob(blob) {
-  const base64Audio = await new Promise((resolve, reject) => {
+async function blobToBase64(blob) {
+  return await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
       const result = String(reader.result || "");
       const marker = "base64,";
       const index = result.indexOf(marker);
       if (index === -1) {
-        reject(new Error("Unable to encode audio."));
+        reject(new Error("Unable to encode binary payload."));
         return;
       }
       resolve(result.slice(index + marker.length));
@@ -4960,6 +4919,10 @@ async function transcribeBlob(blob) {
     reader.onerror = () => reject(reader.error || new Error("FileReader failed."));
     reader.readAsDataURL(blob);
   });
+}
+
+async function transcribeBlob(blob) {
+  const base64Audio = await blobToBase64(blob);
 
   const provider = getSelectedProviders().stt;
   const response = await fetch("/api/audio/transcribe", {

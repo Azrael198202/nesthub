@@ -77,8 +77,11 @@ def _create_app() -> Any:
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     index_file = static_dir / "index.html"
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = Path(__file__).resolve().parents[2]
     demo_dir = repo_root / "examples" / "ui"
+    generated_dir = repo_root / "generated"
+    if generated_dir.exists() and generated_dir.is_dir():
+        app.mount("/generated", StaticFiles(directory=str(generated_dir)), name="generated")
 
     def _load_json(path: Path, fallback: dict[str, Any]) -> dict[str, Any]:
         if not path.exists():
@@ -87,6 +90,14 @@ def _create_app() -> Any:
             return json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return copy.deepcopy(fallback)
+
+    async def _safe_request_form(request: Request) -> Any:
+        try:
+            return await request.form()
+        except AssertionError as exc:
+            if "python-multipart" in str(exc):
+                raise RuntimeError("python-multipart is required for multipart/form-data uploads") from exc
+            raise
 
     dashboard_fallback: dict[str, Any] = {
         "hero": {"title": "HomeHub", "subtitle": "AI Box", "tagline": "Demo mode"},
@@ -267,8 +278,16 @@ def _create_app() -> Any:
     def _now_time() -> str:
         return datetime.now(UTC).astimezone().strftime("%H:%M")
 
-    def _artifact_url(category: str, artifact_id: str) -> str:
-        return f"/api/generated-artifacts/open/{category}/{artifact_id}"
+    def _artifact_url(category: str, artifact_id: str, artifact_path: str | None = None) -> str:
+        raw_path = str(artifact_path or "").strip()
+        if raw_path:
+            try:
+                path_obj = Path(raw_path).resolve()
+                relative_generated = path_obj.relative_to(generated_dir.resolve())
+                return f"/generated/{relative_generated.as_posix()}"
+            except Exception:
+                pass
+        return f"/api/tvbox/generated-artifacts/open/{category}/{artifact_id}"
 
     def _artifact_file_path(category: str, artifact_id: str) -> Path | None:
         category_aliases = {
@@ -315,7 +334,7 @@ def _create_app() -> Any:
                 {
                     "label": str(artifact.get("name") or artifact_id),
                     "fileName": str(artifact.get("name") or artifact_id),
-                    "url": _artifact_url(artifact_type, artifact_id),
+                    "url": _artifact_url(artifact_type, artifact_id, str(artifact.get("path") or "")),
                     "artifactType": artifact_type,
                 }
             )
@@ -546,6 +565,64 @@ def _create_app() -> Any:
                 pass
             await asyncio.sleep(bridge_poll_interval)
 
+    def _build_model_catalog() -> list[dict[str, Any]]:
+        """Build a model catalog list from model_routes.json and local_model_registry.json."""
+        config_dir = Path(__file__).resolve().parents[1] / "config"
+        routes_path = config_dir / "model_routes.json"
+        local_reg_path = config_dir / "local_model_registry.json"
+
+        routes: dict[str, Any] = _load_json(routes_path, {})
+        local_reg: dict[str, Any] = _load_json(local_reg_path, {})
+        local_models: list[str] = local_reg.get("models") or []
+
+        # Collect unique model names and their task contexts from routes
+        model_tasks: dict[str, list[str]] = {}
+        for intent, steps in routes.items():
+            if intent == "default":
+                continue
+            if isinstance(steps, dict):
+                for step_name, step_cfg in steps.items():
+                    if isinstance(step_cfg, dict):
+                        model_name = str(step_cfg.get("model") or "").strip()
+                        if model_name:
+                            model_tasks.setdefault(model_name, []).append(intent)
+
+        # Also include local registry models not already captured
+        for m in local_models:
+            model_tasks.setdefault(m, [])
+
+        # Also capture models seen in runtime capabilities from recent traces
+        for cap_model in ("qwen2.5", "deepseek-coder", "llama3", "gpt-4o", "gpt-4.1", "claude-3.5-sonnet"):
+            if cap_model not in model_tasks:
+                model_tasks[cap_model] = []
+
+        catalog: list[dict[str, Any]] = []
+        for model_name, tasks in model_tasks.items():
+            is_local = model_name in local_models or any(
+                kw in model_name for kw in ("qwen", "llama", "deepseek", "whisper", "paddle", "openvoice", "stable-diffusion", "runway", "rule-", "state-", "aggregation-", "playwright", "python-docx")
+            )
+            source = "local" if is_local else "cloud"
+            catalog.append({
+                "id": f"provider-{model_name.replace('/', '-')}",
+                "label": model_name,
+                "source": source,
+                "deployment": "local" if is_local else "api",
+                "access": "free" if is_local else "key-required",
+                "status": "active" if model_name in local_models else "configured",
+                "capabilities": list(dict.fromkeys(tasks))[:6],
+                "models": [model_name],
+                "languages": ["zh-CN", "en-US", "ja-JP"],
+                "summary": f"Used for: {', '.join(tasks[:3])}" if tasks else model_name,
+                "sync": {"openclaw": "manual", "workbuddy": "manual"},
+                "requirements": [],
+                "notes": [],
+                "installCommand": "",
+                "editable": False,
+                "actions": [],
+            })
+
+        return sorted(catalog, key=lambda x: (x["source"] != "local", x["label"]))
+
     def _dashboard_snapshot() -> dict[str, Any]:
         snapshot = copy.deepcopy(dashboard_state)
         supported_languages = get_supported_languages()
@@ -559,6 +636,9 @@ def _create_app() -> Any:
         snapshot.setdefault("voiceProfile", {})
         snapshot["voiceProfile"]["locale"] = current
         snapshot["generatedArtifacts"] = artifact_store.list_artifacts()
+        model_catalog = _build_model_catalog()
+        snapshot["modelCatalog"] = model_catalog
+        snapshot.setdefault("audioProviders", {}).setdefault("counts", {})["total"] = len(model_catalog)
         return snapshot
 
     @app.get("/")
@@ -739,7 +819,7 @@ def _create_app() -> Any:
             },
         }
 
-    @app.get("/api/generated-artifacts/open/{category}/{artifact_id}")
+    @app.get("/api/tvbox/generated-artifacts/open/{category}/{artifact_id}")
     def api_generated_artifact_open(category: str, artifact_id: str):
         path = _artifact_file_path(category, artifact_id)
         if path is None or not path.exists():
@@ -792,7 +872,7 @@ def _create_app() -> Any:
 
         if not language:
             try:
-                form = await request.form()
+                form = await _safe_request_form(request)
                 language = str(form.get("language", "")).strip()
             except Exception:
                 language = ""
@@ -904,7 +984,10 @@ def _create_app() -> Any:
         if content_type.startswith("application/json"):
             body = await request.json()
         elif content_type.startswith("multipart/form-data"):
-            form = await request.form()
+            try:
+                form = await _safe_request_form(request)
+            except RuntimeError as exc:
+                return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
 
         agent_id = str((body.get("id") if body else None) or (form.get("id") if form else None) or "default").strip() or "default"
         locale = normalize_locale(
