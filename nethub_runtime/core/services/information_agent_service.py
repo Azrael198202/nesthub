@@ -880,6 +880,14 @@ class InformationAgentService:
     def query_information_knowledge(self, *, text: str, context: CoreContextSchema) -> dict[str, Any]:
         state = self.session_store.get(context.session_id)
         configured_agent = state.get("configured_agent") or {}
+        if configured_agent.get("status") != "active":
+            recovered_agent = self._recover_configured_agent_from_promoted_facts(context.session_id)
+            if recovered_agent:
+                configured_agent = recovered_agent
+                state = self.session_store.patch(
+                    context.session_id,
+                    {"configured_agent": {**configured_agent, "knowledge_records": configured_agent.get("knowledge_records") or {}}},
+                )
         records = configured_agent.get("knowledge_records") or {}
         if configured_agent.get("status") != "active":
             return {"message": "当前还没有完成信息型智能体的创建。", "answer": None, "knowledge_hits": []}
@@ -906,6 +914,24 @@ class InformationAgentService:
         if not record and knowledge_hits:
             first_hit = knowledge_hits[0]
             record = (first_hit.get("metadata") or {}).get("record")
+        if not record:
+            promoted_fact_hits = self.vector_store.search(
+                text,
+                namespace="information_agent_fact",
+                top_k=5,
+            )
+            filtered_fact_hits = self._filter_promoted_fact_hits(promoted_fact_hits, configured_agent, session_id=context.session_id)
+            if not filtered_fact_hits:
+                all_fact_hits = [
+                    item
+                    for item in list(getattr(self.vector_store, "_items", []))
+                    if str(item.get("namespace") or "") == "information_agent_fact"
+                ]
+                filtered_fact_hits = self._filter_promoted_fact_hits(all_fact_hits, configured_agent, session_id=context.session_id)
+            if filtered_fact_hits:
+                knowledge_hits = [*knowledge_hits, *filtered_fact_hits]
+                first_fact = filtered_fact_hits[0]
+                record = (first_fact.get("metadata") or {}).get("record")
         list_query_markers = [str(item) for item in self._information_collection_policy().get("list_query_markers", []) if str(item).strip()]
         if not record and not knowledge_hits and records and any(marker in normalized_text for marker in list_query_markers):
             knowledge_hits = [
@@ -922,3 +948,88 @@ class InformationAgentService:
             return {"message": f"当前没有找到对应的{entity_label}信息。", "answer": None, "knowledge_hits": knowledge_hits}
         answer = self.answer_record_field(text, record, configured_agent.get("query_aliases") or {}, entity_label, schema_fields)
         return {"message": answer, "answer": answer, "knowledge": record, "knowledge_hits": knowledge_hits}
+
+    def _filter_promoted_fact_hits(self, hits: list[dict[str, Any]], configured_agent: dict[str, Any], session_id: str | None = None) -> list[dict[str, Any]]:
+        agent_id = str(configured_agent.get("agent_id") or "").strip()
+        entity_label = str(configured_agent.get("knowledge_entity_label") or "").strip()
+        normalized_session_id = str(session_id or "").strip()
+        filtered: list[dict[str, Any]] = []
+        for hit in hits:
+            metadata = hit.get("metadata") or {}
+            if not isinstance(metadata, dict):
+                continue
+            record = metadata.get("record") if isinstance(metadata.get("record"), dict) else None
+            if record is None:
+                continue
+            metadata_session_id = str(metadata.get("session_id") or "").strip()
+            metadata_agent_id = str(metadata.get("agent_id") or "").strip()
+            metadata_entity_label = str(metadata.get("entity_label") or "").strip()
+            if normalized_session_id and metadata_session_id and metadata_session_id != normalized_session_id:
+                continue
+            if agent_id and metadata_agent_id and metadata_agent_id != agent_id:
+                continue
+            if entity_label and metadata_entity_label and metadata_entity_label != entity_label:
+                continue
+            filtered.append(hit)
+        return filtered
+
+    def _recover_configured_agent_from_promoted_facts(self, session_id: str) -> dict[str, Any]:
+        items = list(getattr(self.vector_store, "_items", []))
+        fallback_record: dict[str, Any] | None = None
+        for item in reversed(items):
+            if str(item.get("namespace") or "") != "information_agent_fact":
+                continue
+            metadata = item.get("metadata") or {}
+            if not isinstance(metadata, dict):
+                continue
+            if session_id and str(metadata.get("session_id") or "") != session_id:
+                continue
+            metadata_type = str(metadata.get("type") or "")
+            if metadata_type == "information_agent_record" and fallback_record is None:
+                fallback_record = metadata
+                continue
+            if metadata_type != "information_agent_definition":
+                continue
+            entity_label = str(metadata.get("entity_label") or "信息条目")
+            schema_fields = [
+                {"key": str(item), "prompt": f"请补充 {item}。"}
+                for item in list(metadata.get("schema_fields") or [])
+                if str(item).strip()
+            ] or self.default_information_field_definitions()
+            return {
+                "agent_id": str(metadata.get("agent_id") or f"recovered_{session_id}"),
+                "name": str(metadata.get("agent_id") or f"{entity_label}_agent"),
+                "role": f"{entity_label}信息智能体",
+                "description": f"从长期记忆恢复的{entity_label}信息智能体",
+                "knowledge_namespace": "agent_knowledge/information_agent",
+                "knowledge_entity_label": entity_label,
+                "knowledge_schema": schema_fields,
+                "query_aliases": dict(metadata.get("query_aliases") or {}),
+                "activation_keywords": list(metadata.get("activation_keywords") or []),
+                "profile": str(metadata.get("profile") or "generic_information"),
+                "agent_class": "information",
+                "agent_layer": "knowledge",
+                "workflow_roles": ["knowledge_base"],
+                "status": "active",
+                "knowledge_records": {},
+            }
+        if fallback_record is not None:
+            entity_label = str(fallback_record.get("entity_label") or "信息条目")
+            return {
+                "agent_id": str(fallback_record.get("agent_id") or f"recovered_{session_id}"),
+                "name": str(fallback_record.get("agent_id") or f"{entity_label}_agent"),
+                "role": f"{entity_label}信息智能体",
+                "description": f"从长期记忆恢复的{entity_label}信息智能体",
+                "knowledge_namespace": "agent_knowledge/information_agent",
+                "knowledge_entity_label": entity_label,
+                "knowledge_schema": self.default_information_field_definitions(),
+                "query_aliases": {},
+                "activation_keywords": [],
+                "profile": "generic_information",
+                "agent_class": "information",
+                "agent_layer": "knowledge",
+                "workflow_roles": ["knowledge_base"],
+                "status": "active",
+                "knowledge_records": {},
+            }
+        return {}

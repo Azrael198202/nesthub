@@ -44,6 +44,7 @@ from nethub_runtime.core.hooks.registry import get_hook_registry
 from nethub_runtime.core.services.bootstrap_loader import BootstrapLoader
 from nethub_runtime.core.memory.session_store import SessionCompactor
 from nethub_runtime.core.services.session_queue import SessionQueueManager
+from nethub_runtime.core.services.memory_promotion_service import MemoryPromotionService
 
 
 class AICore:
@@ -99,7 +100,7 @@ class AICore:
         self.runtime_design_synthesizer = RuntimeDesignSynthesizer()
         
         # ========== 传统插件-based 服务 ==========
-        self.intent_analyzer = IntentAnalyzer()
+        self.intent_analyzer = IntentAnalyzer(vector_store=self.vector_store)
         self.task_decomposer = TaskDecomposer()
         self.workflow_planner = WorkflowPlanner()
         self.blueprint_resolver = BlueprintResolver(registry=Registry())
@@ -123,7 +124,7 @@ class AICore:
             self.model_router = None
 
         keyword_signal_analyzer = RuntimeKeywordSignalAnalyzer(model_router=self.model_router)
-        self.intent_analyzer = IntentAnalyzer(keyword_analyzer=keyword_signal_analyzer)
+        self.intent_analyzer = IntentAnalyzer(keyword_analyzer=keyword_signal_analyzer, vector_store=self.vector_store)
 
         self.execution_coordinator = ExecutionCoordinator(
             session_store=self.context_manager.session_store,
@@ -136,6 +137,11 @@ class AICore:
         self.runtime_outcome_evaluator = RuntimeOutcomeEvaluator()
         self.runtime_repair_service = RuntimeRepairService()
         self.user_goal_evaluator = UserGoalEvaluator(keyword_analyzer=keyword_signal_analyzer)
+        self.memory_promotion_service = MemoryPromotionService(
+            semantic_policy_store=self.execution_coordinator.semantic_policy_store,
+            vector_store=self.vector_store,
+            generated_artifact_store=self.generated_artifact_store,
+        )
 
         # ========== 自我意识：能力获取 + 运行时学习 ==========
         self.runtime_learning_store = RuntimeLearningStore(
@@ -211,6 +217,11 @@ class AICore:
                 )
                 # Propagate to ExecutionCoordinator
                 self.execution_coordinator.vector_store = self.vector_store
+                self.execution_coordinator.information_agent_service.vector_store = self.vector_store
+                self.memory_promotion_service.vector_store = self.vector_store
+                for plugin in self.intent_analyzer.plugins:
+                    if hasattr(plugin, "vector_store"):
+                        plugin.vector_store = self.vector_store
                 self.logger.info("✓ VectorStore persistence: SQLite at %s (%d items restored)",
                                  _vs_db_path, len(self.vector_store._items))
             except Exception as _vpe:
@@ -318,7 +329,7 @@ class AICore:
     def reload_plugins(self) -> dict[str, Any]:
         """Reload plugin-enabled services from config without restarting process."""
         keyword_signal_analyzer = RuntimeKeywordSignalAnalyzer(model_router=self.model_router)
-        self.intent_analyzer = IntentAnalyzer(keyword_analyzer=keyword_signal_analyzer)
+        self.intent_analyzer = IntentAnalyzer(keyword_analyzer=keyword_signal_analyzer, vector_store=self.vector_store)
         self.task_decomposer = TaskDecomposer()
         self.workflow_planner = WorkflowPlanner()
         self.capability_router = CapabilityRouter()
@@ -332,6 +343,62 @@ class AICore:
 
     def inspect_semantic_memory(self, *, policy_key: str | None = None, status: str | None = None) -> dict[str, Any]:
         return self.execution_coordinator.semantic_policy_store.inspect_memory(policy_key=policy_key, status=status)
+
+    def inspect_runtime_memory(
+        self,
+        *,
+        query: str | None = None,
+        namespace: str | None = None,
+        top_k: int = 5,
+    ) -> dict[str, Any]:
+        artifacts = self.generated_artifact_store.list_artifacts().get("code", [])
+        memory_promotion_artifacts = [
+            item for item in artifacts if str(item.get("artifactId") or "").startswith("memory_promotion_")
+        ]
+        vector_namespaces = [
+            "document_analysis",
+            "information_agent",
+            "information_agent_fact",
+        ]
+        namespaces = [namespace] if namespace else vector_namespaces
+        vector_hits: list[dict[str, Any]] = []
+        if query:
+            for current_namespace in namespaces:
+                for item in self.vector_store.search(query, top_k=top_k, namespace=current_namespace):
+                    vector_hits.append(
+                        {
+                            "id": item.get("id"),
+                            "namespace": item.get("namespace"),
+                            "content": item.get("content"),
+                            "metadata": item.get("metadata") or {},
+                        }
+                    )
+        if not vector_hits:
+            recent_items = list(getattr(self.vector_store, "_items", []))
+            for current_namespace in namespaces:
+                namespace_items = [
+                    item for item in recent_items if str(item.get("namespace") or "") == current_namespace
+                ]
+                for item in namespace_items[-top_k:]:
+                    vector_hits.append(
+                        {
+                            "id": item.get("id"),
+                            "namespace": item.get("namespace"),
+                            "content": item.get("content"),
+                            "metadata": item.get("metadata") or {},
+                        }
+                    )
+
+        semantic_snapshot = self.execution_coordinator.semantic_policy_store.inspect_memory()
+        return {
+            "query": query or "",
+            "namespace": namespace or "*",
+            "promotion_artifacts": memory_promotion_artifacts[-10:],
+            "vector_hits": vector_hits,
+            "vector_namespaces": namespaces,
+            "semantic_memory_summary": semantic_snapshot.get("summary") or {},
+            "semantic_memory_latest_rollback": semantic_snapshot.get("latest_rollback"),
+        }
 
     async def handle(
         self,
@@ -625,6 +692,18 @@ class AICore:
                 context=ctx,
                 fmt=fmt,
             )
+
+            if isinstance(final_result, dict):
+                promotion_summary = self.memory_promotion_service.promote_execution_result(
+                    task=final_result.get("task") or task.model_dump(),
+                    context={
+                        "trace_id": ctx.trace_id,
+                        "session_id": ctx.session_id,
+                        "metadata": ctx.metadata,
+                    },
+                    execution_result=final_result.get("execution_result") or {},
+                )
+                final_result.setdefault("execution_result", {})["memory_promotion"] = promotion_summary
 
             trace_artifact_path = self._persist_runtime_trace(
                 trace_id=ctx.trace_id,

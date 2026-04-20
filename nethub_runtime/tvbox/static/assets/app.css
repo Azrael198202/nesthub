@@ -3020,6 +3020,10 @@ button {
   line-height: 1.35;
 }
 
+.memory-hit-card {
+  gap: 10px;
+}
+
 .language-card.is-selected-language {
   border-color: rgba(85, 208, 177, 0.55);
   background: linear-gradient(135deg, rgba(85, 208, 177, 0.18), rgba(18, 31, 46, 0.96));

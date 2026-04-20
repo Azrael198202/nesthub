@@ -24,6 +24,30 @@ def test_tvbox_generated_artifacts_api_lists_generated_files() -> None:
     assert any(item["artifactId"] == "tvbox_blueprint_case" for item in payload["items"]["blueprint"])
 
 
+def test_tvbox_runtime_memory_api_proxies_core_memory_inspection(monkeypatch) -> None:
+    class FakeCore:
+        def inspect_runtime_memory(self, query=None, namespace=None, top_k=5):
+            return {
+                "query": query or "",
+                "namespace": namespace or "*",
+                "promotion_artifacts": [{"artifactId": "memory_promotion_demo", "name": "memory_promotion_demo.json", "contentPreview": "demo"}],
+                "vector_hits": [{"id": "fact_1", "namespace": "information_agent_fact", "content": "item_name: 供应商甲", "metadata": {"record": {"item_name": "供应商甲"}}}],
+                "semantic_memory_summary": {"active": 1},
+                "semantic_memory_latest_rollback": None,
+            }
+
+    monkeypatch.setattr(tvbox_main, "_create_core_engine", lambda: FakeCore())
+    client = TestClient(_create_app())
+
+    response = client.get("/api/runtime-memory", params={"query": "供应商甲", "namespace": "information_agent_fact"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["result"]["vector_hits"][0]["namespace"] == "information_agent_fact"
+    assert payload["result"]["promotion_artifacts"][0]["artifactId"] == "memory_promotion_demo"
+
+
 def test_tvbox_generated_artifacts_api_deletes_generated_files() -> None:
     store = GeneratedArtifactStore()
     store.persist("agent", "tvbox_agent_case", {"name": "tvbox-agent"})

@@ -11,6 +11,7 @@ import copy
 import json
 import re
 import base64
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 import asyncio
 from typing import Any
@@ -123,6 +124,7 @@ def _create_app() -> Any:
         "bootstrap": {"approved": True, "inProgress": False, "blocking": False, "completed": True, "message": "Demo mode"},
         "externalChannels": {"mailConfig": {}, "mail": {"inbox": [], "outbox": [], "lastSyncAt": ""}, "apps": {"line": {"inbox": [], "outbox": []}, "wechatOfficial": {"inbox": [], "outbox": []}}, "recentActions": []},
         "assistantMemory": {"dueReminders": [], "pendingReminders": [], "upcomingEvents": [], "recentActions": []},
+        "runtimeMemory": {"query": "", "namespace": "*", "promotionArtifacts": [], "vectorHits": [], "semanticMemorySummary": {}, "semanticMemoryLatestRollback": None},
         "customAgents": [],
         "customAgentRecentActions": [],
         "studyPlanAgents": [],
@@ -137,6 +139,24 @@ def _create_app() -> Any:
     core_engine = _create_core_engine()
     bridge_api, bridge_token, bridge_poll_interval = _load_bridge_config()
     bridge_worker: dict[str, asyncio.Task[Any] | None] = {"task": None}
+
+    @asynccontextmanager
+    async def lifespan(_app: Any):
+        if bridge_api and bridge_token and bridge_worker["task"] is None:
+            bridge_worker["task"] = asyncio.create_task(_bridge_poll_loop())
+        try:
+            yield
+        finally:
+            task = bridge_worker.get("task")
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                bridge_worker["task"] = None
+
+    app.router.lifespan_context = lifespan
 
     def _tvbox_session_id(agent_id: str | None = None) -> str:
         raw = str(agent_id or "default").strip() or "default"
@@ -501,22 +521,6 @@ def _create_app() -> Any:
                 pass
             await asyncio.sleep(bridge_poll_interval)
 
-    @app.on_event("startup")
-    async def startup_bridge_worker() -> None:
-        if bridge_api and bridge_token and bridge_worker["task"] is None:
-            bridge_worker["task"] = asyncio.create_task(_bridge_poll_loop())
-
-    @app.on_event("shutdown")
-    async def shutdown_bridge_worker() -> None:
-        task = bridge_worker.get("task")
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            bridge_worker["task"] = None
-
     def _dashboard_snapshot() -> dict[str, Any]:
         snapshot = copy.deepcopy(dashboard_state)
         supported_languages = get_supported_languages()
@@ -603,6 +607,19 @@ def _create_app() -> Any:
     @app.get("/api/generated-artifacts")
     def api_generated_artifacts():
         return {"ok": True, "items": artifact_store.list_artifacts()}
+
+    @app.get("/api/runtime-memory")
+    def api_runtime_memory(query: str | None = None, namespace: str | None = None, top_k: int = 5):
+        payload = core_engine.inspect_runtime_memory(query=query, namespace=namespace, top_k=top_k)
+        dashboard_state["runtimeMemory"] = {
+            "query": payload.get("query", ""),
+            "namespace": payload.get("namespace", "*"),
+            "promotionArtifacts": payload.get("promotion_artifacts", []),
+            "vectorHits": payload.get("vector_hits", []),
+            "semanticMemorySummary": payload.get("semantic_memory_summary", {}),
+            "semanticMemoryLatestRollback": payload.get("semantic_memory_latest_rollback"),
+        }
+        return {"ok": True, "result": payload}
 
     @app.get("/api/generated-artifacts/open/{category}/{artifact_id}")
     def api_generated_artifact_open(category: str, artifact_id: str):

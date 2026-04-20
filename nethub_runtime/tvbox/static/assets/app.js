@@ -18,6 +18,7 @@ let latestDashboard = null;
 let latestCortexUnpacked = null;
 let currentLocale = "en-US";
 let generatedArtifactsRuntime = { items: {}, isLoading: false, error: "" };
+let runtimeMemoryInspection = { query: "", namespace: "*", result: null, isLoading: false, error: "" };
 let mediaRecorder = null;
 let mediaChunks = [];
 let isRecording = false;
@@ -248,6 +249,10 @@ function settingsSectionCatalog() {
     artifacts: {
       label: "Generated Artifacts",
       summary: "Browse runtime generated blueprints, agents, and features"
+    },
+    memory: {
+      label: "Runtime Memory",
+      summary: "Inspect promotion artifacts, promoted facts, and reusable experiences"
     }
   };
 }
@@ -289,6 +294,31 @@ async function deleteGeneratedArtifact(category, artifactId) {
   }
 }
 
+async function loadRuntimeMemoryInspection(query = runtimeMemoryInspection.query || "", namespace = runtimeMemoryInspection.namespace || "*") {
+  runtimeMemoryInspection.isLoading = true;
+  runtimeMemoryInspection.error = "";
+  runtimeMemoryInspection.query = String(query || "");
+  runtimeMemoryInspection.namespace = String(namespace || "*");
+  renderSettings(latestDashboard);
+  try {
+    const params = new URLSearchParams();
+    if (runtimeMemoryInspection.query) params.set("query", runtimeMemoryInspection.query);
+    if (runtimeMemoryInspection.namespace && runtimeMemoryInspection.namespace !== "*") params.set("namespace", runtimeMemoryInspection.namespace);
+    params.set("top_k", "8");
+    const response = await fetch(`/api/runtime-memory?${params.toString()}`);
+    const payload = await response.json();
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || "Failed to load runtime memory.");
+    }
+    runtimeMemoryInspection.result = payload.result || null;
+  } catch (error) {
+    runtimeMemoryInspection.error = String(error.message || error);
+  } finally {
+    runtimeMemoryInspection.isLoading = false;
+    renderSettings(latestDashboard);
+  }
+}
+
 function renderGeneratedArtifactGroups() {
   const groups = generatedArtifactsRuntime.items || {};
   const order = ["blueprint", "agent", "feature", "trace", "code"];
@@ -314,6 +344,33 @@ function renderGeneratedArtifactGroups() {
       </div>
     `;
   }).join("");
+}
+
+function renderRuntimeMemoryHits(result) {
+  const hits = Array.isArray(result?.vector_hits) ? result.vector_hits : [];
+  if (!hits.length) return `<div class="settings-card"><p>No runtime memory hits yet.</p></div>`;
+  return hits.map((hit) => `
+    <article class="settings-card memory-hit-card">
+      <div class="agent-row">
+        <strong>${escapeHtml(hit.namespace || "memory")}</strong>
+        <span class="pill">${escapeHtml(hit.id || "-")}</span>
+      </div>
+      <p>${escapeHtml(hit.content || "")}</p>
+      <pre class="cortex-json-view">${escapeHtml(JSON.stringify(hit.metadata || {}, null, 2))}</pre>
+    </article>
+  `).join("");
+}
+
+function renderRuntimeMemoryArtifacts(result) {
+  const items = Array.isArray(result?.promotion_artifacts) ? result.promotion_artifacts : [];
+  if (!items.length) return `<div class="settings-card"><p>No promotion artifacts yet.</p></div>`;
+  return items.map((item) => `
+    <article class="settings-card memory-hit-card">
+      <strong>${escapeHtml(item.name || item.artifactId || "memory artifact")}</strong>
+      <p>${escapeHtml(item.path || "")}</p>
+      <p>${escapeHtml(item.contentPreview || "")}</p>
+    </article>
+  `).join("");
 }
 
 function localizeCatalogText(entry) {
@@ -2706,6 +2763,9 @@ function activateSettingsSection(sectionId, focusButton = false) {
   if (activeSettingsSection === "artifacts" && !generatedArtifactsRuntime.isLoading) {
     loadGeneratedArtifacts().catch(() => {});
   }
+  if (activeSettingsSection === "memory" && !runtimeMemoryInspection.isLoading) {
+    loadRuntimeMemoryInspection().catch(() => {});
+  }
   if (latestDashboard) {
     renderSettings(latestDashboard);
   }
@@ -3043,6 +3103,58 @@ function renderSettingsDetail(data) {
         if (category && artifactId) await deleteGeneratedArtifact(category, artifactId);
       };
     });
+    return;
+  }
+
+  if (activeSettingsSection === "memory") {
+    const result = runtimeMemoryInspection.result || {};
+    const semanticSummary = result.semantic_memory_summary || {};
+    detail.innerHTML = `
+      ${overview}
+      <div class="settings-section-header">
+        <div>
+          <p class="eyebrow">Runtime Memory</p>
+          <h3>Runtime Memory</h3>
+        </div>
+        <span class="pill">promotion + facts</span>
+      </div>
+      <p class="settings-section-copy">Inspect what HomeHub promoted into long-term memory, including artifacts, structured facts, and reusable experiences.</p>
+      <div class="mail-tester-grid">
+        <input id="runtime-memory-query" class="settings-input full-span" type="text" placeholder="Search memory, e.g. 供应商甲 / 联调 / project" value="${escapeHtml(runtimeMemoryInspection.query || "")}" />
+        <select id="runtime-memory-namespace" class="settings-input">
+          ${["*", "document_analysis", "information_agent", "information_agent_fact"].map((item) => `<option value="${escapeHtml(item)}" ${runtimeMemoryInspection.namespace === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="studio-actions">
+        <button id="runtime-memory-refresh" class="test-action remote-target" type="button">Inspect</button>
+      </div>
+      ${runtimeMemoryInspection.isLoading ? `<div class="settings-card"><p>Loading runtime memory...</p></div>` : ""}
+      ${runtimeMemoryInspection.error ? `<div class="settings-card"><p>${escapeHtml(runtimeMemoryInspection.error)}</p></div>` : ""}
+      <div class="settings-detail-grid">
+        <div class="settings-card">
+          <strong>Semantic Memory Summary</strong>
+          <pre class="cortex-json-view">${escapeHtml(JSON.stringify(semanticSummary, null, 2))}</pre>
+        </div>
+        <div class="settings-card">
+          <strong>Latest Rollback</strong>
+          <pre class="cortex-json-view">${escapeHtml(JSON.stringify(result.semantic_memory_latest_rollback || {}, null, 2))}</pre>
+        </div>
+      </div>
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>Promotion Artifacts</h3></div>
+        ${renderRuntimeMemoryArtifacts(result)}
+      </div>
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>Vector Hits</h3></div>
+        ${renderRuntimeMemoryHits(result)}
+      </div>
+    `;
+    const refreshButton = document.getElementById("runtime-memory-refresh");
+    const queryInput = document.getElementById("runtime-memory-query");
+    const namespaceInput = document.getElementById("runtime-memory-namespace");
+    if (refreshButton) {
+      refreshButton.onclick = () => loadRuntimeMemoryInspection(queryInput?.value || "", namespaceInput?.value || "*");
+    }
     return;
   }
 

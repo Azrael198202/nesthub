@@ -27,12 +27,14 @@ class SemanticIntentPlugin:
         keyword_analyzer: RuntimeKeywordSignalAnalyzer | None = None,
         semantic_policy_store: SemanticPolicyStore | None = None,
         obsidian_memory: ObsidianMemoryStore | None = None,
+        vector_store: Any | None = None,
     ) -> None:
         ensure_core_config_dir()
         self.policy_path = policy_path or INTENT_POLICY_PATH
         self.semantic_policy_store = semantic_policy_store or SemanticPolicyStore(policy_path=SEMANTIC_POLICY_PATH)
         self.policy_manager = policy_manager or IntentPolicyManager(policy_path=self.policy_path)
         self.keyword_analyzer = keyword_analyzer or RuntimeKeywordSignalAnalyzer(semantic_policy_store=self.semantic_policy_store)
+        self.vector_store = vector_store
         # Obsidian vault as AI Memory / RAG source (no-op when vault not configured)
         self.obsidian_memory: ObsidianMemoryStore = obsidian_memory or ObsidianMemoryStore()
         self.policy = self._load_policy()
@@ -151,13 +153,15 @@ class SemanticIntentPlugin:
         configured_agent = state.get("configured_agent") or {}
         setup = state.get("agent_setup") or {}
         collection = state.get("knowledge_collection") or {}
-        schema_fields = configured_agent.get("knowledge_schema") or []
-        query_aliases = [str(item) for item in dict(configured_agent.get("query_aliases") or {}).keys()]
-        activation_keywords = [str(item) for item in list(configured_agent.get("activation_keywords") or [])]
+        recovered_agent = self._recover_agent_from_promoted_memory(context)
+        effective_agent = configured_agent if configured_agent.get("status") == "active" else recovered_agent
+        schema_fields = effective_agent.get("knowledge_schema") or []
+        query_aliases = [str(item) for item in dict(effective_agent.get("query_aliases") or {}).keys()]
+        activation_keywords = [str(item) for item in list(effective_agent.get("activation_keywords") or [])]
         agent_identity_terms = [
-            str(configured_agent.get("name") or ""),
-            str(configured_agent.get("role") or ""),
-            str(configured_agent.get("knowledge_entity_label") or ""),
+            str(effective_agent.get("name") or ""),
+            str(effective_agent.get("role") or ""),
+            str(effective_agent.get("knowledge_entity_label") or ""),
         ]
         active_agent_terms = [item for item in [*activation_keywords, *query_aliases, *agent_identity_terms] if item]
         action_flags = keyword_signals.get("action_flags", {}) if isinstance(keyword_signals, dict) else {}
@@ -171,17 +175,20 @@ class SemanticIntentPlugin:
             if str(item).strip()
         }
         for item in schema_fields:
-            if not isinstance(item, dict):
-                continue
-            field_key = str(item.get("key") or "").strip().lower()
-            prompt = str(item.get("prompt") or "").strip().lower()
+            if isinstance(item, dict):
+                field_key = str(item.get("key") or "").strip().lower()
+                prompt = str(item.get("prompt") or "").strip().lower()
+            else:
+                field_key = str(item or "").strip().lower()
+                prompt = ""
             if field_key:
                 field_capture_markers.add(field_key)
             if prompt:
                 field_capture_markers.add(prompt)
 
+        agent_active = effective_agent.get("status") == "active"
         looks_like_field_capture = (
-            configured_agent.get("status") == "active"
+            agent_active
             and not action_flags.get("query_like")
             and not ("?" in text or "？" in text)
             and (":" in text or "：" in text)
@@ -196,16 +203,17 @@ class SemanticIntentPlugin:
                 return ("finalize_information_agent", "agent_management", ["agent", "dialog"], {"need_agent": False})
             return ("refine_information_agent", "agent_management", ["agent", "dialog"], {"need_agent": False})
 
-        if configured_agent.get("status") == "active" and (
+        if agent_active and (
             (action_flags.get("query_like") and not looks_like_field_capture)
             or "?" in text
             or "？" in text
             or (any(keyword in text for keyword in query_aliases) and not looks_like_field_capture)
+            or (not configured_agent.get("status") and any(keyword in text for keyword in active_agent_terms))
             or "query_agent_knowledge" in intent_hints
         ):
             return ("query_agent_knowledge", "knowledge_ops", ["answer", "knowledge_hits"], {"need_agent": False})
 
-        if configured_agent.get("status") == "active" and (
+        if agent_active and (
             action_flags.get("knowledge_capture_like")
             or "capture_agent_knowledge" in intent_hints
             or any(keyword in text for keyword in activation_keywords)
@@ -217,6 +225,53 @@ class SemanticIntentPlugin:
             return ("create_information_agent", "agent_management", ["agent", "dialog"], {"need_agent": True})
 
         return None
+
+    def _recover_agent_from_promoted_memory(self, context: CoreContextSchema) -> dict[str, Any]:
+        if self.vector_store is None:
+            return {}
+        session_id = str(context.session_id or "").strip()
+        items = list(getattr(self.vector_store, "_items", []))
+        fallback_record: dict[str, Any] | None = None
+        for item in reversed(items):
+            if str(item.get("namespace") or "") != "information_agent_fact":
+                continue
+            metadata = item.get("metadata") or {}
+            if not isinstance(metadata, dict):
+                continue
+            if session_id and str(metadata.get("session_id") or "") != session_id:
+                continue
+            metadata_type = str(metadata.get("type") or "")
+            if metadata_type == "information_agent_record" and fallback_record is None:
+                fallback_record = metadata
+                continue
+            if metadata_type != "information_agent_definition":
+                continue
+            entity_label = str(metadata.get("entity_label") or "信息条目")
+            return {
+                "agent_id": str(metadata.get("agent_id") or f"recovered_{session_id}"),
+                "name": str(metadata.get("agent_id") or f"{entity_label}_agent"),
+                "role": f"{entity_label}信息智能体",
+                "knowledge_entity_label": entity_label,
+                "knowledge_schema": list(metadata.get("schema_fields") or []),
+                "query_aliases": dict(metadata.get("query_aliases") or {}),
+                "activation_keywords": list(metadata.get("activation_keywords") or []),
+                "profile": str(metadata.get("profile") or "generic_information"),
+                "status": "active",
+            }
+        if fallback_record is not None:
+            entity_label = str(fallback_record.get("entity_label") or "信息条目")
+            return {
+                "agent_id": str(fallback_record.get("agent_id") or f"recovered_{session_id}"),
+                "name": str(fallback_record.get("agent_id") or f"{entity_label}_agent"),
+                "role": f"{entity_label}信息智能体",
+                "knowledge_entity_label": entity_label,
+                "knowledge_schema": self._runtime_semantic_policy().get("information_collection", {}).get("default_fields", []) or [],
+                "query_aliases": {},
+                "activation_keywords": [],
+                "profile": "generic_information",
+                "status": "active",
+            }
+        return {}
 
     def _remember_runtime_intent(
         self,
@@ -450,9 +505,9 @@ class DefaultIntentPlugin:
 class IntentAnalyzer:
     """Analyzes intent, goals, constraints, and output forms via plugins."""
 
-    def __init__(self, keyword_analyzer: RuntimeKeywordSignalAnalyzer | None = None, semantic_policy_store: SemanticPolicyStore | None = None) -> None:
+    def __init__(self, keyword_analyzer: RuntimeKeywordSignalAnalyzer | None = None, semantic_policy_store: SemanticPolicyStore | None = None, vector_store: Any | None = None) -> None:
         self.plugins: list[PluginBase] = []
-        self.register_plugin(SemanticIntentPlugin(keyword_analyzer=keyword_analyzer, semantic_policy_store=semantic_policy_store))
+        self.register_plugin(SemanticIntentPlugin(keyword_analyzer=keyword_analyzer, semantic_policy_store=semantic_policy_store, vector_store=vector_store))
         self.register_plugin(DefaultIntentPlugin())
         self.load_plugins_from_config()
 

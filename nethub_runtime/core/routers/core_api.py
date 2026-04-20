@@ -30,6 +30,10 @@ class ReloadPluginsResponse(BaseModel):
 class SemanticMemoryResponse(BaseModel):
     result: dict[str, Any]
 
+
+class RuntimeMemoryResponse(BaseModel):
+    result: dict[str, Any]
+
 core_engine = AICore()
 
 @router.post("/handle")
@@ -91,3 +95,14 @@ async def get_semantic_memory(
     status: str | None = Query(default=None),
 ) -> SemanticMemoryResponse:
     return SemanticMemoryResponse(result=core_engine.inspect_semantic_memory(policy_key=policy_key, status=status))
+
+
+@router.get("/admin/runtime-memory")
+async def get_runtime_memory(
+    query: str | None = Query(default=None),
+    namespace: str | None = Query(default=None),
+    top_k: int = Query(default=5, ge=1, le=20),
+) -> RuntimeMemoryResponse:
+    return RuntimeMemoryResponse(
+        result=core_engine.inspect_runtime_memory(query=query, namespace=namespace, top_k=top_k)
+    )
