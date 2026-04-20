@@ -557,6 +557,90 @@ class ExecutionCoordinator:
         root = Path(env_root).expanduser() if env_root else Path.cwd()
         return root.resolve()
 
+    def _normalize_runtime_patch_plan(self, plan: dict[str, Any]) -> dict[str, Any]:
+        summary = str(plan.get("summary") or "runtime patch generated")
+        validation_commands = plan.get("validation_commands") if isinstance(plan.get("validation_commands"), list) else []
+
+        if isinstance(plan.get("file_patches"), list):
+            file_patches: list[dict[str, Any]] = []
+            for item in plan.get("file_patches", []):
+                if not isinstance(item, dict):
+                    continue
+                target_file = str(item.get("target_file") or "").strip()
+                operations = item.get("operations") if isinstance(item.get("operations"), list) else []
+                updated_content = item.get("updated_content") if isinstance(item.get("updated_content"), str) else None
+                if not target_file:
+                    continue
+                file_patches.append(
+                    {
+                        "target_file": target_file,
+                        "operations": operations,
+                        "updated_content": updated_content,
+                    }
+                )
+            return {
+                "summary": summary,
+                "validation_commands": [str(item) for item in validation_commands if str(item).strip()],
+                "file_patches": file_patches,
+            }
+
+        target_file = str(plan.get("target_file") or "").strip()
+        updated_content = plan.get("updated_content") if isinstance(plan.get("updated_content"), str) else None
+        if not target_file or updated_content is None:
+            return {
+                "summary": summary,
+                "validation_commands": [str(item) for item in validation_commands if str(item).strip()],
+                "file_patches": [],
+            }
+        return {
+            "summary": summary,
+            "validation_commands": [str(item) for item in validation_commands if str(item).strip()],
+            "file_patches": [
+                {
+                    "target_file": target_file,
+                    "operations": [],
+                    "updated_content": updated_content,
+                }
+            ],
+        }
+
+    def _apply_runtime_patch_operations(self, current_content: str, operations: list[Any]) -> str:
+        updated_content = current_content
+        for item in operations:
+            if not isinstance(item, dict):
+                raise ValueError("patch operation must be an object")
+            op_name = str(item.get("op") or item.get("type") or "").strip()
+            if op_name == "replace_text":
+                old_text = item.get("old_text")
+                new_text = item.get("new_text")
+                if not isinstance(old_text, str) or not isinstance(new_text, str):
+                    raise ValueError("replace_text requires string old_text and new_text")
+                occurrences = updated_content.count(old_text)
+                if occurrences != 1:
+                    raise ValueError(f"replace_text expects exactly one match, found {occurrences}")
+                updated_content = updated_content.replace(old_text, new_text, 1)
+                continue
+            if op_name in {"insert_after", "insert_before"}:
+                anchor_text = item.get("anchor_text")
+                text = item.get("text")
+                if not isinstance(anchor_text, str) or not isinstance(text, str):
+                    raise ValueError(f"{op_name} requires string anchor_text and text")
+                occurrences = updated_content.count(anchor_text)
+                if occurrences != 1:
+                    raise ValueError(f"{op_name} expects exactly one anchor match, found {occurrences}")
+                index = updated_content.index(anchor_text)
+                insert_at = index + len(anchor_text) if op_name == "insert_after" else index
+                updated_content = updated_content[:insert_at] + text + updated_content[insert_at:]
+                continue
+            if op_name == "append_text":
+                text = item.get("text")
+                if not isinstance(text, str):
+                    raise ValueError("append_text requires string text")
+                updated_content = updated_content + text
+                continue
+            raise ValueError(f"unsupported patch operation: {op_name}")
+        return updated_content
+
     def _generate_runtime_patch(self, *, task: TaskSchema, context: CoreContextSchema, step_outputs: dict[str, Any]) -> dict[str, Any]:
         policy = self._autonomous_implementation_policy()
         if not bool(policy.get("enabled", False)):
@@ -569,8 +653,9 @@ class ExecutionCoordinator:
         analysis_text = analysis_output.get("summary") or analysis_output.get("analysis") or task.input_text
         prompt = (
             "Return valid JSON only. Build a minimal runtime repair patch plan.\n"
-            "Schema: {\"summary\": string, \"target_file\": string, \"updated_content\": string, \"validation_commands\": [string]}.\n"
-            "Rules: target_file must be workspace-relative. updated_content must be the full file content after fix. validation_commands must be minimal.\n"
+            "Preferred schema: {\"summary\": string, \"file_patches\": [{\"target_file\": string, \"operations\": [{\"op\": \"replace_text\", \"old_text\": string, \"new_text\": string} | {\"op\": \"insert_after\", \"anchor_text\": string, \"text\": string} | {\"op\": \"insert_before\", \"anchor_text\": string, \"text\": string}] }], \"validation_commands\": [string]}.\n"
+            "Fallback legacy schema: {\"summary\": string, \"target_file\": string, \"updated_content\": string, \"validation_commands\": [string]}.\n"
+            "Rules: target_file must be workspace-relative. Prefer precise replace_text or anchored insert operations over full-file rewrites. Any anchor_text must match exactly once. Use append_text only when necessary. validation_commands must be minimal.\n"
             f"workspace_root: {workspace_root}\n"
             f"task_intent: {task.intent}\n"
             f"input_text: {task.input_text}\n"
@@ -599,44 +684,78 @@ class ExecutionCoordinator:
         if not isinstance(plan, dict):
             return {"status": "failed", "message": "runtime patch plan is not an object"}
 
-        target_file = str(plan.get("target_file") or "").strip()
-        updated_content = plan.get("updated_content")
-        validation_commands = plan.get("validation_commands") if isinstance(plan.get("validation_commands"), list) else []
-        if not target_file or not isinstance(updated_content, str):
-            return {"status": "failed", "message": "runtime patch plan missing target_file or updated_content", "patch_plan": plan}
-
         root = workspace_root
-        target_path = (root / target_file).resolve()
-        try:
-            target_path.relative_to(root)
-        except ValueError:
-            return {"status": "failed", "message": "target file escapes workspace root", "patch_plan": plan}
-
         allowed_extensions = {str(item) for item in policy.get("allowed_file_extensions", [])}
-        if allowed_extensions and target_path.suffix not in allowed_extensions:
-            return {"status": "failed", "message": f"target file extension not allowed: {target_path.suffix}", "patch_plan": plan}
         if not bool(policy.get("allow_workspace_file_modification", False)):
             return {"status": "failed", "message": "workspace file modification disabled", "patch_plan": plan}
 
-        previous_content = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        target_path.write_text(updated_content, encoding="utf-8")
+        normalized_plan = self._normalize_runtime_patch_plan(plan)
+        file_patches = normalized_plan.get("file_patches", [])
+        if not file_patches:
+            return {"status": "failed", "message": "runtime patch plan missing file patches", "patch_plan": plan}
+        max_files_per_patch = int(policy.get("max_files_per_patch", 3) or 3)
+        if len(file_patches) > max_files_per_patch:
+            return {
+                "status": "failed",
+                "message": f"runtime patch plan exceeds max files per patch: {len(file_patches)} > {max_files_per_patch}",
+                "patch_plan": normalized_plan,
+            }
 
-        backup_path = self.generated_artifact_store.persist("code", f"runtime_patch_backup_{context.trace_id}", previous_content, extension=target_path.suffix or ".txt")
+        patched_files: list[str] = []
+        backups: list[dict[str, str]] = []
+        total_written_bytes = 0
+        for file_patch in file_patches:
+            target_file = str(file_patch.get("target_file") or "").strip()
+            target_path = (root / target_file).resolve()
+            try:
+                target_path.relative_to(root)
+            except ValueError:
+                return {"status": "failed", "message": "target file escapes workspace root", "patch_plan": normalized_plan}
+            if allowed_extensions and target_path.suffix not in allowed_extensions:
+                return {"status": "failed", "message": f"target file extension not allowed: {target_path.suffix}", "patch_plan": normalized_plan}
+
+            previous_content = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
+            operations = file_patch.get("operations") if isinstance(file_patch.get("operations"), list) else []
+            if operations:
+                try:
+                    next_content = self._apply_runtime_patch_operations(previous_content, operations)
+                except ValueError as exc:
+                    return {"status": "failed", "message": str(exc), "patch_plan": normalized_plan}
+            else:
+                next_content = file_patch.get("updated_content")
+                if not isinstance(next_content, str):
+                    return {"status": "failed", "message": "runtime patch plan missing updated content", "patch_plan": normalized_plan}
+
+            total_written_bytes += len(next_content.encode("utf-8"))
+            max_total_written_bytes = int(policy.get("max_total_written_bytes", 20000) or 20000)
+            if total_written_bytes > max_total_written_bytes:
+                return {
+                    "status": "failed",
+                    "message": f"runtime patch plan exceeds max written bytes: {total_written_bytes} > {max_total_written_bytes}",
+                    "patch_plan": normalized_plan,
+                }
+
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(next_content, encoding="utf-8")
+            backup_path = self.generated_artifact_store.persist("code", f"runtime_patch_backup_{context.trace_id}_{len(backups)}", previous_content, extension=target_path.suffix or ".txt")
+            backups.append({"target_file": target_file, "backup_path": str(backup_path)})
+            patched_files.append(str(target_path))
+
         artifact_payload = {
-            "summary": str(plan.get("summary") or "runtime patch generated"),
-            "target_file": target_file,
-            "validation_commands": [str(item) for item in validation_commands if str(item).strip()],
+            "summary": normalized_plan.get("summary") or "runtime patch generated",
+            "file_patches": normalized_plan.get("file_patches", []),
+            "validation_commands": normalized_plan.get("validation_commands", []),
             "trace_id": context.trace_id,
-            "backup_path": str(backup_path),
+            "backups": backups,
+            "total_written_bytes": total_written_bytes,
         }
         artifact_path = self.generated_artifact_store.persist("code", f"runtime_patch_{context.trace_id}", artifact_payload)
         return {
             "status": "patched",
             "patch_plan": artifact_payload,
             "patch_artifact_path": str(artifact_path),
-            "patched_files": [str(target_path)],
-            "message": str(plan.get("summary") or f"patched {target_file}"),
+            "patched_files": patched_files,
+            "message": str(normalized_plan.get("summary") or f"patched {len(patched_files)} file(s)"),
         }
 
     def _run_runtime_validation(self, *, context: CoreContextSchema, patch_payload: dict[str, Any]) -> dict[str, Any]:

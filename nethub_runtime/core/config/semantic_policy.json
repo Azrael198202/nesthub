@@ -566,6 +566,8 @@
       "enabled": true,
       "workspace_root_env": "NETHUB_RUNTIME_WORKSPACE_ROOT",
       "allow_workspace_file_modification": true,
+      "max_files_per_patch": 3,
+      "max_total_written_bytes": 20000,
       "allowed_file_extensions": [
         ".py", ".md", ".txt", ".json", ".yaml", ".yml", ".html", ".css", ".js", ".ts", ".tsx"
       ],

@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import pytest
+
 from nethub_runtime.generated.store import GeneratedArtifactStore
 from nethub_runtime.core.schemas.context_schema import CoreContextSchema
 from nethub_runtime.core.schemas.task_schema import TaskSchema
@@ -18,6 +20,7 @@ from nethub_runtime.core.services.information_profile_signal_analyzer import Inf
 from nethub_runtime.core.memory.semantic_policy_store import SemanticPolicyStore
 from nethub_runtime.core.services.runtime_failure_classifier import RuntimeFailureClassifier
 from nethub_runtime.core.services.runtime_outcome_evaluator import RuntimeOutcomeEvaluator
+from nethub_runtime.core.services.execution_coordinator import ExecutionCoordinator
 from nethub_runtime.core.services.runtime_repair_service import RuntimeRepairService
 from nethub_runtime.core.services.user_goal_evaluator import UserGoalEvaluator
 from nethub_runtime.core.services.result_integrator import ResultIntegrator
@@ -526,6 +529,478 @@ def test_workflow_artifact_handlers_generate_and_persist_real_artifact(tmp_path:
     )
     assert persisted["delivery_status"] == "stored"
     assert persisted["stored_output"] == str(artifact_path)
+
+
+def test_runtime_patch_pipeline_generates_validates_and_verifies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NETHUB_GENERATED_ROOT", str(tmp_path / "generated_artifacts"))
+    monkeypatch.setenv("NETHUB_RUNTIME_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+
+    workspace_root = tmp_path / "workspace"
+    target_path = workspace_root / "sample_module.py"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    target_path.write_text("value = 1\n", encoding="utf-8")
+
+    class SemanticPolicyStoreStub:
+        def load_runtime_policy(self) -> dict[str, object]:
+            return {
+                "runtime_behavior": {
+                    "autonomous_implementation": {
+                        "enabled": True,
+                        "workspace_root_env": "NETHUB_RUNTIME_WORKSPACE_ROOT",
+                        "allow_workspace_file_modification": True,
+                        "max_files_per_patch": 3,
+                        "max_total_written_bytes": 20000,
+                        "allowed_file_extensions": [".py"],
+                        "validation_command_prefixes": ["python", "pytest"],
+                        "validation_timeout_sec": 30,
+                    }
+                }
+            }
+
+    class CoordinatorStub:
+        def __init__(self) -> None:
+            self.semantic_policy_store = SemanticPolicyStoreStub()
+            self.generated_artifact_store = GeneratedArtifactStore()
+            self.model_router = object()
+
+        def _invoke_model_text(self, **_: object) -> str:
+            return json.dumps(
+                {
+                    "summary": "Repair sample module",
+                    "target_file": "sample_module.py",
+                    "updated_content": "value = 2\n",
+                    "validation_commands": ["python -c \"from sample_module import value; assert value == 2\""],
+                },
+                ensure_ascii=False,
+            )
+
+        _autonomous_implementation_policy = ExecutionCoordinator._autonomous_implementation_policy
+        _runtime_workspace_root = ExecutionCoordinator._runtime_workspace_root
+        _normalize_runtime_patch_plan = ExecutionCoordinator._normalize_runtime_patch_plan
+        _apply_runtime_patch_operations = ExecutionCoordinator._apply_runtime_patch_operations
+        _generate_runtime_patch = ExecutionCoordinator._generate_runtime_patch
+        _run_runtime_validation = ExecutionCoordinator._run_runtime_validation
+        _verify_runtime_patch = ExecutionCoordinator._verify_runtime_patch
+
+    coordinator = CoordinatorStub()
+    task = TaskSchema(
+        task_id="task_runtime_patch_execution",
+        intent="file_generation_task",
+        input_text="修复 sample_module 并验证结果",
+        domain="general",
+        output_requirements=["artifact", "file"],
+    )
+    context = CoreContextSchema(session_id="runtime-patch-session", trace_id="runtime-patch-trace")
+
+    patch_payload = coordinator._generate_runtime_patch(
+        task=task,
+        context=context,
+        step_outputs={"analyze_workflow_context": {"summary": "Need to update sample_module value to 2"}},
+    )
+    assert patch_payload["status"] == "patched"
+    assert target_path.read_text(encoding="utf-8") == "value = 2\n"
+    assert Path(patch_payload["patch_artifact_path"]).exists()
+
+    validation_payload = coordinator._run_runtime_validation(context=context, patch_payload=patch_payload)
+    assert validation_payload["status"] == "validated"
+    assert validation_payload["validation_results"]
+    assert validation_payload["validation_results"][0]["status"] == "passed"
+
+    verification_payload = coordinator._verify_runtime_patch(
+        context=context,
+        patch_payload=patch_payload,
+        validation_payload=validation_payload,
+    )
+    assert verification_payload["status"] == "verified"
+    assert verification_payload["verified"] is True
+    assert str(target_path) in verification_payload["patched_files"]
+
+
+def test_runtime_validation_blocks_disallowed_command_prefix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NETHUB_GENERATED_ROOT", str(tmp_path / "generated_artifacts"))
+    monkeypatch.setenv("NETHUB_RUNTIME_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+
+    class SemanticPolicyStoreStub:
+        def load_runtime_policy(self) -> dict[str, object]:
+            return {
+                "runtime_behavior": {
+                    "autonomous_implementation": {
+                        "enabled": True,
+                        "workspace_root_env": "NETHUB_RUNTIME_WORKSPACE_ROOT",
+                        "allow_workspace_file_modification": True,
+                        "max_files_per_patch": 3,
+                        "max_total_written_bytes": 20000,
+                        "allowed_file_extensions": [".py"],
+                        "validation_command_prefixes": ["python", "pytest"],
+                        "validation_timeout_sec": 30,
+                    }
+                }
+            }
+
+    class CoordinatorStub:
+        def __init__(self) -> None:
+            self.semantic_policy_store = SemanticPolicyStoreStub()
+            self.generated_artifact_store = GeneratedArtifactStore()
+
+        _autonomous_implementation_policy = ExecutionCoordinator._autonomous_implementation_policy
+        _runtime_workspace_root = ExecutionCoordinator._runtime_workspace_root
+        _run_runtime_validation = ExecutionCoordinator._run_runtime_validation
+
+    coordinator = CoordinatorStub()
+    context = CoreContextSchema(session_id="runtime-patch-session", trace_id="runtime-patch-trace")
+
+    validation_payload = coordinator._run_runtime_validation(
+        context=context,
+        patch_payload={
+            "patch_plan": {
+                "validation_commands": ["bash -lc 'echo unsafe'"]
+            }
+        },
+    )
+
+    assert validation_payload["status"] == "failed"
+    assert validation_payload["executed_commands"] == []
+    assert validation_payload["validation_results"][0]["status"] == "blocked"
+    assert validation_payload["validation_results"][0]["reason"] == "prefix_not_allowed"
+
+
+def test_runtime_patch_pipeline_supports_structured_replace_text_operations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NETHUB_GENERATED_ROOT", str(tmp_path / "generated_artifacts"))
+    monkeypatch.setenv("NETHUB_RUNTIME_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+
+    workspace_root = tmp_path / "workspace"
+    target_path = workspace_root / "sample_module.py"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    target_path.write_text("value = 1\n", encoding="utf-8")
+
+    class SemanticPolicyStoreStub:
+        def load_runtime_policy(self) -> dict[str, object]:
+            return {
+                "runtime_behavior": {
+                    "autonomous_implementation": {
+                        "enabled": True,
+                        "workspace_root_env": "NETHUB_RUNTIME_WORKSPACE_ROOT",
+                        "allow_workspace_file_modification": True,
+                        "max_files_per_patch": 3,
+                        "max_total_written_bytes": 20000,
+                        "allowed_file_extensions": [".py"],
+                        "validation_command_prefixes": ["python", "pytest"],
+                        "validation_timeout_sec": 30,
+                    }
+                }
+            }
+
+    class CoordinatorStub:
+        def __init__(self) -> None:
+            self.semantic_policy_store = SemanticPolicyStoreStub()
+            self.generated_artifact_store = GeneratedArtifactStore()
+            self.model_router = object()
+
+        def _invoke_model_text(self, **_: object) -> str:
+            return json.dumps(
+                {
+                    "summary": "Repair sample module with structured patch",
+                    "file_patches": [
+                        {
+                            "target_file": "sample_module.py",
+                            "operations": [
+                                {"op": "replace_text", "old_text": "value = 1\n", "new_text": "value = 2\n"}
+                            ],
+                        }
+                    ],
+                    "validation_commands": ["python -c \"from sample_module import value; assert value == 2\""],
+                },
+                ensure_ascii=False,
+            )
+
+        _autonomous_implementation_policy = ExecutionCoordinator._autonomous_implementation_policy
+        _runtime_workspace_root = ExecutionCoordinator._runtime_workspace_root
+        _normalize_runtime_patch_plan = ExecutionCoordinator._normalize_runtime_patch_plan
+        _apply_runtime_patch_operations = ExecutionCoordinator._apply_runtime_patch_operations
+        _generate_runtime_patch = ExecutionCoordinator._generate_runtime_patch
+
+    coordinator = CoordinatorStub()
+    task = TaskSchema(
+        task_id="task_runtime_patch_structured_execution",
+        intent="file_generation_task",
+        input_text="修复 sample_module 并验证结果",
+        domain="general",
+        output_requirements=["artifact", "file"],
+    )
+    context = CoreContextSchema(session_id="runtime-patch-session", trace_id="runtime-patch-structured-trace")
+
+    patch_payload = coordinator._generate_runtime_patch(
+        task=task,
+        context=context,
+        step_outputs={"analyze_workflow_context": {"summary": "Need to update sample_module value to 2"}},
+    )
+
+    assert patch_payload["status"] == "patched"
+    assert target_path.read_text(encoding="utf-8") == "value = 2\n"
+    assert patch_payload["patch_plan"]["file_patches"][0]["operations"][0]["op"] == "replace_text"
+
+
+def test_runtime_patch_pipeline_rejects_too_many_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NETHUB_GENERATED_ROOT", str(tmp_path / "generated_artifacts"))
+    monkeypatch.setenv("NETHUB_RUNTIME_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+
+    class SemanticPolicyStoreStub:
+        def load_runtime_policy(self) -> dict[str, object]:
+            return {
+                "runtime_behavior": {
+                    "autonomous_implementation": {
+                        "enabled": True,
+                        "workspace_root_env": "NETHUB_RUNTIME_WORKSPACE_ROOT",
+                        "allow_workspace_file_modification": True,
+                        "max_files_per_patch": 1,
+                        "max_total_written_bytes": 20000,
+                        "allowed_file_extensions": [".py"],
+                        "validation_command_prefixes": ["python", "pytest"],
+                        "validation_timeout_sec": 30,
+                    }
+                }
+            }
+
+    class CoordinatorStub:
+        def __init__(self) -> None:
+            self.semantic_policy_store = SemanticPolicyStoreStub()
+            self.generated_artifact_store = GeneratedArtifactStore()
+            self.model_router = object()
+
+        def _invoke_model_text(self, **_: object) -> str:
+            return json.dumps(
+                {
+                    "summary": "Repair too many files",
+                    "file_patches": [
+                        {"target_file": "one.py", "updated_content": "value = 1\n"},
+                        {"target_file": "two.py", "updated_content": "value = 2\n"},
+                    ],
+                    "validation_commands": [],
+                },
+                ensure_ascii=False,
+            )
+
+        _autonomous_implementation_policy = ExecutionCoordinator._autonomous_implementation_policy
+        _runtime_workspace_root = ExecutionCoordinator._runtime_workspace_root
+        _normalize_runtime_patch_plan = ExecutionCoordinator._normalize_runtime_patch_plan
+        _apply_runtime_patch_operations = ExecutionCoordinator._apply_runtime_patch_operations
+        _generate_runtime_patch = ExecutionCoordinator._generate_runtime_patch
+
+    coordinator = CoordinatorStub()
+    task = TaskSchema(task_id="task_runtime_patch_too_many_files", intent="file_generation_task", input_text="修复多个文件", domain="general", output_requirements=["artifact"])
+    context = CoreContextSchema(session_id="runtime-patch-session", trace_id="runtime-patch-many-files-trace")
+
+    patch_payload = coordinator._generate_runtime_patch(
+        task=task,
+        context=context,
+        step_outputs={"analyze_workflow_context": {"summary": "Need to patch two files"}},
+    )
+
+    assert patch_payload["status"] == "failed"
+    assert "max files per patch" in patch_payload["message"]
+
+
+def test_runtime_patch_pipeline_rejects_excessive_written_bytes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NETHUB_GENERATED_ROOT", str(tmp_path / "generated_artifacts"))
+    monkeypatch.setenv("NETHUB_RUNTIME_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+
+    class SemanticPolicyStoreStub:
+        def load_runtime_policy(self) -> dict[str, object]:
+            return {
+                "runtime_behavior": {
+                    "autonomous_implementation": {
+                        "enabled": True,
+                        "workspace_root_env": "NETHUB_RUNTIME_WORKSPACE_ROOT",
+                        "allow_workspace_file_modification": True,
+                        "max_files_per_patch": 3,
+                        "max_total_written_bytes": 5,
+                        "allowed_file_extensions": [".py"],
+                        "validation_command_prefixes": ["python", "pytest"],
+                        "validation_timeout_sec": 30,
+                    }
+                }
+            }
+
+    class CoordinatorStub:
+        def __init__(self) -> None:
+            self.semantic_policy_store = SemanticPolicyStoreStub()
+            self.generated_artifact_store = GeneratedArtifactStore()
+            self.model_router = object()
+
+        def _invoke_model_text(self, **_: object) -> str:
+            return json.dumps(
+                {
+                    "summary": "Repair too many bytes",
+                    "file_patches": [
+                        {"target_file": "one.py", "updated_content": "value = 123456\n"},
+                    ],
+                    "validation_commands": [],
+                },
+                ensure_ascii=False,
+            )
+
+        _autonomous_implementation_policy = ExecutionCoordinator._autonomous_implementation_policy
+        _runtime_workspace_root = ExecutionCoordinator._runtime_workspace_root
+        _normalize_runtime_patch_plan = ExecutionCoordinator._normalize_runtime_patch_plan
+        _apply_runtime_patch_operations = ExecutionCoordinator._apply_runtime_patch_operations
+        _generate_runtime_patch = ExecutionCoordinator._generate_runtime_patch
+
+    coordinator = CoordinatorStub()
+    task = TaskSchema(task_id="task_runtime_patch_too_many_bytes", intent="file_generation_task", input_text="修复一个大文件", domain="general", output_requirements=["artifact"])
+    context = CoreContextSchema(session_id="runtime-patch-session", trace_id="runtime-patch-many-bytes-trace")
+
+    patch_payload = coordinator._generate_runtime_patch(
+        task=task,
+        context=context,
+        step_outputs={"analyze_workflow_context": {"summary": "Need to write too many bytes"}},
+    )
+
+    assert patch_payload["status"] == "failed"
+    assert "max written bytes" in patch_payload["message"]
+
+
+def test_runtime_patch_pipeline_supports_insert_after_with_unique_anchor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NETHUB_GENERATED_ROOT", str(tmp_path / "generated_artifacts"))
+    monkeypatch.setenv("NETHUB_RUNTIME_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+
+    workspace_root = tmp_path / "workspace"
+    target_path = workspace_root / "sample_module.py"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    target_path.write_text("value = 1\n", encoding="utf-8")
+
+    class SemanticPolicyStoreStub:
+        def load_runtime_policy(self) -> dict[str, object]:
+            return {
+                "runtime_behavior": {
+                    "autonomous_implementation": {
+                        "enabled": True,
+                        "workspace_root_env": "NETHUB_RUNTIME_WORKSPACE_ROOT",
+                        "allow_workspace_file_modification": True,
+                        "max_files_per_patch": 3,
+                        "max_total_written_bytes": 20000,
+                        "allowed_file_extensions": [".py"],
+                        "validation_command_prefixes": ["python", "pytest"],
+                        "validation_timeout_sec": 30,
+                    }
+                }
+            }
+
+    class CoordinatorStub:
+        def __init__(self) -> None:
+            self.semantic_policy_store = SemanticPolicyStoreStub()
+            self.generated_artifact_store = GeneratedArtifactStore()
+            self.model_router = object()
+
+        def _invoke_model_text(self, **_: object) -> str:
+            return json.dumps(
+                {
+                    "summary": "Insert after unique anchor",
+                    "file_patches": [
+                        {
+                            "target_file": "sample_module.py",
+                            "operations": [
+                                {"op": "insert_after", "anchor_text": "value = 1\n", "text": "extra = 2\n"}
+                            ],
+                        }
+                    ],
+                    "validation_commands": [],
+                },
+                ensure_ascii=False,
+            )
+
+        _autonomous_implementation_policy = ExecutionCoordinator._autonomous_implementation_policy
+        _runtime_workspace_root = ExecutionCoordinator._runtime_workspace_root
+        _normalize_runtime_patch_plan = ExecutionCoordinator._normalize_runtime_patch_plan
+        _apply_runtime_patch_operations = ExecutionCoordinator._apply_runtime_patch_operations
+        _generate_runtime_patch = ExecutionCoordinator._generate_runtime_patch
+
+    coordinator = CoordinatorStub()
+    task = TaskSchema(task_id="task_runtime_patch_insert_after", intent="file_generation_task", input_text="插入一行", domain="general", output_requirements=["artifact"])
+    context = CoreContextSchema(session_id="runtime-patch-session", trace_id="runtime-patch-insert-after-trace")
+
+    patch_payload = coordinator._generate_runtime_patch(
+        task=task,
+        context=context,
+        step_outputs={"analyze_workflow_context": {"summary": "Need to insert after unique anchor"}},
+    )
+
+    assert patch_payload["status"] == "patched"
+    assert target_path.read_text(encoding="utf-8") == "value = 1\nextra = 2\n"
+
+
+def test_runtime_patch_pipeline_rejects_non_unique_insert_anchor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NETHUB_GENERATED_ROOT", str(tmp_path / "generated_artifacts"))
+    monkeypatch.setenv("NETHUB_RUNTIME_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+
+    workspace_root = tmp_path / "workspace"
+    target_path = workspace_root / "sample_module.py"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    target_path.write_text("value = 1\nvalue = 1\n", encoding="utf-8")
+
+    class SemanticPolicyStoreStub:
+        def load_runtime_policy(self) -> dict[str, object]:
+            return {
+                "runtime_behavior": {
+                    "autonomous_implementation": {
+                        "enabled": True,
+                        "workspace_root_env": "NETHUB_RUNTIME_WORKSPACE_ROOT",
+                        "allow_workspace_file_modification": True,
+                        "max_files_per_patch": 3,
+                        "max_total_written_bytes": 20000,
+                        "allowed_file_extensions": [".py"],
+                        "validation_command_prefixes": ["python", "pytest"],
+                        "validation_timeout_sec": 30,
+                    }
+                }
+            }
+
+    class CoordinatorStub:
+        def __init__(self) -> None:
+            self.semantic_policy_store = SemanticPolicyStoreStub()
+            self.generated_artifact_store = GeneratedArtifactStore()
+            self.model_router = object()
+
+        def _invoke_model_text(self, **_: object) -> str:
+            return json.dumps(
+                {
+                    "summary": "Reject non-unique anchor",
+                    "file_patches": [
+                        {
+                            "target_file": "sample_module.py",
+                            "operations": [
+                                {"op": "insert_after", "anchor_text": "value = 1\n", "text": "extra = 2\n"}
+                            ],
+                        }
+                    ],
+                    "validation_commands": [],
+                },
+                ensure_ascii=False,
+            )
+
+        _autonomous_implementation_policy = ExecutionCoordinator._autonomous_implementation_policy
+        _runtime_workspace_root = ExecutionCoordinator._runtime_workspace_root
+        _normalize_runtime_patch_plan = ExecutionCoordinator._normalize_runtime_patch_plan
+        _apply_runtime_patch_operations = ExecutionCoordinator._apply_runtime_patch_operations
+        _generate_runtime_patch = ExecutionCoordinator._generate_runtime_patch
+
+    coordinator = CoordinatorStub()
+    task = TaskSchema(task_id="task_runtime_patch_non_unique_insert", intent="file_generation_task", input_text="插入一行", domain="general", output_requirements=["artifact"])
+    context = CoreContextSchema(session_id="runtime-patch-session", trace_id="runtime-patch-non-unique-insert-trace")
+
+    patch_payload = coordinator._generate_runtime_patch(
+        task=task,
+        context=context,
+        step_outputs={"analyze_workflow_context": {"summary": "Need to insert after duplicate anchor"}},
+    )
+
+    assert patch_payload["status"] == "failed"
+    assert "exactly one anchor match" in patch_payload["message"]
 
 
 def test_result_integrator_collects_workflow_generated_artifacts(tmp_path: Path) -> None:

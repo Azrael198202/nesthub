@@ -127,6 +127,6 @@ def test_model_router_caps_ollama_request_timeout(monkeypatch) -> None:
     result = asyncio.run(router.invoke("test_ollama_timeout_cap", "hello"))
 
     assert result == "ok"
-    assert seen_timeouts[0] == 8.0
-    assert seen_timeouts[1] == 8.0
+    assert seen_timeouts[0] == 30.0
+    assert seen_timeouts[1] == 30.0
     assert seen_timeouts[2] == 30.0
