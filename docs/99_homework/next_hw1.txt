@@ -1,0 +1,57 @@
+六项能力现状评估
+✅ 已有完整实现
+能力	实现文件	状态说明
+Web 抓取 (web_retrieve)	execution_step_handlers.py:776	urllib 直接抓 + DuckDuckGo HTML 作搜索兜底，readability-lxml 可选
+Web 提炼总结 (web_summarize)	execution_step_handlers.py:881	读 web_retrieve 输出 → LLM 总结 → 写 VectorStore web_summary namespace
+OCR (ocr_extract)	execution_step_handlers.py:109	PaddleOCR → pytesseract → CapabilityAcquisitionService 自动安装，本地全链路完整
+⚠️ 有骨架、缺实体
+能力	问题
+STT (stt_transcribe)	Handler 本身完整（Whisper local），但 /api/audio/transcribe 只返回硬编码 demo 字符串，音频文件上传未接
+TTS (tts_synthesize)	pyttsx3 实现存在，但声音质量差（机器人音），无高质量备选（ElevenLabs / OpenAI TTS / edge-tts 未接入）
+❌ 仅有占位符
+能力	问题
+邮件发送	/api/mail/send 只有 return {"ok": True}，无 SMTP 逻辑
+邮件接收	integrations/mail/ 文件夹完全为空，integrations/web/ 也是空文件夹
+各项补充工作量
+1. 邮件（优先级最高，差距最大）
+需要全部新建：
+
+配置需要：SMTP host/port/user/password + IMAP host/port，前端 Settings 面板字段已存在（mailSmtpHost 等），只需后端接上。
+
+2. STT（补全 API 入口）
+Handler 已完整，只需：
+
+api_audio_transcribe 接收真实文件（multipart/form-data），存 received，调 handle_stt_transcribe_step
+补充 OpenAI Whisper API 作为第三个后端（本地 Whisper 内存占用大时的替代）
+3. TTS（提升音质）
+pyttsx3 基础可用，追加两个更好的后端：
+
+edge-tts（微软 Edge TTS，免费，中英日音质好）
+openai TTS（tts-1-hd，付费但高质量）
+后端顺序：edge-tts → pyttsx3 → OpenAI TTS
+
+4. Web 搜索（补结构化搜索）
+现在的 DuckDuckGo HTML 抓取在反爬限制下不稳定，建议增加：
+
+Tavily Search API（专为 AI 设计，有免费额度）或 SerpAPI
+作为 web_retrieve 的第一优先级，HTML 抓取降为兜底
+你没提但需要补充的
+基于系统目前架构，还有这些缺口：
+
+🔴 高优先级
+缺口	说明
+定时任务 / Scheduler	系统无法执行「每天 8 点提醒」「30 分钟后发邮件」等时间触发任务，需要 APScheduler 或 celery-beat
+主动推送 / Webhook	NestHub 只能被动响应请求，无法主动推送消息给 Mobile App（需要 WebSocket 或 FCM）
+API 认证	所有 /api/* 端点目前无认证，生产环境需要至少 Bearer Token
+🟡 中优先级
+缺口	说明
+日历集成	Google Calendar / Apple Calendar API，配合 InformationAgent 可做家庭日程管理
+流式响应 Streaming	当前 LLM 回复全部 batch，长文本要等完整生成。接入 stream=True + SSE 可大幅改善体验
+Rate Limiting	无限流保护，LLM API 费用容易超支
+工作流缓存	相同的 web 搜索请求会重复调用，VectorStore 已有 web_cache namespace 但未做 TTL 过期
+🟢 低优先级（锦上添花）
+缺口	说明
+家庭设备控制	Home Assistant / MQTT 集成，让 NestHub 真正控制家居设备
+唤醒词检测	本地 Wake Word（Porcupine / Vosk），无需手动点击发送语音
+LINE 主动发消息	external_contact_agent 已有接收，但主动推送给 LINE 联系人的逻辑不完整
+建议落地顺序：邮件（短平快，前端已有配置界面）→ STT API 入口补全 → 定时任务 → TTS 音质提升 → 结构化搜索 → 主动推送
