@@ -217,3 +217,17 @@ def test_core_engine_document_result_contains_memory_promotion() -> None:
     promotion = result["execution_result"].get("memory_promotion") or {}
     assert promotion.get("promoted") is True
     assert promotion.get("promotion_count", 0) >= 1
+    dataset_export = result["execution_result"].get("training_dataset_export") or {}
+    assert dataset_export.get("exported") is True
+    assert dataset_export.get("sft_count", 0) >= 1
+
+
+def test_core_engine_private_brain_summary_includes_dataset_counts() -> None:
+    from nethub_runtime.core.services.core_engine import AICore
+
+    core = AICore(model_config_path="nethub_runtime/config/model_config.yaml")
+    summary = core.inspect_private_brain_summary()
+
+    assert "layers" in summary
+    assert "training_assets" in summary["layers"]
+    assert "sft_samples" in summary["layers"]["training_assets"]

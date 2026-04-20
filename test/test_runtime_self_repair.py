@@ -338,6 +338,131 @@ def test_runtime_repair_service_prepares_tools_before_retrying_failed_steps() ->
     assert retry_step.depends_on == [prepare_step.step_id]
 
 
+def test_runtime_repair_service_guidance_moves_analysis_before_retry() -> None:
+    repair_service = RuntimeRepairService()
+    task = TaskSchema(
+        task_id="task_runtime_guided_analysis_retry",
+        intent="prepare_document",
+        input_text="生成文档",
+        domain="general",
+        output_requirements=["artifact"],
+    )
+    workflow = WorkflowSchema(
+        workflow_id="workflow_runtime_guided_analysis_retry",
+        task_id=task.task_id,
+        steps=[
+            WorkflowStepSchema(
+                step_id="step_1",
+                name="single_step",
+                task_type=task.intent,
+                executor_type="tool",
+                outputs=["message"],
+            )
+        ],
+        composition={"metadata": {}},
+    )
+
+    repaired_workflow = repair_service.build_repair_workflow(
+        task=task,
+        workflow=workflow,
+        repair_classification={
+            "execution_failures": ["single_step"],
+            "missing_steps": [],
+            "missing_outputs": [],
+            "missing_tools": [],
+            "runtime_learning_guidance": {
+                "solution_summary": "inject analysis step before retry to recover summary context",
+            },
+        },
+    )
+
+    step_names = [step.name for step in repaired_workflow.steps]
+    assert step_names.index("analyze_workflow_context") < step_names.index("single_step", 1)
+    analysis_step = repaired_workflow.steps[step_names.index("analyze_workflow_context")]
+    assert analysis_step.metadata["runtime_learning_guided"] is True
+    assert repaired_workflow.composition["metadata"]["runtime_learning_guidance_applied"] is True
+
+
+def test_runtime_repair_service_guidance_injects_artifact_pipeline_without_missing_output_signal() -> None:
+    repair_service = RuntimeRepairService()
+    task = TaskSchema(
+        task_id="task_runtime_guided_artifact_pipeline",
+        intent="prepare_document",
+        input_text="生成文档",
+        domain="general",
+        output_requirements=["text"],
+    )
+    workflow = WorkflowSchema(
+        workflow_id="workflow_runtime_guided_artifact_pipeline",
+        task_id=task.task_id,
+        steps=[],
+        composition={"metadata": {}},
+    )
+
+    repaired_workflow = repair_service.build_repair_workflow(
+        task=task,
+        workflow=workflow,
+        repair_classification={
+            "execution_failures": [],
+            "missing_steps": [],
+            "missing_outputs": [],
+            "missing_tools": [],
+            "runtime_learning_guidance": {
+                "solution_summary": "persist artifact file output after generation for delivery",
+            },
+        },
+    )
+
+    step_names = [step.name for step in repaired_workflow.steps]
+    assert "generate_workflow_artifact" in step_names
+    assert "persist_workflow_output" in step_names
+    artifact_step = next(step for step in repaired_workflow.steps if step.name == "generate_workflow_artifact")
+    assert artifact_step.metadata["runtime_learning_guided"] is True
+
+
+def test_runtime_repair_service_structured_preferences_drive_guidance_without_summary_text() -> None:
+    repair_service = RuntimeRepairService()
+    task = TaskSchema(
+        task_id="task_runtime_structured_guidance",
+        intent="prepare_document",
+        input_text="生成文档",
+        domain="general",
+        output_requirements=["text"],
+    )
+    workflow = WorkflowSchema(
+        workflow_id="workflow_runtime_structured_guidance",
+        task_id=task.task_id,
+        steps=[
+            WorkflowStepSchema(
+                step_id="step_1",
+                name="single_step",
+                task_type=task.intent,
+                executor_type="tool",
+                outputs=["message"],
+            )
+        ],
+        composition={"metadata": {}},
+    )
+
+    repaired_workflow = repair_service.build_repair_workflow(
+        task=task,
+        workflow=workflow,
+        repair_classification={
+            "execution_failures": ["single_step"],
+            "missing_steps": [],
+            "missing_outputs": [],
+            "missing_tools": [],
+            "runtime_learning_guidance": {
+                "solution_summary": "",
+                "repair_preferences": {"analysis_before_retry": True},
+            },
+        },
+    )
+
+    step_names = [step.name for step in repaired_workflow.steps]
+    assert step_names.index("analyze_workflow_context") < step_names.index("single_step", 1)
+
+
 def test_dependency_manager_skips_install_execution_when_auto_install_disabled(tmp_path: Path) -> None:
     config_path = tmp_path / "dependencies.json"
     config_path.write_text(

@@ -106,3 +106,47 @@ def test_runtime_memory_api_returns_information_agent_fact_hits(isolated_generat
     result = inspect_response.json()["result"]
     assert result["vector_hits"]
     assert any(hit["namespace"] == "information_agent_fact" for hit in result["vector_hits"])
+
+
+def test_private_brain_summary_api_returns_training_asset_counts(isolated_generated_artifacts) -> None:
+    response = client.get("/core/admin/private-brain-summary")
+
+    assert response.status_code == 200
+    result = response.json()["result"]
+    assert "layers" in result
+    assert "training_assets" in result["layers"]
+    assert "sft_samples" in result["layers"]["training_assets"]
+    assert "repair_preference_counts" in result["layers"]["training_assets"]
+
+
+def test_training_manifest_api_returns_train_ready_manifest(isolated_generated_artifacts) -> None:
+    response = client.get("/core/admin/training-manifest", params={"profile": "lora_sft"})
+
+    assert response.status_code == 200
+    result = response.json()["result"]
+    assert result["profile"] == "lora_sft"
+    assert "datasets" in result
+    assert "training_plan" in result
+
+
+def test_training_runner_api_returns_runner_inspection(isolated_generated_artifacts) -> None:
+    response = client.get("/core/admin/training-runner", params={"profile": "lora_sft", "backend": "mock"})
+
+    assert response.status_code == 200
+    result = response.json()["result"]
+    assert result["profile"] == "lora_sft"
+    assert result["backend"]["backend"] == "mock"
+    assert "command_preview" in result
+
+
+def test_training_runner_start_api_returns_dry_run_spec(isolated_generated_artifacts) -> None:
+    response = client.post(
+        "/core/admin/training-runner/start",
+        json={"profile": "lora_sft", "backend": "mock", "dry_run": True, "note": "tvbox smoke"},
+    )
+
+    assert response.status_code == 200
+    result = response.json()["result"]
+    assert result["dry_run"] is True
+    assert result["status"] == "dry_run"
+    assert result["note"] == "tvbox smoke"

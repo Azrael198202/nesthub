@@ -19,6 +19,7 @@ let latestCortexUnpacked = null;
 let currentLocale = "en-US";
 let generatedArtifactsRuntime = { items: {}, isLoading: false, error: "" };
 let runtimeMemoryInspection = { query: "", namespace: "*", result: null, isLoading: false, error: "" };
+let trainingAssetsInspection = { profile: "lora_sft", backend: "mock", result: null, isLoading: false, isRunning: false, error: "", notice: "" };
 let mediaRecorder = null;
 let mediaChunks = [];
 let isRecording = false;
@@ -253,6 +254,10 @@ function settingsSectionCatalog() {
     memory: {
       label: "Runtime Memory",
       summary: "Inspect promotion artifacts, promoted facts, and reusable experiences"
+    },
+    training: {
+      label: "Training Assets",
+      summary: "Review SFT datasets, preference sets, and train-ready manifests"
     }
   };
 }
@@ -319,6 +324,89 @@ async function loadRuntimeMemoryInspection(query = runtimeMemoryInspection.query
   }
 }
 
+async function loadTrainingAssetsInspection(profile = trainingAssetsInspection.profile || "lora_sft") {
+  trainingAssetsInspection.isLoading = true;
+  trainingAssetsInspection.error = "";
+  trainingAssetsInspection.notice = "";
+  trainingAssetsInspection.profile = String(profile || "lora_sft");
+  renderSettings(latestDashboard);
+  try {
+    const params = new URLSearchParams();
+    params.set("profile", trainingAssetsInspection.profile);
+    const response = await fetch(`/api/training-assets?${params.toString()}`);
+    const payload = await response.json();
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || "Failed to load training assets.");
+    }
+    trainingAssetsInspection.result = payload.result || null;
+  } catch (error) {
+    trainingAssetsInspection.error = String(error.message || error);
+  } finally {
+    trainingAssetsInspection.isLoading = false;
+    renderSettings(latestDashboard);
+  }
+}
+
+async function rebuildTrainingAssets(profile = trainingAssetsInspection.profile || "lora_sft") {
+  trainingAssetsInspection.isLoading = true;
+  trainingAssetsInspection.error = "";
+  trainingAssetsInspection.notice = "";
+  trainingAssetsInspection.profile = String(profile || "lora_sft");
+  renderSettings(latestDashboard);
+  try {
+    const response = await fetch("/api/training-assets/rebuild", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile: trainingAssetsInspection.profile }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || "Failed to rebuild training manifest.");
+    }
+    trainingAssetsInspection.result = payload.result || null;
+    trainingAssetsInspection.notice = "Training manifest rebuilt.";
+  } catch (error) {
+    trainingAssetsInspection.error = String(error.message || error);
+  } finally {
+    trainingAssetsInspection.isLoading = false;
+    renderSettings(latestDashboard);
+  }
+}
+
+async function runTrainingAssetsDryRun(profile = trainingAssetsInspection.profile || "lora_sft", backend = trainingAssetsInspection.backend || "mock") {
+  trainingAssetsInspection.isRunning = true;
+  trainingAssetsInspection.error = "";
+  trainingAssetsInspection.notice = "";
+  trainingAssetsInspection.profile = String(profile || "lora_sft");
+  trainingAssetsInspection.backend = String(backend || "mock");
+  renderSettings(latestDashboard);
+  try {
+    const response = await fetch("/api/training-assets/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        profile: trainingAssetsInspection.profile,
+        backend: trainingAssetsInspection.backend,
+        dryRun: true,
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error || "Failed to generate training run skeleton.");
+    }
+    trainingAssetsInspection.result = payload.trainingAssets || trainingAssetsInspection.result;
+    if (trainingAssetsInspection.result) {
+      trainingAssetsInspection.result.last_run = payload.result || null;
+    }
+    trainingAssetsInspection.notice = payload?.result?.message || "Training run skeleton generated.";
+  } catch (error) {
+    trainingAssetsInspection.error = String(error.message || error);
+  } finally {
+    trainingAssetsInspection.isRunning = false;
+    renderSettings(latestDashboard);
+  }
+}
+
 function renderGeneratedArtifactGroups() {
   const groups = generatedArtifactsRuntime.items || {};
   const order = ["blueprint", "agent", "feature", "trace", "code"];
@@ -371,6 +459,77 @@ function renderRuntimeMemoryArtifacts(result) {
       <p>${escapeHtml(item.contentPreview || "")}</p>
     </article>
   `).join("");
+}
+
+function renderTrainingArtifactRows(items, emptyText) {
+  if (!Array.isArray(items) || !items.length) return `<div class="settings-card"><p>${escapeHtml(emptyText)}</p></div>`;
+  return items.map((item) => `
+    <article class="settings-card memory-hit-card">
+      <div class="agent-row">
+        <strong>${escapeHtml(item.name || item.artifact_id || item.artifactId || "artifact")}</strong>
+        <span class="pill">${escapeHtml(String(item.sample_count || item.count || item.size || 0))}</span>
+      </div>
+      <p>${escapeHtml(item.path || "")}</p>
+      <p>${escapeHtml(item.profile || item.kind || "")}</p>
+    </article>
+  `).join("");
+}
+
+function renderRepairPreferenceCounts(counts) {
+  const entries = Object.entries(counts || {});
+  if (!entries.length) return `<div class="settings-card"><p>No repair preference signals recorded yet.</p></div>`;
+  return entries.map(([key, value]) => `
+    <article class="settings-card memory-hit-card">
+      <div class="agent-row">
+        <strong>${escapeHtml(key)}</strong>
+        <span class="pill">${escapeHtml(String(value || 0))}</span>
+      </div>
+    </article>
+  `).join("");
+}
+
+function renderTrainingMetricCards(summary, manifest, runner) {
+  const cards = [
+    { label: "SFT Samples", value: summary.sft_samples || 0, meta: `${manifest.counts?.sft || 0} datasets` },
+    { label: "Preference Samples", value: summary.preference_samples || 0, meta: `${manifest.counts?.preference || 0} datasets` },
+    { label: "Manifest Builds", value: summary.training_manifests || 0, meta: runner?.backend?.label || "Runner pending" },
+    { label: "Run Specs", value: summary.training_runs || 0, meta: runner?.ready ? "Ready for dry-run" : "Waiting for datasets" },
+  ];
+  return cards.map((card) => `
+    <article class="training-metric-card">
+      <span class="training-metric-label">${escapeHtml(card.label)}</span>
+      <strong class="training-metric-value">${escapeHtml(String(card.value))}</strong>
+      <p class="training-metric-meta">${escapeHtml(card.meta)}</p>
+    </article>
+  `).join("");
+}
+
+function renderTrainingPlan(plan) {
+  const steps = Array.isArray(plan?.stages) ? plan.stages : [];
+  if (!steps.length) return `<div class="settings-card"><p>No training plan available yet.</p></div>`;
+  return `
+    <article class="settings-card training-plan-card">
+      <div class="agent-row">
+        <strong>Execution Plan</strong>
+        <span class="pill ${plan.preference_objective && plan.preference_objective !== "none" ? "is-active" : "is-ready"}">${escapeHtml(plan.preference_objective || "sft")}</span>
+      </div>
+      <div class="training-stage-row">
+        ${steps.map((step) => `<span class="training-stage-pill">${escapeHtml(step)}</span>`).join("")}
+      </div>
+      <p>Required assets: ${escapeHtml((plan.requires || []).join(", "))}</p>
+    </article>
+  `;
+}
+
+function renderCommandPreview(lines) {
+  const items = Array.isArray(lines) ? lines : [];
+  if (!items.length) return `<div class="settings-card"><p>No runner command preview available yet.</p></div>`;
+  return `
+    <article class="settings-card training-command-card">
+      <strong>Command Preview</strong>
+      <pre class="cortex-json-view">${escapeHtml(items.join(" "))}</pre>
+    </article>
+  `;
 }
 
 function localizeCatalogText(entry) {
@@ -2766,6 +2925,9 @@ function activateSettingsSection(sectionId, focusButton = false) {
   if (activeSettingsSection === "memory" && !runtimeMemoryInspection.isLoading) {
     loadRuntimeMemoryInspection().catch(() => {});
   }
+  if (activeSettingsSection === "training" && !trainingAssetsInspection.isLoading) {
+    loadTrainingAssetsInspection().catch(() => {});
+  }
   if (latestDashboard) {
     renderSettings(latestDashboard);
   }
@@ -3154,6 +3316,95 @@ function renderSettingsDetail(data) {
     const namespaceInput = document.getElementById("runtime-memory-namespace");
     if (refreshButton) {
       refreshButton.onclick = () => loadRuntimeMemoryInspection(queryInput?.value || "", namespaceInput?.value || "*");
+    }
+    return;
+  }
+
+  if (activeSettingsSection === "training") {
+    const result = trainingAssetsInspection.result || {};
+    const summary = result.summary || {};
+    const manifest = result.manifest || {};
+    const runner = result.runner || {};
+    const artifacts = result.artifacts || {};
+    const lastRun = result.last_run || result.lastRun || null;
+    detail.innerHTML = `
+      ${overview}
+      <div class="settings-section-header">
+        <div>
+          <p class="eyebrow">Training Assets</p>
+          <h3>Training Assets</h3>
+        </div>
+        <span class="pill">manifest + datasets</span>
+      </div>
+      <p class="settings-section-copy">Inspect the private-brain training pipeline outputs, including SFT/preference datasets, repair preference signals, and the train-ready manifest profile.</p>
+      <div class="mail-tester-grid training-controls-grid">
+        <select id="training-assets-profile" class="settings-input">
+          ${["lora_sft"].map((item) => `<option value="${escapeHtml(item)}" ${trainingAssetsInspection.profile === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+        </select>
+        <select id="training-assets-backend" class="settings-input">
+          ${["mock", "unsloth", "llamafactory"].map((item) => `<option value="${escapeHtml(item)}" ${trainingAssetsInspection.backend === item ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="studio-actions training-action-row">
+        <button id="training-assets-refresh" class="test-action remote-target" type="button">Inspect</button>
+        <button id="training-assets-rebuild" class="test-action remote-target is-secondary" type="button">Rebuild Manifest</button>
+        <button id="training-assets-dry-run" class="test-action remote-target" type="button">Generate Dry Run</button>
+      </div>
+      ${trainingAssetsInspection.isLoading ? `<div class="settings-card"><p>Loading training assets...</p></div>` : ""}
+      ${trainingAssetsInspection.isRunning ? `<div class="settings-card"><p>Generating training run skeleton...</p></div>` : ""}
+      ${trainingAssetsInspection.error ? `<div class="settings-card"><p>${escapeHtml(trainingAssetsInspection.error)}</p></div>` : ""}
+      ${trainingAssetsInspection.notice ? `<div class="settings-card"><p>${escapeHtml(trainingAssetsInspection.notice)}</p></div>` : ""}
+      <div class="training-metrics-grid">
+        ${renderTrainingMetricCards(summary, manifest, runner)}
+      </div>
+      <div class="settings-detail-grid">
+        ${renderTrainingPlan(manifest.training_plan || {})}
+        ${renderCommandPreview(runner.command_preview || lastRun?.command_preview || [])}
+      </div>
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>Repair Preferences</h3></div>
+        ${renderRepairPreferenceCounts(result.repair_preference_counts || summary.repair_preference_counts || {})}
+      </div>
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>SFT Datasets</h3></div>
+        ${renderTrainingArtifactRows(manifest.datasets?.sft || artifacts.dataset_sft || [], "No SFT datasets yet.")}
+      </div>
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>Preference Datasets</h3></div>
+        ${renderTrainingArtifactRows(manifest.datasets?.preference || artifacts.dataset_preference || [], "No preference datasets yet.")}
+      </div>
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>Manifest Artifacts</h3></div>
+        ${renderTrainingArtifactRows(artifacts.dataset_manifest || [], "No manifest artifacts yet.")}
+      </div>
+      <div class="settings-stack">
+        <div class="panel-header compact"><h3>Run Specs</h3></div>
+        ${lastRun ? renderTrainingArtifactRows([{ name: lastRun.run_id || "run", path: lastRun.artifact_path || "", profile: lastRun.status || "", sample_count: lastRun.ready ? 1 : 0 }], "No run specs yet.") : renderTrainingArtifactRows(artifacts.dataset_run || [], "No run specs yet.")}
+      </div>
+      <div class="settings-detail-grid">
+        <div class="settings-card">
+          <strong>Layer Summary</strong>
+          <pre class="cortex-json-view">${escapeHtml(JSON.stringify(summary, null, 2))}</pre>
+        </div>
+        <div class="settings-card">
+          <strong>Training Manifest</strong>
+          <pre class="cortex-json-view">${escapeHtml(JSON.stringify(manifest, null, 2))}</pre>
+        </div>
+      </div>
+    `;
+    const refreshButton = document.getElementById("training-assets-refresh");
+    const rebuildButton = document.getElementById("training-assets-rebuild");
+    const dryRunButton = document.getElementById("training-assets-dry-run");
+    const profileInput = document.getElementById("training-assets-profile");
+    const backendInput = document.getElementById("training-assets-backend");
+    if (refreshButton) {
+      refreshButton.onclick = () => loadTrainingAssetsInspection(profileInput?.value || "lora_sft");
+    }
+    if (rebuildButton) {
+      rebuildButton.onclick = () => rebuildTrainingAssets(profileInput?.value || "lora_sft");
+    }
+    if (dryRunButton) {
+      dryRunButton.onclick = () => runTrainingAssetsDryRun(profileInput?.value || "lora_sft", backendInput?.value || "mock");
     }
     return;
   }

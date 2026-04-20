@@ -125,6 +125,7 @@ def _create_app() -> Any:
         "externalChannels": {"mailConfig": {}, "mail": {"inbox": [], "outbox": [], "lastSyncAt": ""}, "apps": {"line": {"inbox": [], "outbox": []}, "wechatOfficial": {"inbox": [], "outbox": []}}, "recentActions": []},
         "assistantMemory": {"dueReminders": [], "pendingReminders": [], "upcomingEvents": [], "recentActions": []},
         "runtimeMemory": {"query": "", "namespace": "*", "promotionArtifacts": [], "vectorHits": [], "semanticMemorySummary": {}, "semanticMemoryLatestRollback": None},
+        "trainingAssets": {"summary": {}, "manifest": {}, "repairPreferenceCounts": {}},
         "customAgents": [],
         "customAgentRecentActions": [],
         "studyPlanAgents": [],
@@ -620,6 +621,90 @@ def _create_app() -> Any:
             "semanticMemoryLatestRollback": payload.get("semantic_memory_latest_rollback"),
         }
         return {"ok": True, "result": payload}
+
+    @app.get("/api/training-assets")
+    def api_training_assets(profile: str = "lora_sft"):
+        summary = core_engine.inspect_private_brain_summary()
+        manifest = core_engine.build_training_manifest(profile=profile)
+        runner = core_engine.inspect_training_runner(profile=profile, backend="mock")
+        training_assets = (summary.get("layers") or {}).get("training_assets") or {}
+        dashboard_state["trainingAssets"] = {
+            "summary": training_assets,
+            "manifest": manifest,
+            "runner": runner,
+            "repairPreferenceCounts": training_assets.get("repair_preference_counts") or {},
+        }
+        return {
+            "ok": True,
+            "result": {
+                "summary": training_assets,
+                "manifest": manifest,
+                "runner": runner,
+                "repair_preference_counts": training_assets.get("repair_preference_counts") or {},
+                "artifacts": (summary.get("artifacts") or {}),
+            },
+        }
+
+    @app.post("/api/training-assets/rebuild")
+    async def api_training_assets_rebuild(request: Request):
+        body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        profile = str(body.get("profile", "lora_sft") or "lora_sft")
+        summary = core_engine.inspect_private_brain_summary()
+        manifest = core_engine.build_training_manifest(profile=profile)
+        runner = core_engine.inspect_training_runner(profile=profile, backend="mock")
+        training_assets = (summary.get("layers") or {}).get("training_assets") or {}
+        dashboard_state["trainingAssets"] = {
+            "summary": training_assets,
+            "manifest": manifest,
+            "runner": runner,
+            "repairPreferenceCounts": training_assets.get("repair_preference_counts") or {},
+        }
+        return {
+            "ok": True,
+            "result": {
+                "summary": training_assets,
+                "manifest": manifest,
+                "runner": runner,
+                "repair_preference_counts": training_assets.get("repair_preference_counts") or {},
+                "artifacts": (summary.get("artifacts") or {}),
+            },
+        }
+
+    @app.post("/api/training-assets/run")
+    async def api_training_assets_run(request: Request):
+        body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        profile = str(body.get("profile", "lora_sft") or "lora_sft")
+        backend = str(body.get("backend", "mock") or "mock")
+        dry_run = bool(body.get("dryRun", True))
+        note = str(body.get("note", "") or "")
+        run_result = core_engine.start_training_run(
+            profile=profile,
+            backend=backend,
+            dry_run=dry_run,
+            note=note,
+        )
+        summary = core_engine.inspect_private_brain_summary()
+        manifest = core_engine.build_training_manifest(profile=profile)
+        runner = core_engine.inspect_training_runner(profile=profile, backend=backend)
+        training_assets = (summary.get("layers") or {}).get("training_assets") or {}
+        dashboard_state["trainingAssets"] = {
+            "summary": training_assets,
+            "manifest": manifest,
+            "runner": runner,
+            "lastRun": run_result,
+            "repairPreferenceCounts": training_assets.get("repair_preference_counts") or {},
+        }
+        return {
+            "ok": True,
+            "result": run_result,
+            "trainingAssets": {
+                "summary": training_assets,
+                "manifest": manifest,
+                "runner": runner,
+                "repair_preference_counts": training_assets.get("repair_preference_counts") or {},
+                "artifacts": (summary.get("artifacts") or {}),
+            },
+        }
 
     @app.get("/api/generated-artifacts/open/{category}/{artifact_id}")
     def api_generated_artifact_open(category: str, artifact_id: str):

@@ -38,6 +38,7 @@ def ensure_app_dirs() -> dict[str, Path]:
 
 def ensure_generated_dirs() -> dict[str, Path]:
     root = generated_root()
+    datasets_root = root / "datasets"
     paths = {
         "root": root,
         "code": root / "code",
@@ -45,6 +46,11 @@ def ensure_generated_dirs() -> dict[str, Path]:
         "agents": root / "agents",
         "features": root / "features",
         "traces": root / "traces",
+        "datasets": datasets_root,
+        "datasets_sft": datasets_root / "sft",
+        "datasets_preferences": datasets_root / "preferences",
+        "datasets_manifests": datasets_root / "manifests",
+        "datasets_runs": datasets_root / "runs",
     }
     for path in paths.values():
         path.mkdir(parents=True, exist_ok=True)

@@ -48,6 +48,115 @@ def test_tvbox_runtime_memory_api_proxies_core_memory_inspection(monkeypatch) ->
     assert payload["result"]["promotion_artifacts"][0]["artifactId"] == "memory_promotion_demo"
 
 
+def test_tvbox_training_assets_api_proxies_private_brain_summary_and_manifest(monkeypatch) -> None:
+    class FakeCore:
+        def inspect_private_brain_summary(self):
+            return {
+                "layers": {
+                    "training_assets": {
+                        "sft_sample_count": 6,
+                        "preference_sample_count": 3,
+                        "manifest_count": 1,
+                        "repair_preference_counts": {"prefer_analysis": 2, "prefer_patch_pipeline": 1},
+                    }
+                },
+                "artifacts": {
+                    "dataset_sft": [{"artifactId": "sft_demo", "name": "sft_demo.json", "path": "runtime/generated/datasets/sft_demo.json"}],
+                    "dataset_preference": [{"artifactId": "pref_demo", "name": "pref_demo.json", "path": "runtime/generated/datasets/pref_demo.json"}],
+                    "dataset_manifest": [{"artifactId": "manifest_demo", "name": "manifest_demo.json", "path": "runtime/generated/datasets/manifest_demo.json"}],
+                },
+            }
+
+        def build_training_manifest(self, profile="lora_sft"):
+            return {
+                "profile": profile,
+                "datasets": {
+                    "sft": [{"artifact_id": "sft_demo", "name": "sft_demo.json", "sample_count": 6}],
+                    "preference": [{"artifact_id": "pref_demo", "name": "pref_demo.json", "sample_count": 3}],
+                },
+                "training_plan": {"strategy": "lora_sft"},
+            }
+
+        def inspect_training_runner(self, profile="lora_sft", backend="mock"):
+            return {
+                "profile": profile,
+                "backend": {"backend": backend, "label": "Mock Runner", "supports_execution": False},
+                "command_preview": ["python", "-m", "nethub_runtime.training.run", "--mode=dry-run"],
+                "ready": True,
+            }
+
+        def start_training_run(self, profile="lora_sft", backend="mock", dry_run=True, note=None):
+            return {
+                "run_id": "training_run_lora_sft_demo",
+                "profile": profile,
+                "backend": {"backend": backend, "label": "Mock Runner", "supports_execution": False},
+                "dry_run": dry_run,
+                "status": "dry_run",
+                "ready": True,
+                "note": note or "",
+                "artifact_path": "runtime/generated/datasets/runs/training_run_lora_sft_demo.json",
+                "command_preview": ["python", "-m", "nethub_runtime.training.run", "--mode=dry-run"],
+                "message": "Training run skeleton generated. No trainer was executed.",
+            }
+
+    monkeypatch.setattr(tvbox_main, "_create_core_engine", lambda: FakeCore())
+    client = TestClient(_create_app())
+
+    response = client.get("/api/training-assets", params={"profile": "lora_sft"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["result"]["summary"]["sft_sample_count"] == 6
+    assert payload["result"]["repair_preference_counts"]["prefer_analysis"] == 2
+    assert payload["result"]["manifest"]["profile"] == "lora_sft"
+    assert payload["result"]["artifacts"]["dataset_manifest"][0]["artifactId"] == "manifest_demo"
+    assert payload["result"]["runner"]["backend"]["backend"] == "mock"
+
+
+def test_tvbox_training_assets_rebuild_and_run_actions(monkeypatch) -> None:
+    class FakeCore:
+        def inspect_private_brain_summary(self):
+            return {
+                "layers": {
+                    "training_assets": {
+                        "sft_samples": 2,
+                        "preference_samples": 1,
+                        "training_manifests": 1,
+                        "training_runs": 0,
+                        "repair_preference_counts": {"prefer_analysis": 1},
+                    }
+                },
+                "artifacts": {
+                    "dataset_sft": [],
+                    "dataset_preference": [],
+                    "dataset_manifest": [],
+                    "dataset_run": [],
+                },
+            }
+
+        def build_training_manifest(self, profile="lora_sft"):
+            return {"profile": profile, "ready": True, "datasets": {"sft": [], "preference": []}, "counts": {"sft": 0, "preference": 0}, "training_plan": {"stages": ["prepare", "train"]}}
+
+        def inspect_training_runner(self, profile="lora_sft", backend="mock"):
+            return {"profile": profile, "backend": {"backend": backend, "label": "Mock Runner", "supports_execution": False}, "command_preview": ["python", "-m", "nethub_runtime.training.run"], "ready": True}
+
+        def start_training_run(self, profile="lora_sft", backend="mock", dry_run=True, note=None):
+            return {"run_id": "run_demo", "profile": profile, "dry_run": dry_run, "status": "dry_run", "artifact_path": "runtime/generated/datasets/runs/run_demo.json", "command_preview": ["python"], "message": "Training run skeleton generated. No trainer was executed."}
+
+    monkeypatch.setattr(tvbox_main, "_create_core_engine", lambda: FakeCore())
+    client = TestClient(_create_app())
+
+    rebuild_response = client.post("/api/training-assets/rebuild", json={"profile": "lora_sft"})
+    run_response = client.post("/api/training-assets/run", json={"profile": "lora_sft", "backend": "mock", "dryRun": True})
+
+    assert rebuild_response.status_code == 200
+    assert rebuild_response.json()["result"]["manifest"]["profile"] == "lora_sft"
+    assert run_response.status_code == 200
+    assert run_response.json()["result"]["status"] == "dry_run"
+    assert run_response.json()["trainingAssets"]["runner"]["backend"]["backend"] == "mock"
+
+
 def test_tvbox_generated_artifacts_api_deletes_generated_files() -> None:
     store = GeneratedArtifactStore()
     store.persist("agent", "tvbox_agent_case", {"name": "tvbox-agent"})

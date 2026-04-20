@@ -1,0 +1,96 @@
+{
+  "value": [
+    {
+      "sample_type": "document_analysis",
+      "input": {
+        "user_text": "请对这份文档进行总结，然后发给我",
+        "context": {
+          "session_id": "memory-promotion-core-session",
+          "trace_id": "trace_29e189783cec",
+          "metadata": {
+            "attachments": [
+              {
+                "file_name": "memory_promotion_brief.txt",
+                "content_type": "text/plain",
+                "input_type": "document",
+                "stored_path": "/tmp/memory_promotion_brief.txt",
+                "received_path": "/home/lw-ai/Documents/nesthub/received/memory-promotion-core-session/memory_promotion_brief_14.txt"
+              }
+            ],
+            "main_session_id": "memory-promotion-core-session",
+            "document_attachments": [
+              {
+                "file_name": "memory_promotion_brief.txt",
+                "content_type": "text/plain",
+                "input_type": "document",
+                "stored_path": "/tmp/memory_promotion_brief.txt",
+                "received_path": "/home/lw-ai/Documents/nesthub/received/memory-promotion-core-session/memory_promotion_brief_14.txt"
+              }
+            ],
+            "image_attachments": [],
+            "analysis_attachments": [
+              {
+                "file_name": "memory_promotion_brief.txt",
+                "content_type": "text/plain",
+                "input_type": "document",
+                "stored_path": "/tmp/memory_promotion_brief.txt",
+                "received_path": "/home/lw-ai/Documents/nesthub/received/memory-promotion-core-session/memory_promotion_brief_14.txt"
+              }
+            ],
+            "enriched_at": "2026-04-20T03:23:54.044480+00:00",
+            "record_count": 0
+          }
+        },
+        "retrieved_knowledge": [
+          {
+            "kind": "document_analysis",
+            "requested_action": "summarize",
+            "vector_item_id": "memory_promotion:trace_1352de84e1bf:document",
+            "source_documents": [
+              "memory_promotion_brief.txt"
+            ],
+            "status": "deduplicated",
+            "inspection": {
+              "namespace": "document_analysis",
+              "query_preview": "Model response (mock): Summarize the following document content. Highlight the main points, important f...",
+              "similar_items": [
+                {
+                  "id": "memory_promotion:trace_1352de84e1bf:document",
+                  "namespace": "document_analysis",
+                  "content_preview": "Model response (mock): Summarize the following document content. Highlight the main points, important f..."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "output": {
+        "answer": "Model response (mock): Summarize the following document content. Highlight the main points, important f...",
+        "final_output": {
+          "analyze_document": {
+            "artifact_type": "document",
+            "status": "completed",
+            "message": "已完成文档总结，共处理 1 个文件。",
+            "summary": "Model response (mock): Summarize the following document content. Highlight the main points, important f...",
+            "translation": "",
+            "content": "# memory_promotion_brief.txt\n项目状态稳定，下一步是完成联调和测试。",
+            "source_documents": [
+              "memory_promotion_brief.txt"
+            ],
+            "parsers": [
+              "plain_text"
+            ],
+            "document_count": 1,
+            "requested_action": "summarize",
+            "target_language": ""
+          }
+        }
+      },
+      "quality": {
+        "outcome": "partial",
+        "repair_iterations": 2,
+        "user_goal_satisfied": false
+      }
+    }
+  ]
+}

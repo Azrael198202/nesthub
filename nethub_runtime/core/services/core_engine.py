@@ -45,6 +45,9 @@ from nethub_runtime.core.services.bootstrap_loader import BootstrapLoader
 from nethub_runtime.core.memory.session_store import SessionCompactor
 from nethub_runtime.core.services.session_queue import SessionQueueManager
 from nethub_runtime.core.services.memory_promotion_service import MemoryPromotionService
+from nethub_runtime.core.services.training_dataset_export_service import TrainingDatasetExportService
+from nethub_runtime.core.services.training_fine_tune_runner_service import TrainingFineTuneRunnerService
+from nethub_runtime.core.services.training_pipeline_service import TrainingPipelineService
 
 
 class AICore:
@@ -98,6 +101,16 @@ class AICore:
         self.agent_registry = Registry()
         self.generated_artifact_store = GeneratedArtifactStore()
         self.runtime_design_synthesizer = RuntimeDesignSynthesizer()
+        self.training_dataset_export_service = TrainingDatasetExportService(
+            generated_artifact_store=self.generated_artifact_store,
+        )
+        self.training_pipeline_service = TrainingPipelineService(
+            generated_artifact_store=self.generated_artifact_store,
+        )
+        self.training_fine_tune_runner_service = TrainingFineTuneRunnerService(
+            generated_artifact_store=self.generated_artifact_store,
+            training_pipeline_service=self.training_pipeline_service,
+        )
         
         # ========== 传统插件-based 服务 ==========
         self.intent_analyzer = IntentAnalyzer(vector_store=self.vector_store)
@@ -325,6 +338,34 @@ class AICore:
     def _should_apply_goal_repair(self, task: Any) -> bool:
         return task.domain not in {"agent_management", "knowledge_ops"}
 
+    def _build_repair_preferences(self, repair_history: list[dict[str, Any]]) -> dict[str, Any]:
+        preferences = {
+            "analysis_before_retry": False,
+            "prefer_tool_prepare": False,
+            "prefer_patch_pipeline": False,
+            "prefer_artifact_pipeline": False,
+            "guided_repair": False,
+        }
+        for item in repair_history:
+            classification = item.get("repair_classification") or {}
+            guidance = classification.get("runtime_learning_guidance") or {}
+            guidance_preferences = guidance.get("repair_preferences") if isinstance(guidance, dict) else {}
+            if isinstance(guidance_preferences, dict):
+                preferences["analysis_before_retry"] = preferences["analysis_before_retry"] or bool(guidance_preferences.get("analysis_before_retry"))
+                preferences["prefer_tool_prepare"] = preferences["prefer_tool_prepare"] or bool(guidance_preferences.get("prefer_tool_prepare"))
+                preferences["prefer_patch_pipeline"] = preferences["prefer_patch_pipeline"] or bool(guidance_preferences.get("prefer_patch_pipeline"))
+                preferences["prefer_artifact_pipeline"] = preferences["prefer_artifact_pipeline"] or bool(guidance_preferences.get("prefer_artifact_pipeline"))
+                preferences["guided_repair"] = preferences["guided_repair"] or any(bool(value) for value in guidance_preferences.values())
+
+            workflow_guidance = classification.get("runtime_learning_guidance_signals") or {}
+            if isinstance(workflow_guidance, dict):
+                preferences["analysis_before_retry"] = preferences["analysis_before_retry"] or bool(workflow_guidance.get("prefer_analysis_before_retry"))
+                preferences["prefer_tool_prepare"] = preferences["prefer_tool_prepare"] or bool(workflow_guidance.get("prefer_tool_prepare"))
+                preferences["prefer_patch_pipeline"] = preferences["prefer_patch_pipeline"] or bool(workflow_guidance.get("prefer_patch_pipeline"))
+                preferences["prefer_artifact_pipeline"] = preferences["prefer_artifact_pipeline"] or bool(workflow_guidance.get("prefer_artifact_pipeline"))
+                preferences["guided_repair"] = preferences["guided_repair"] or any(bool(value) for value in workflow_guidance.values())
+        return preferences
+
 
     def reload_plugins(self) -> dict[str, Any]:
         """Reload plugin-enabled services from config without restarting process."""
@@ -399,6 +440,66 @@ class AICore:
             "semantic_memory_summary": semantic_snapshot.get("summary") or {},
             "semantic_memory_latest_rollback": semantic_snapshot.get("latest_rollback"),
         }
+
+    def inspect_private_brain_summary(self) -> dict[str, Any]:
+        semantic_snapshot = self.execution_coordinator.semantic_policy_store.inspect_memory()
+        generated = self.generated_artifact_store.list_artifacts()
+        training_summary = self.runtime_learning_store.get_learning_summary()
+        vector_items = list(getattr(self.vector_store, "_items", []))
+        namespace_counts: dict[str, int] = {}
+        for item in vector_items:
+            namespace = str(item.get("namespace") or "unknown")
+            namespace_counts[namespace] = namespace_counts.get(namespace, 0) + 1
+        information_agent_count = namespace_counts.get("information_agent_fact", 0)
+        return {
+            "layers": {
+                "work_memory": {
+                    "session_store_backend": type(self.context_manager.session_store).__name__,
+                },
+                "procedural_memory": semantic_snapshot.get("summary") or {},
+                "structured_fact_memory": {
+                    "vector_item_count": len(vector_items),
+                    "vector_namespace_counts": namespace_counts,
+                    "information_agent_fact_count": information_agent_count,
+                },
+                "runtime_learning": training_summary,
+                "training_assets": {
+                    "sft_samples": len(generated.get("dataset_sft", [])),
+                    "preference_samples": len(generated.get("dataset_preference", [])),
+                    "training_manifests": len(generated.get("dataset_manifest", [])),
+                    "training_runs": len(generated.get("dataset_run", [])),
+                    "repair_preference_counts": training_summary.get("repair_preference_counts") or {},
+                },
+            },
+            "artifacts": {
+                "memory_promotions": len([item for item in generated.get("code", []) if str(item.get("artifactId") or "").startswith("memory_promotion_")]),
+                "dataset_sft": generated.get("dataset_sft", []),
+                "dataset_preference": generated.get("dataset_preference", []),
+                "dataset_manifest": generated.get("dataset_manifest", []),
+                "dataset_run": generated.get("dataset_run", []),
+            },
+        }
+
+    def build_training_manifest(self, *, profile: str = "lora_sft") -> dict[str, Any]:
+        return self.training_pipeline_service.build_training_manifest(profile=profile)
+
+    def inspect_training_runner(self, *, profile: str = "lora_sft", backend: str = "mock") -> dict[str, Any]:
+        return self.training_fine_tune_runner_service.inspect_runner(profile=profile, backend=backend)
+
+    def start_training_run(
+        self,
+        *,
+        profile: str = "lora_sft",
+        backend: str = "mock",
+        dry_run: bool = True,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        return self.training_fine_tune_runner_service.start_run(
+            profile=profile,
+            backend=backend,
+            dry_run=dry_run,
+            note=note,
+        )
 
     async def handle(
         self,
@@ -568,6 +669,14 @@ class AICore:
                     outcome_evaluation["unmet_requirements"] = unmet_requirements
                 execution_result["outcome_evaluation"] = outcome_evaluation
                 execution_result["goal_evaluation"] = goal_evaluation
+                execution_guidance = None
+                if outcome_evaluation.get("should_repair"):
+                    execution_guidance = self.runtime_learning_store.lookup_execution_guidance(
+                        task_type=task.intent,
+                        intent=task.intent,
+                    )
+                    if execution_guidance:
+                        execution_result["runtime_learning_guidance"] = execution_guidance
                 repair_history: list[dict[str, Any]] = []
                 current_workflow = workflow
                 max_iterations = self._max_runtime_repair_iterations()
@@ -579,6 +688,10 @@ class AICore:
                         dependency_status=dependency_status if isinstance(dependency_status, dict) else {},
                         execution_result=execution_result,
                     )
+                    if execution_guidance:
+                        repair_classification["runtime_learning_guidance"] = execution_guidance
+                        repair_classification["preferred_repair_iterations"] = int(execution_guidance.get("repair_iterations") or 0)
+                        repair_classification["preferred_solution_summary"] = str(execution_guidance.get("solution_summary") or "")
 
                     # ---- Self-aware capability acquisition ----
                     # When the classifier detects missing tools/models, delegate to
@@ -642,6 +755,7 @@ class AICore:
                         {
                             "iteration": repair_iteration,
                             "repair_classification": repair_classification,
+                            "runtime_learning_guidance": execution_guidance,
                             "outcome_evaluation": outcome_evaluation,
                             "workflow_id": repaired_workflow.workflow_id,
                         }
@@ -654,6 +768,8 @@ class AICore:
                 execution_result["repair_stop_reason"] = (
                     "requirements_satisfied" if not outcome_evaluation.get("should_repair") else "max_iterations_reached"
                 )
+                repair_preferences = self._build_repair_preferences(repair_history)
+                execution_result["repair_preferences"] = repair_preferences
 
                 # ---- Record execution outcome to learning store ----
                 final_outcome = "success" if not outcome_evaluation.get("should_repair") else "partial"
@@ -665,6 +781,7 @@ class AICore:
                     repair_iterations=repair_iteration,
                     unmet_requirements=list(outcome_evaluation.get("unmet_requirements") or []),
                     solution_summary=execution_result.get("repair_stop_reason", ""),
+                    repair_preferences=repair_preferences,
                 )
                 configured_agent_output = execution_result.get("final_output", {}).get("manage_information_agent", {}).get("agent")
                 if configured_agent_output:
@@ -704,6 +821,16 @@ class AICore:
                     execution_result=final_result.get("execution_result") or {},
                 )
                 final_result.setdefault("execution_result", {})["memory_promotion"] = promotion_summary
+                dataset_export_summary = self.training_dataset_export_service.export_execution_result(
+                    task=final_result.get("task") or task.model_dump(),
+                    context={
+                        "trace_id": ctx.trace_id,
+                        "session_id": ctx.session_id,
+                        "metadata": ctx.metadata,
+                    },
+                    execution_result=final_result.get("execution_result") or {},
+                )
+                final_result.setdefault("execution_result", {})["training_dataset_export"] = dataset_export_summary
 
             trace_artifact_path = self._persist_runtime_trace(
                 trace_id=ctx.trace_id,
