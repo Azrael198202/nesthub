@@ -113,7 +113,7 @@ def _create_app() -> Any:
         "modelCatalog": [],
         "runtimeProfile": {"label": "Demo", "summary": "Demo runtime", "localRoles": [], "cloudRoles": [], "localDetected": []},
         "assistantAvatar": {"mode": "house", "customModelUrl": "", "backupMode": "house", "defaultMode": "house", "label": "Demo", "techStack": []},
-        "languageSettings": {"supported": [{"code": "zh-CN", "label": "简体中文", "sample": "你好"}], "current": "zh-CN"},
+        "languageSettings": {"supported": [{"code": "en-US", "label": "English", "sample": "Hello"}], "current": "en-US"},
         "weather": {"location": "Tokyo", "condition": "Cloudy", "temperatureC": 20, "highC": 23, "lowC": 16, "gpsEnabled": False},
         "systemStatus": {"mode": "ready", "boxHealth": "Healthy"},
         "conversation": [],
@@ -271,14 +271,38 @@ def _create_app() -> Any:
         return f"/api/generated-artifacts/open/{category}/{artifact_id}"
 
     def _artifact_file_path(category: str, artifact_id: str) -> Path | None:
-        key = GeneratedArtifactStore.CATEGORY_TO_DIR.get(category)
-        if not key:
-            return None
-        directory = artifact_store.paths.get(key)
-        if directory is None:
-            return None
-        candidates = sorted(directory.glob(f"{artifact_id}.*"))
-        return candidates[0] if candidates else None
+        category_aliases = {
+            "image": ("trace",),
+            "audio": (),
+            "video": (),
+            "file": (),
+        }
+        candidate_categories = (category, *category_aliases.get(category, ()))
+
+        for candidate_category in candidate_categories:
+            key = GeneratedArtifactStore.CATEGORY_TO_DIR.get(candidate_category)
+            if not key:
+                continue
+            directory = artifact_store._paths().get(key)
+            if directory is None:
+                continue
+            candidates = sorted(directory.glob(f"{artifact_id}.*"))
+            if candidates:
+                return candidates[0]
+
+        # TV Box runtime artifacts such as generated images may be written
+        # directly under the repo-local generated/ directory instead of the
+        # categorized runtime store.
+        generated_root = repo_root / "generated"
+        if generated_root.exists():
+            direct_candidates = sorted(generated_root.glob(f"{artifact_id}.*"))
+            if direct_candidates:
+                return direct_candidates[0]
+            recursive_candidates = sorted(generated_root.rglob(f"{artifact_id}.*"))
+            if recursive_candidates:
+                return recursive_candidates[0]
+
+        return None
 
     def _artifact_items_from_result(result: dict[str, Any]) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
@@ -728,7 +752,7 @@ def _create_app() -> Any:
         payload = copy.deepcopy(cortex_template)
         payload["request"] = {
             "command": str(body.get("command", payload.get("request", {}).get("command", ""))),
-            "locale": str(body.get("locale", payload.get("request", {}).get("locale", dashboard_state.get("languageSettings", {}).get("current", "zh-CN")))),
+            "locale": str(body.get("locale", payload.get("request", {}).get("locale", dashboard_state.get("languageSettings", {}).get("current", "en-US")))),
             "taskType": str(body.get("taskType", payload.get("request", {}).get("taskType", "general_chat"))),
             "inputModes": body.get("inputModes", payload.get("request", {}).get("inputModes", ["text"])),
             "requireArtifacts": bool(body.get("requireArtifacts", False)),
@@ -820,13 +844,13 @@ def _create_app() -> Any:
 
     @app.post("/api/audio/transcribe")
     async def api_audio_transcribe():
-        return {"ok": True, "transcript": "这是一条演示转写文本", "detectedLocale": dashboard_state.get("languageSettings", {}).get("current", "zh-CN")}
+        return {"ok": True, "transcript": "This is a demo transcription.", "detectedLocale": dashboard_state.get("languageSettings", {}).get("current", "en-US")}
 
     @app.post("/api/voice/chat")
     async def api_voice_chat(request: Request):
         body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
         message = str(body.get("message", "")).strip()
-        locale = str(body.get("locale", dashboard_state.get("languageSettings", {}).get("current", "zh-CN")))
+        locale = str(body.get("locale", dashboard_state.get("languageSettings", {}).get("current", "en-US")))
         raw_attachments = body.get("attachments") or []
         session_id = str(body.get("sessionId") or _tvbox_session_id(body.get("agentId") or "voice-chat"))
         try:

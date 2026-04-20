@@ -64,3 +64,4 @@ api/public_api/received/
 received/
 logs/
 reports/*/*_test_case_report.md
+generated/

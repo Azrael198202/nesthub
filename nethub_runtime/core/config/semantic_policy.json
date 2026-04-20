@@ -263,8 +263,20 @@
       "intent": "image_generation_task",
       "domain": "multimodal_ops",
       "input_types": [],
-      "keywords": ["生成图片", "图像生成", "海报", "插图", "画图", "画一张", "生成一张"],
-      "patterns": ["生成.{0,10}图片", "画.{0,10}图"],
+      "keywords": [
+        "生成图片", "图像生成", "海报", "插图", "画图", "画一张", "生成一张",
+        "generate an image", "generate image", "create an image", "create image",
+        "draw an image", "draw image", "make an image", "make image",
+        "generate a picture", "create a picture", "draw a picture",
+        "generate a photo", "create a photo", "image of", "picture of"
+      ],
+      "patterns": [
+        "生成.{0,10}图片", "画.{0,10}图",
+        "generate.{0,20}image", "create.{0,20}image",
+        "draw.{0,20}image", "make.{0,20}image",
+        "generate.{0,20}picture", "create.{0,20}picture",
+        "draw.{0,20}picture"
+      ],
       "image_file_extensions": ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"],
       "image_generation_verbs": ["生成", "画", "制作", "create", "generate", "draw"]
     },
