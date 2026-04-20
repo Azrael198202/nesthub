@@ -107,11 +107,6 @@ class AICore:
         self.training_pipeline_service = TrainingPipelineService(
             generated_artifact_store=self.generated_artifact_store,
         )
-        self.training_fine_tune_runner_service = TrainingFineTuneRunnerService(
-            generated_artifact_store=self.generated_artifact_store,
-            training_pipeline_service=self.training_pipeline_service,
-            semantic_policy_store=self.execution_coordinator.semantic_policy_store,
-        )
         
         # ========== 传统插件-based 服务 ==========
         self.intent_analyzer = IntentAnalyzer(vector_store=self.vector_store)
@@ -145,6 +140,12 @@ class AICore:
             vector_store=self.vector_store,
             generated_artifact_store=self.generated_artifact_store,
             model_router=self.model_router,
+        )
+        training_semantic_policy_store = getattr(self.execution_coordinator, "semantic_policy_store", None)
+        self.training_fine_tune_runner_service = TrainingFineTuneRunnerService(
+            generated_artifact_store=self.generated_artifact_store,
+            training_pipeline_service=self.training_pipeline_service,
+            semantic_policy_store=training_semantic_policy_store,
         )
         self.result_integrator = ResultIntegrator()
         self.runtime_failure_classifier = RuntimeFailureClassifier()
