@@ -6,6 +6,9 @@ import re
 import logging
 import asyncio
 import threading
+import shlex
+import subprocess
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -43,6 +46,18 @@ class ExecutionCoordinator:
                 "fallback_to_external_threshold": 0.35,
             },
             "normalization": {"text_replace": {}, "synonyms": {}},
+            "intent_detection": {"group_query_markers": []},
+            "aggregation_query": {"generic_action_terms": []},
+            "information_collection": {
+                "completion_phrases": [],
+                "default_completion_phrase": "",
+                "field_capture_markers": [],
+                "field_aliases": {},
+                "field_query_keywords": {},
+                "list_query_markers": [],
+                "record_name_suffixes": [],
+                "record_name_split_separators": [],
+            },
             "entity_aliases": {"actor": {}},
             "label_taxonomy": {},
             "semantic_label_threshold": 0.32,
@@ -415,7 +430,7 @@ class ExecutionCoordinator:
         context: CoreContextSchema,
         step_outputs: dict[str, Any],
     ) -> dict[str, Any]:
-        return self._run_llm_step(step["name"], task, context)
+        return self._run_llm_step(step["name"], task, context, step_outputs)
 
     def _dispatch_code_step(
         self,
@@ -426,16 +441,22 @@ class ExecutionCoordinator:
     ) -> dict[str, Any]:
         return self._run_code_step(step["name"], task, context, step_outputs)
 
-    def _run_llm_step(self, step_name: str, task: TaskSchema, context: CoreContextSchema) -> dict[str, Any]:
+    def _run_llm_step(self, step_name: str, task: TaskSchema, context: CoreContextSchema, step_outputs: dict[str, Any]) -> dict[str, Any]:
         if self.model_router is None:
             return {"message": f"llm step placeholder for {step_name}", "input_text": task.input_text, "session_id": context.session_id}
 
+        summarized_outputs = {
+            key: value
+            for key, value in step_outputs.items()
+            if key in {"single_step", "file_generate", "generate_workflow_artifact", "generate_runtime_patch", "validate_runtime_patch"}
+        }
         prompt = (
             "Execute the requested workflow step and return a concise plain-text result.\n"
             f"step_name: {step_name}\n"
             f"task_intent: {task.intent}\n"
             f"input_text: {task.input_text}\n"
-            f"session_id: {context.session_id}"
+            f"session_id: {context.session_id}\n"
+            f"step_outputs: {json.dumps(summarized_outputs, ensure_ascii=False)[:2000]}"
         )
         response = self._invoke_model_text(
             task_type="llm_execution",
@@ -444,7 +465,17 @@ class ExecutionCoordinator:
         )
         if not response:
             return {"message": f"llm step placeholder for {step_name}", "input_text": task.input_text, "session_id": context.session_id}
+        if step_name == "analyze_workflow_context":
+            return {
+                "status": "completed",
+                "analysis": response,
+                "summary": response,
+                "input_text": task.input_text,
+                "session_id": context.session_id,
+                "model_routed": True,
+            }
         return {
+            "status": "completed",
             "message": response,
             "input_text": task.input_text,
             "session_id": context.session_id,
@@ -475,9 +506,19 @@ class ExecutionCoordinator:
     def _sanitize_member_value(self, key: str, text: str) -> Any:
         value = text.strip()
         if key == "details":
-            value = value.replace("完成添加", "").strip()
+            for phrase in self._information_collection_phrases():
+                value = value.replace(phrase, "").strip()
             return value
         return value
+
+    def _information_collection_phrases(self) -> list[str]:
+        payload = self.semantic_policy.get("information_collection", {})
+        phrases = payload.get("completion_phrases", []) if isinstance(payload, dict) else []
+        if not phrases:
+            store_policy = self.semantic_policy_store.load_runtime_policy()
+            store_payload = store_policy.get("information_collection", {}) if isinstance(store_policy, dict) else {}
+            phrases = store_payload.get("completion_phrases", []) if isinstance(store_payload, dict) else []
+        return [str(item).strip() for item in phrases if str(item).strip()]
 
     def _manage_information_agent(self, text: str, task: TaskSchema, context: CoreContextSchema) -> dict[str, Any]:
         return self.information_agent_service.manage_information_agent(
@@ -503,6 +544,164 @@ class ExecutionCoordinator:
 
     def _allow_runtime_auto_install(self) -> bool:
         return self.security_guard.allow_runtime_auto_install()
+
+    def _autonomous_implementation_policy(self) -> dict[str, Any]:
+        runtime_behavior = self.semantic_policy_store.load_runtime_policy().get("runtime_behavior", {})
+        payload = runtime_behavior.get("autonomous_implementation", {}) if isinstance(runtime_behavior, dict) else {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _runtime_workspace_root(self) -> Path:
+        policy = self._autonomous_implementation_policy()
+        env_name = str(policy.get("workspace_root_env") or "NETHUB_RUNTIME_WORKSPACE_ROOT").strip() or "NETHUB_RUNTIME_WORKSPACE_ROOT"
+        env_root = os.getenv(env_name, "").strip()
+        root = Path(env_root).expanduser() if env_root else Path.cwd()
+        return root.resolve()
+
+    def _generate_runtime_patch(self, *, task: TaskSchema, context: CoreContextSchema, step_outputs: dict[str, Any]) -> dict[str, Any]:
+        policy = self._autonomous_implementation_policy()
+        if not bool(policy.get("enabled", False)):
+            return {"status": "failed", "message": "autonomous implementation disabled"}
+        if self.model_router is None:
+            return {"status": "failed", "message": "model router unavailable for runtime patch generation"}
+
+        workspace_root = self._runtime_workspace_root()
+        analysis_output = step_outputs.get("analyze_workflow_context", {})
+        analysis_text = analysis_output.get("summary") or analysis_output.get("analysis") or task.input_text
+        prompt = (
+            "Return valid JSON only. Build a minimal runtime repair patch plan.\n"
+            "Schema: {\"summary\": string, \"target_file\": string, \"updated_content\": string, \"validation_commands\": [string]}.\n"
+            "Rules: target_file must be workspace-relative. updated_content must be the full file content after fix. validation_commands must be minimal.\n"
+            f"workspace_root: {workspace_root}\n"
+            f"task_intent: {task.intent}\n"
+            f"input_text: {task.input_text}\n"
+            f"analysis: {analysis_text}\n"
+            f"step_outputs: {json.dumps(step_outputs, ensure_ascii=False)[:4000]}"
+        )
+        raw = self._invoke_model_text(
+            task_type="llm_execution",
+            prompt=prompt,
+            system_prompt="You are the NestHub autonomous repair planner. Return JSON only.",
+            temperature=0,
+        )
+        if not raw:
+            return {"status": "failed", "message": "empty runtime patch plan"}
+
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`")
+            cleaned = cleaned.replace("json\n", "", 1).strip()
+        try:
+            plan = json.loads(cleaned)
+        except Exception:
+            artifact_path = self.generated_artifact_store.persist("code", f"runtime_patch_{context.trace_id}", raw, extension=".txt")
+            return {"status": "failed", "message": "invalid runtime patch plan", "patch_artifact_path": str(artifact_path)}
+
+        if not isinstance(plan, dict):
+            return {"status": "failed", "message": "runtime patch plan is not an object"}
+
+        target_file = str(plan.get("target_file") or "").strip()
+        updated_content = plan.get("updated_content")
+        validation_commands = plan.get("validation_commands") if isinstance(plan.get("validation_commands"), list) else []
+        if not target_file or not isinstance(updated_content, str):
+            return {"status": "failed", "message": "runtime patch plan missing target_file or updated_content", "patch_plan": plan}
+
+        root = workspace_root
+        target_path = (root / target_file).resolve()
+        try:
+            target_path.relative_to(root)
+        except ValueError:
+            return {"status": "failed", "message": "target file escapes workspace root", "patch_plan": plan}
+
+        allowed_extensions = {str(item) for item in policy.get("allowed_file_extensions", [])}
+        if allowed_extensions and target_path.suffix not in allowed_extensions:
+            return {"status": "failed", "message": f"target file extension not allowed: {target_path.suffix}", "patch_plan": plan}
+        if not bool(policy.get("allow_workspace_file_modification", False)):
+            return {"status": "failed", "message": "workspace file modification disabled", "patch_plan": plan}
+
+        previous_content = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(updated_content, encoding="utf-8")
+
+        backup_path = self.generated_artifact_store.persist("code", f"runtime_patch_backup_{context.trace_id}", previous_content, extension=target_path.suffix or ".txt")
+        artifact_payload = {
+            "summary": str(plan.get("summary") or "runtime patch generated"),
+            "target_file": target_file,
+            "validation_commands": [str(item) for item in validation_commands if str(item).strip()],
+            "trace_id": context.trace_id,
+            "backup_path": str(backup_path),
+        }
+        artifact_path = self.generated_artifact_store.persist("code", f"runtime_patch_{context.trace_id}", artifact_payload)
+        return {
+            "status": "patched",
+            "patch_plan": artifact_payload,
+            "patch_artifact_path": str(artifact_path),
+            "patched_files": [str(target_path)],
+            "message": str(plan.get("summary") or f"patched {target_file}"),
+        }
+
+    def _run_runtime_validation(self, *, context: CoreContextSchema, patch_payload: dict[str, Any]) -> dict[str, Any]:
+        policy = self._autonomous_implementation_policy()
+        commands = [str(item).strip() for item in list(patch_payload.get("patch_plan", {}).get("validation_commands", [])) if str(item).strip()]
+        if not commands:
+            return {"status": "failed", "validation_results": [], "executed_commands": [], "message": "no validation commands provided"}
+
+        allowed_prefixes = {str(item).strip() for item in policy.get("validation_command_prefixes", []) if str(item).strip()}
+        timeout_sec = int(policy.get("validation_timeout_sec", 120) or 120)
+        workspace_root = self._runtime_workspace_root()
+        results: list[dict[str, Any]] = []
+        executed_commands: list[str] = []
+        overall_ok = True
+        for command in commands:
+            parts = shlex.split(command)
+            if not parts:
+                continue
+            if allowed_prefixes and parts[0] not in allowed_prefixes:
+                results.append({"command": command, "status": "blocked", "reason": "prefix_not_allowed"})
+                overall_ok = False
+                continue
+            started_at = time.time()
+            try:
+                proc = subprocess.run(parts, cwd=str(workspace_root), capture_output=True, text=True, timeout=timeout_sec)
+                executed_commands.append(command)
+                result = {
+                    "command": command,
+                    "exit_code": int(proc.returncode),
+                    "stdout": proc.stdout[-4000:],
+                    "stderr": proc.stderr[-4000:],
+                    "duration_sec": round(time.time() - started_at, 3),
+                    "status": "passed" if proc.returncode == 0 else "failed",
+                }
+                if proc.returncode != 0:
+                    overall_ok = False
+                results.append(result)
+            except Exception as exc:
+                overall_ok = False
+                results.append({"command": command, "status": "error", "error": str(exc)})
+
+        return {
+            "status": "validated" if overall_ok else "failed",
+            "validation_results": results,
+            "executed_commands": executed_commands,
+            "message": "runtime validation completed" if overall_ok else "runtime validation failed",
+        }
+
+    def _verify_runtime_patch(self, *, context: CoreContextSchema, patch_payload: dict[str, Any], validation_payload: dict[str, Any]) -> dict[str, Any]:
+        results = validation_payload.get("validation_results", []) if isinstance(validation_payload, dict) else []
+        passed = bool(results) and all(item.get("status") == "passed" for item in results if isinstance(item, dict))
+        if passed:
+            return {
+                "status": "verified",
+                "verified": True,
+                "patched_files": patch_payload.get("patched_files", []),
+                "message": "runtime patch verified successfully",
+            }
+        return {
+            "status": "verification_failed",
+            "verified": False,
+            "patched_files": patch_payload.get("patched_files", []),
+            "validation_results": results,
+            "message": "runtime patch verification failed",
+        }
 
     def _extract_records(self, text: str) -> list[dict[str, Any]]:
         model_records = self._model_parse_records(text)
@@ -698,11 +897,18 @@ class ExecutionCoordinator:
 
         stopwords = self._query_stopwords()
         ignored_tokens = set(self.semantic_policy.get("ignored_query_tokens", []))
+        generic_action_terms = self._generic_query_action_terms()
         normalized = text
         for stopword in stopwords:
             normalized = normalized.replace(stopword, " ")
         tokens = self._tokenize(normalized)
-        terms = [tok for tok in tokens if tok not in stopwords and tok not in ignored_tokens]
+        terms = [
+            tok
+            for tok in tokens
+            if tok not in stopwords
+            and tok not in ignored_tokens
+            and self._normalize_text(tok) not in generic_action_terms
+        ]
 
         filters = self._infer_alias_filters(text)
         semantic_label = self._semantic_label_from_text(text)
@@ -761,6 +967,7 @@ class ExecutionCoordinator:
             self._normalize_text(token)
             for token in self.semantic_policy.get("ignored_query_tokens", [])
         }
+        ignored_tokens.update(self._generic_query_action_terms())
         norm_query = self._normalize_text(query_text)
         for item in existing_records:
             for field in ("content", "location", "label", "actor"):
@@ -780,6 +987,18 @@ class ExecutionCoordinator:
                         terms.append(token)
         return terms
 
+    def _generic_query_action_terms(self) -> set[str]:
+        configured_terms = self.semantic_policy.get("aggregation_query", {}).get("generic_action_terms", [])
+        if not configured_terms:
+            store_policy = self.semantic_policy_store.load_runtime_policy()
+            store_payload = store_policy.get("aggregation_query", {}) if isinstance(store_policy, dict) else {}
+            configured_terms = store_payload.get("generic_action_terms", []) if isinstance(store_payload, dict) else []
+        return {
+            self._normalize_text(term)
+            for term in configured_terms
+            if str(term).strip()
+        }
+
     def _extract_dynamic_terms(self, terms: list[str], existing_records: list[dict[str, Any]]) -> list[str]:
         if not existing_records:
             return terms
@@ -789,7 +1008,12 @@ class ExecutionCoordinator:
             )
             for item in existing_records
         )
-        return [self._normalize_text(term) for term in terms if self._normalize_text(term) in corpus]
+        ignored_tokens = self._generic_query_action_terms()
+        return [
+            self._normalize_text(term)
+            for term in terms
+            if self._normalize_text(term) in corpus and self._normalize_text(term) not in ignored_tokens
+        ]
 
     def _extract_group_by(self, text: str) -> list[str]:
         results: list[str] = []

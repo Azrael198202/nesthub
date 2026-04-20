@@ -14,6 +14,7 @@ class RuntimeRepairService:
         task: TaskSchema,
         workflow: WorkflowSchema,
         repair_classification: dict[str, Any],
+        enable_autonomous_patch_pipeline: bool = False,
     ) -> WorkflowSchema:
         repaired_steps = list(workflow.steps)
         dependencies = [workflow.steps[-1].step_id] if workflow.steps else []
@@ -84,6 +85,74 @@ class RuntimeRepairService:
                 )
             )
             repair_actions.append("inject:analyze_workflow_context")
+            dependencies = [repaired_steps[-1].step_id]
+
+        should_inject_patch_pipeline = enable_autonomous_patch_pipeline and (
+            bool(repair_classification.get("execution_failures"))
+            or "goal_alignment" in set(repair_classification.get("missing_outputs", []))
+            or any(step.executor_type == "code" for step in workflow.steps)
+            or any(req in {"artifact", "file", "document"} for req in task.output_requirements)
+        )
+
+        if should_inject_patch_pipeline:
+            repaired_steps.append(
+                WorkflowStepSchema(
+                    step_id=generate_id("step"),
+                    name="generate_runtime_patch",
+                    task_type=task.intent,
+                    executor_type="tool",
+                    inputs=["input_text", "session_state", "step_outputs"],
+                    outputs=["status", "patch_plan", "patch_artifact_path", "patched_files"],
+                    depends_on=dependencies,
+                    retry=1,
+                    metadata={
+                        "repair_action": "inject_runtime_patch_generation",
+                        "selection_basis": "runtime_repair",
+                        "repair_reason": "execution_failure_or_goal_alignment",
+                    },
+                )
+            )
+            repair_actions.append("inject:generate_runtime_patch")
+            dependencies = [repaired_steps[-1].step_id]
+
+            repaired_steps.append(
+                WorkflowStepSchema(
+                    step_id=generate_id("step"),
+                    name="validate_runtime_patch",
+                    task_type=task.intent,
+                    executor_type="tool",
+                    inputs=["patch_plan", "session_state"],
+                    outputs=["status", "validation_results", "executed_commands"],
+                    depends_on=dependencies,
+                    retry=1,
+                    metadata={
+                        "repair_action": "inject_runtime_validation",
+                        "selection_basis": "runtime_repair",
+                        "repair_reason": "post_patch_validation",
+                    },
+                )
+            )
+            repair_actions.append("inject:validate_runtime_patch")
+            dependencies = [repaired_steps[-1].step_id]
+
+            repaired_steps.append(
+                WorkflowStepSchema(
+                    step_id=generate_id("step"),
+                    name="verify_runtime_patch",
+                    task_type=task.intent,
+                    executor_type="tool",
+                    inputs=["validation_results", "step_outputs"],
+                    outputs=["status", "verified", "message"],
+                    depends_on=dependencies,
+                    retry=0,
+                    metadata={
+                        "repair_action": "inject_runtime_verification",
+                        "selection_basis": "runtime_repair",
+                        "repair_reason": "confirm_patch_effectiveness",
+                    },
+                )
+            )
+            repair_actions.append("inject:verify_runtime_patch")
             dependencies = [repaired_steps[-1].step_id]
 
         if missing_steps.intersection({"artifact", "document", "file"}) or missing_outputs.intersection({"artifact", "document", "file"}):

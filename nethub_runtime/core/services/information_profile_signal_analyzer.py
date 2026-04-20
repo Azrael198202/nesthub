@@ -16,6 +16,24 @@ class InformationProfileSignalAnalyzer:
         self.semantic_policy_store = semantic_policy_store or SemanticPolicyStore(policy_path=SEMANTIC_POLICY_PATH)
         self._cache: dict[str, dict[str, Any]] = {}
 
+    def _runtime_semantic_policy(self) -> dict[str, Any]:
+        try:
+            return self.semantic_policy_store.load_runtime_policy()
+        except Exception:
+            return {}
+
+    def _information_collection_policy(self) -> dict[str, Any]:
+        payload = self._runtime_semantic_policy().get("information_collection", {})
+        return payload if isinstance(payload, dict) else {}
+
+    def _default_completion_phrase(self) -> str:
+        collection_policy = self._information_collection_policy()
+        configured = str(collection_policy.get("default_completion_phrase") or "").strip()
+        if configured:
+            return configured
+        phrases = [str(item).strip() for item in collection_policy.get("completion_phrases", []) if str(item).strip()]
+        return phrases[0] if phrases else ""
+
     def _entity_information_field_definitions(self) -> list[dict[str, str]]:
         return [
             {"key": "item_name", "prompt": "好的，请先告诉我要记录的对象名称。"},
@@ -119,16 +137,12 @@ class InformationProfileSignalAnalyzer:
         return payload if isinstance(payload, dict) else None
 
     def _fallback_analysis(self, combined: str) -> dict[str, Any]:
+        collection_policy = self._information_collection_policy()
         base_aliases = {
-            "名称": "item_name",
-            "类型": "item_type",
-            "简介": "summary",
-            "联系方式": "contact",
-            "电话": "contact",
-            "邮箱": "contact",
-            "地址": "contact",
-            "备注": "details",
+            str(key): str(value)
+            for key, value in dict(collection_policy.get("field_aliases") or {}).items()
         }
+        default_completion_phrase = self._default_completion_phrase()
         entity_label = self._extract_entity_label(combined)
         profile_seed = self._infer_profile_seed(combined, entity_label)
 
@@ -141,6 +155,7 @@ class InformationProfileSignalAnalyzer:
                 "knowledge_added_message": f"已完成添加，并已记录该{normalized_label}信息。",
                 "query_aliases": base_aliases,
                 "knowledge_schema": self._entity_information_field_definitions(),
+                "completion_phrase": default_completion_phrase,
             }
 
         return {
@@ -150,6 +165,7 @@ class InformationProfileSignalAnalyzer:
             "knowledge_added_message": "已完成添加，并已记录该信息。",
             "query_aliases": {},
             "knowledge_schema": self._entity_information_field_definitions(),
+            "completion_phrase": default_completion_phrase,
         }
 
     def _extract_entity_label(self, combined: str) -> str:
@@ -193,6 +209,7 @@ class InformationProfileSignalAnalyzer:
             "entity_label": str(payload.get("entity_label") or "信息条目"),
             "role_name": str(payload.get("role_name") or "信息管理智能体"),
             "knowledge_added_message": str(payload.get("knowledge_added_message") or "已完成添加，并已记录该信息。"),
+            "completion_phrase": str(payload.get("completion_phrase") or self._default_completion_phrase()),
             "query_aliases": normalized_aliases,
             "knowledge_schema": normalized_schema,
         }

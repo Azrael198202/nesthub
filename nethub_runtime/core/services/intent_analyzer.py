@@ -68,6 +68,21 @@ class SemanticIntentPlugin:
                 return True
         return False
 
+    def _runtime_semantic_policy(self) -> dict[str, Any]:
+        try:
+            return self.semantic_policy_store.load_runtime_policy()
+        except Exception:
+            return {}
+
+    def _looks_like_grouped_query(self, text: str) -> bool:
+        lowered = text.lower()
+        semantic_policy = self._runtime_semantic_policy()
+        group_markers = [
+            *self.policy.get("group_by_markers", []),
+            *(semantic_policy.get("intent_detection", {}).get("group_query_markers", []) or []),
+        ]
+        return any(marker and marker.lower() in lowered for marker in group_markers)
+
     def _infer_multimodal_intent(self, text: str, context: CoreContextSchema) -> tuple[str, str] | None:
         """
         Match multimodal intent from the policy store's ``multimodal_intent_rules``.
@@ -136,6 +151,7 @@ class SemanticIntentPlugin:
         configured_agent = state.get("configured_agent") or {}
         setup = state.get("agent_setup") or {}
         collection = state.get("knowledge_collection") or {}
+        schema_fields = configured_agent.get("knowledge_schema") or []
         query_aliases = [str(item) for item in dict(configured_agent.get("query_aliases") or {}).keys()]
         activation_keywords = [str(item) for item in list(configured_agent.get("activation_keywords") or [])]
         agent_identity_terms = [
@@ -146,6 +162,31 @@ class SemanticIntentPlugin:
         active_agent_terms = [item for item in [*activation_keywords, *query_aliases, *agent_identity_terms] if item]
         action_flags = keyword_signals.get("action_flags", {}) if isinstance(keyword_signals, dict) else {}
         intent_hints = set(keyword_signals.get("intent_hints", [])) if isinstance(keyword_signals, dict) else set()
+        lowered_text = text.lower()
+        semantic_policy = self._runtime_semantic_policy()
+
+        field_capture_markers = {
+            str(item).strip().lower()
+            for item in semantic_policy.get("information_collection", {}).get("field_capture_markers", [])
+            if str(item).strip()
+        }
+        for item in schema_fields:
+            if not isinstance(item, dict):
+                continue
+            field_key = str(item.get("key") or "").strip().lower()
+            prompt = str(item.get("prompt") or "").strip().lower()
+            if field_key:
+                field_capture_markers.add(field_key)
+            if prompt:
+                field_capture_markers.add(prompt)
+
+        looks_like_field_capture = (
+            configured_agent.get("status") == "active"
+            and not action_flags.get("query_like")
+            and not ("?" in text or "？" in text)
+            and (":" in text or "：" in text)
+            and any(marker and marker in lowered_text for marker in field_capture_markers)
+        )
 
         if collection.get("active"):
             return ("capture_agent_knowledge", "agent_management", ["knowledge", "dialog"], {"need_agent": False})
@@ -156,10 +197,10 @@ class SemanticIntentPlugin:
             return ("refine_information_agent", "agent_management", ["agent", "dialog"], {"need_agent": False})
 
         if configured_agent.get("status") == "active" and (
-            action_flags.get("query_like")
+            (action_flags.get("query_like") and not looks_like_field_capture)
             or "?" in text
             or "？" in text
-            or any(keyword in text for keyword in query_aliases)
+            or (any(keyword in text for keyword in query_aliases) and not looks_like_field_capture)
             or "query_agent_knowledge" in intent_hints
         ):
             return ("query_agent_knowledge", "knowledge_ops", ["answer", "knowledge_hits"], {"need_agent": False})
@@ -168,6 +209,7 @@ class SemanticIntentPlugin:
             action_flags.get("knowledge_capture_like")
             or "capture_agent_knowledge" in intent_hints
             or any(keyword in text for keyword in activation_keywords)
+            or looks_like_field_capture
         ):
             return ("capture_agent_knowledge", "agent_management", ["knowledge", "dialog"], {"need_agent": False})
 
@@ -344,7 +386,12 @@ class SemanticIntentPlugin:
 
         action_flags = keyword_signals.get("action_flags", {}) if isinstance(keyword_signals, dict) else {}
         has_numeric = self._has_numeric_value(text)
-        is_query = bool(action_flags.get("query_like")) or self._contains_any(text, query_markers) or ("?" in text or "？" in text)
+        is_query = (
+            bool(action_flags.get("query_like"))
+            or self._contains_any(text, query_markers)
+            or self._looks_like_grouped_query(text)
+            or ("?" in text or "？" in text)
+        )
         is_record = bool(action_flags.get("record_like")) or has_numeric or self._contains_any(text, record_markers)
         need_agent = bool(action_flags.get("agent_create_like")) or self._contains_any(text, agent_markers)
 

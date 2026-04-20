@@ -141,6 +141,82 @@ def test_runtime_repair_service_builds_repaired_workflow_from_evaluation() -> No
     assert repaired_workflow.composition["metadata"]["repair_iteration"] == 1
 
 
+def test_runtime_repair_service_injects_patch_test_verify_steps_when_enabled() -> None:
+    repair_service = RuntimeRepairService()
+    task = TaskSchema(
+        task_id="task_runtime_patch_flow",
+        intent="file_generation_task",
+        input_text="修复生成的代码并验证",
+        domain="general",
+        output_requirements=["artifact", "file"],
+    )
+    workflow = WorkflowSchema(
+        workflow_id="workflow_runtime_patch_flow",
+        task_id=task.task_id,
+        steps=[
+            WorkflowStepSchema(
+                step_id="step_1",
+                name="single_step",
+                task_type=task.intent,
+                executor_type="tool",
+                outputs=["message"],
+            )
+        ],
+        composition={"metadata": {}},
+    )
+
+    repaired_workflow = repair_service.build_repair_workflow(
+        task=task,
+        workflow=workflow,
+        repair_classification={
+            "execution_failures": ["single_step"],
+            "missing_steps": [],
+            "missing_outputs": [],
+            "missing_tools": [],
+        },
+        enable_autonomous_patch_pipeline=True,
+    )
+
+    step_names = [step.name for step in repaired_workflow.steps]
+    assert "generate_runtime_patch" in step_names
+    assert "validate_runtime_patch" in step_names
+    assert "verify_runtime_patch" in step_names
+
+
+def test_runtime_repair_service_does_not_inject_patch_steps_when_disabled() -> None:
+    repair_service = RuntimeRepairService()
+    task = TaskSchema(
+        task_id="task_runtime_patch_disabled",
+        intent="file_generation_task",
+        input_text="修复生成的代码并验证",
+        domain="general",
+        output_requirements=["artifact", "file"],
+    )
+    workflow = WorkflowSchema(
+        workflow_id="workflow_runtime_patch_disabled",
+        task_id=task.task_id,
+        steps=[],
+        composition={"metadata": {}},
+    )
+
+    repaired_workflow = repair_service.build_repair_workflow(
+        task=task,
+        workflow=workflow,
+        repair_classification={
+            "execution_failures": ["single_step"],
+            "missing_steps": [],
+            "missing_outputs": [],
+            "missing_tools": [],
+        },
+        enable_autonomous_patch_pipeline=False,
+    )
+
+    step_names = [step.name for step in repaired_workflow.steps]
+    assert "generate_runtime_patch" not in step_names
+    assert "validate_runtime_patch" not in step_names
+    assert "verify_runtime_patch" not in step_names
+
+
 def test_runtime_failure_classifier_distinguishes_missing_steps_tools_outputs_and_failures() -> None:
     classifier = RuntimeFailureClassifier()
     workflow = WorkflowSchema(

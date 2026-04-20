@@ -36,7 +36,10 @@ class CapabilityRouter:
             "query_information_knowledge": "planning",
             "analyze_workflow_context": "planning",
             "generate_workflow_artifact": "file_generation",
+            "generate_runtime_patch": "file_generation",
             "persist_workflow_output": "planning",
+            "validate_runtime_patch": "planning",
+            "verify_runtime_patch": "planning",
             "ocr_extract": "ocr",
             "stt_transcribe": "stt",
             "tts_synthesize": "tts",
@@ -115,7 +118,10 @@ class CapabilityRouter:
             "default_analysis": {
                 "analyze_workflow_context": {"model": "general-llm", "tool": "none", "service": "generic"},
                 "generate_workflow_artifact": {"model": "general-llm", "tool": "file_builder", "service": "artifact_builder"},
+                "generate_runtime_patch": {"model": "general-llm", "tool": "file_builder", "service": "artifact_builder"},
                 "persist_workflow_output": {"model": "state-store", "tool": "session_store", "service": "memory"},
+                "validate_runtime_patch": {"model": "state-store", "tool": "shell_runner", "service": "validation"},
+                "verify_runtime_patch": {"model": "state-store", "tool": "session_store", "service": "validation"},
             },
             "default": {"model": "general-llm", "tool": "none", "service": "generic"},
         }

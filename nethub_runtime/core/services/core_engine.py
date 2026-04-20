@@ -536,6 +536,7 @@ class AICore:
                         task=task,
                         workflow=current_workflow,
                         repair_classification=repair_classification,
+                        enable_autonomous_patch_pipeline=bool(self._autonomous_implementation_capability().get("enabled", False)),
                     )
                     repaired_plan = self.capability_router.route_workflow(task, repaired_workflow)
                     self.security_guard.validate_plan(repaired_plan)

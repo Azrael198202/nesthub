@@ -939,6 +939,39 @@ def handle_generate_workflow_artifact_step(
     }
 
 
+def handle_generate_runtime_patch_step(
+    coordinator: Any,
+    _step: dict[str, Any],
+    task: TaskSchema,
+    context: CoreContextSchema,
+    step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    return coordinator._generate_runtime_patch(task=task, context=context, step_outputs=step_outputs)
+
+
+def handle_validate_runtime_patch_step(
+    coordinator: Any,
+    _step: dict[str, Any],
+    _task: TaskSchema,
+    context: CoreContextSchema,
+    step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    patch_payload = step_outputs.get("generate_runtime_patch", {})
+    return coordinator._run_runtime_validation(context=context, patch_payload=patch_payload)
+
+
+def handle_verify_runtime_patch_step(
+    coordinator: Any,
+    _step: dict[str, Any],
+    _task: TaskSchema,
+    context: CoreContextSchema,
+    step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    patch_payload = step_outputs.get("generate_runtime_patch", {})
+    validation_payload = step_outputs.get("validate_runtime_patch", {})
+    return coordinator._verify_runtime_patch(context=context, patch_payload=patch_payload, validation_payload=validation_payload)
+
+
 def handle_persist_workflow_output_step(
     coordinator: Any,
     _step: dict[str, Any],

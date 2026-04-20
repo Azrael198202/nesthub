@@ -14,6 +14,117 @@
     "text_replace": {},
     "synonyms": {}
   },
+  "intent_detection": {
+    "group_query_markers": [
+      "按类别",
+      "按时间",
+      "按地点",
+      "按人员",
+      "按人",
+      "分类",
+      "分组",
+      "统计",
+      "汇总"
+    ]
+  },
+  "aggregation_query": {
+    "generic_action_terms": [
+      "花了",
+      "花费",
+      "消费",
+      "支出",
+      "用了",
+      "多少",
+      "一共",
+      "总共",
+      "总额",
+      "统计",
+      "查询",
+      "记录"
+    ]
+  },
+  "information_collection": {
+    "completion_phrases": [
+      "完成添加",
+      "完成创建"
+    ],
+    "default_completion_phrase": "完成添加",
+    "field_capture_markers": [
+      "名称",
+      "名字",
+      "联系人",
+      "联系",
+      "联系方式",
+      "邮箱",
+      "邮件",
+      "email",
+      "e-mail",
+      "电话",
+      "手机",
+      "地址",
+      "类型",
+      "类别",
+      "说明",
+      "备注",
+      "详情",
+      "供货",
+      "品类"
+    ],
+    "field_aliases": {
+      "名称": "item_name",
+      "名字": "item_name",
+      "对象名称": "item_name",
+      "供应商名称": "item_name",
+      "类型": "item_type",
+      "角色": "item_type",
+      "类别": "item_type",
+      "简介": "summary",
+      "说明": "summary",
+      "摘要": "summary",
+      "联系人": "contact",
+      "联系方式": "contact",
+      "电话": "contact",
+      "手机": "contact",
+      "邮箱": "contact",
+      "邮件": "contact",
+      "地址": "contact",
+      "备注": "details",
+      "详情": "details",
+      "供货品类": "details"
+    },
+    "field_query_keywords": {
+      "item_name": ["名称", "名字", "对象", "条目"],
+      "item_type": ["类型", "角色", "类别"],
+      "summary": ["简介", "说明", "摘要"],
+      "details": ["详情", "详细", "备注", "说明"],
+      "contact": ["联系", "联系方式", "联系人", "电话", "手机"],
+      "email": ["邮箱", "邮件", "email", "e-mail"],
+      "phone": ["电话", "手机", "联系电话"]
+    },
+    "list_query_markers": [
+      "有哪些",
+      "哪些",
+      "全部",
+      "所有",
+      "列表",
+      "清单"
+    ],
+    "record_name_suffixes": [
+      "株式会社",
+      "有限会社",
+      "公司",
+      "有限公司",
+      "股份有限公司",
+      "co., ltd.",
+      "co., ltd",
+      "co ltd",
+      "ltd.",
+      "ltd",
+      "inc.",
+      "inc"
+    ],
+    "record_name_split_separators": ["/", "|", ",", "，"]
+  },
   "semantic_label_threshold": 0.32,
   "semantic_label_margin": 0.08,
   "entity_aliases": {
@@ -435,10 +546,11 @@
       "always_diagnose": false,
       "ok_statuses": [
         "generated", "read", "saved", "completed", "ok", "success",
-        "summarized", "retrieved", "transcribed", "repaired", "received"
+        "summarized", "retrieved", "transcribed", "repaired", "received",
+        "validated", "verified", "patched"
       ],
       "failed_statuses": [
-        "failed", "error", "invalid_output", "intent_mismatch", "not_found"
+        "failed", "error", "invalid_output", "intent_mismatch", "not_found", "verification_failed"
       ],
       "escalate_statuses": [
         "needs_api_key"
@@ -449,6 +561,16 @@
       "degraded_message_patterns": [
         "unsupported", "placeholder", "not implemented", "stub"
       ]
+    },
+    "autonomous_implementation": {
+      "enabled": true,
+      "workspace_root_env": "NETHUB_RUNTIME_WORKSPACE_ROOT",
+      "allow_workspace_file_modification": true,
+      "allowed_file_extensions": [
+        ".py", ".md", ".txt", ".json", ".yaml", ".yml", ".html", ".css", ".js", ".ts", ".tsx"
+      ],
+      "validation_command_prefixes": ["python", "pytest", "npm", "node"],
+      "validation_timeout_sec": 120
     },
     "image_verification": {
       "image_intent_name": "image_generation_task",
