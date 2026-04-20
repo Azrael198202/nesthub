@@ -362,27 +362,45 @@ def _fallback_summary(text: str, file_names: list[str]) -> str:
     return f"文件 {', '.join(file_names)} 的内容摘录：{excerpt}"
 
 
+def _policy_output_format_patterns() -> list[tuple[str, str]]:
+    """Return [(pattern, extension), ...] loaded from the policy store.
+
+    Expected policy shape under ``document_runtime.output_format_patterns``::
+
+        output_format_patterns:
+          - pattern: "..."
+            ext: ".txt"
+          - [pattern, ext]   # list form also accepted
+    """
+    raw = _document_runtime_policy().get("output_format_patterns") or []
+    result: list[tuple[str, str]] = []
+    for entry in raw:
+        if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+            result.append((str(entry[0]), str(entry[1])))
+        elif isinstance(entry, dict):
+            pattern = str(entry.get("pattern") or "")
+            ext = str(entry.get("ext") or "")
+            if pattern and ext:
+                result.append((pattern, ext))
+    return result
+
+
 def _detect_output_file_format(text: str) -> str | None:
-    """Return a file extension if the user explicitly wants output saved as a file, else None."""
+    """Return a file extension if the user explicitly wants output saved as a file, else None.
+
+    All keyword matching is driven by the policy store — see
+    ``document_runtime.output_format_patterns``, ``output_delivery_words``, and
+    ``output_trigger_words``.
+    """
     lowered = text.lower()
-    for pattern, ext in (
-        ("txt文档", ".txt"),
-        ("txt文件", ".txt"),
-        ("txt格式", ".txt"),
-        ("整理成txt", ".txt"),
-        ("保存为txt", ".txt"),
-        ("保存成txt", ".txt"),
-        ("生成txt", ".txt"),
-        ("输出txt", ".txt"),
-        ("md文档", ".md"),
-        ("markdown文档", ".md"),
-        ("整理成md", ".md"),
-    ):
+    for pattern, ext in _policy_output_format_patterns():
         if pattern in lowered:
             return ext
-    # "发给我" together with file-delivery words implies a file output
-    if "发给我" in lowered and any(w in lowered for w in ("整理", "生成文档", "生成文件", "存成", "保存")):
-        return ".txt"
+    delivery_words = _policy_markers("output_delivery_words")
+    trigger_words = _policy_markers("output_trigger_words")
+    if delivery_words and trigger_words:
+        if any(w in lowered for w in delivery_words) and any(w in lowered for w in trigger_words):
+            return ".txt"
     return None
 
 
