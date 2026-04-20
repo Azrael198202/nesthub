@@ -52,7 +52,8 @@ class CapabilityRouter:
             "web_summarize": "web_summary",
             "single_step": "planning",
         }
-        return mapping.get(step_name, "planning")
+        # Unknown step names from LLM-generated plans default to llm_execution
+        return mapping.get(step_name, "llm_execution")
 
     def _executor_type_for_step(self, step_name: str, route: dict[str, Any]) -> str:
         tool_name = str(route.get("tool", "") or "")
@@ -61,7 +62,9 @@ class CapabilityRouter:
             return "agent"
         if step_name == "query_information_knowledge" or tool_name == "vector_store":
             return "knowledge_retrieval"
-        if step_name in {"generate_workflow_artifact", "persist_workflow_output", "file_read", "analyze_document"}:
+        if step_name in {"generate_workflow_artifact", "persist_workflow_output", "file_read",
+                           "analyze_document", "summarize_document", "translate_summary",
+                           "save_document_file"}:
             return "tool"
         if tool_name not in {"", "none"}:
             return "tool"

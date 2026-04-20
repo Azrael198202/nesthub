@@ -13,6 +13,25 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+# ---------------------------------------------------------------------------
+# Module-level live execution progress store.
+# Keyed by session_id.  Updated by execute() as each step starts/completes.
+# The tvbox status endpoint reads this to give the frontend real-time progress.
+# ---------------------------------------------------------------------------
+_session_step_progress: dict[str, list[dict[str, Any]]] = {}
+_session_step_progress_lock = threading.Lock()
+
+
+def get_session_step_progress(session_id: str) -> list[dict[str, Any]]:
+    """Return a shallow copy of the step progress list for *session_id*."""
+    with _session_step_progress_lock:
+        return list(_session_step_progress.get(session_id, []))
+
+
+def clear_session_step_progress(session_id: str) -> None:
+    with _session_step_progress_lock:
+        _session_step_progress.pop(session_id, None)
+
 import httpx
 
 from nethub_runtime.core.config.settings import INTENT_POLICY_PATH, SEMANTIC_POLICY_PATH
@@ -265,9 +284,31 @@ class ExecutionCoordinator:
     def execute(self, plan: list[dict[str, Any]], task: TaskSchema, context: CoreContextSchema) -> dict[str, Any]:
         results: dict[str, Any] = {"steps": [], "task_intent": task.intent}
         step_outputs: dict[str, Any] = {}
+
+        # Initialise progress store: all steps sleeping before any runs.
+        session_id = context.session_id
+        with _session_step_progress_lock:
+            _session_step_progress[session_id] = [
+                {
+                    "name": s["name"],
+                    "label": (s.get("workflow_step_metadata") or {}).get("display_label") or s["name"],
+                    "status": "sleeping",
+                    "preview": "",
+                }
+                for s in plan
+            ]
+
         for step in plan:
             retries = step.get("retry", 0)
             attempt = 0
+
+            # Mark this step as "working" in the live progress store.
+            with _session_step_progress_lock:
+                progress = _session_step_progress.get(session_id, [])
+                for p in progress:
+                    if p["name"] == step["name"]:
+                        p["status"] = "working"
+                        break
             last_error: str | None = None
             while attempt <= retries:
                 try:
@@ -331,6 +372,19 @@ class ExecutionCoordinator:
                             "output": output,
                         }
                     )
+                    # Mark step completed in live progress.
+                    _preview = ""
+                    if isinstance(output, dict):
+                        _preview = str(
+                            output.get("message") or output.get("summary") or
+                            output.get("translation") or output.get("content") or ""
+                        )[:120]
+                    with _session_step_progress_lock:
+                        for _p in _session_step_progress.get(session_id, []):
+                            if _p["name"] == step["name"]:
+                                _p["status"] = "packed"
+                                _p["preview"] = _preview
+                                break
                     break
                 except Exception as exc:  # pragma: no cover
                     last_error = str(exc)
@@ -348,6 +402,12 @@ class ExecutionCoordinator:
                                 "error": last_error,
                             }
                         )
+                        # Mark step failed in live progress.
+                        with _session_step_progress_lock:
+                            for _p in _session_step_progress.get(session_id, []):
+                                if _p["name"] == step["name"]:
+                                    _p["status"] = "error"
+                                    break
         results["final_output"] = step_outputs
 
         # --- Task 1: auto-close task session when policy requests it ---
@@ -445,10 +505,11 @@ class ExecutionCoordinator:
         if self.model_router is None:
             return {"message": f"llm step placeholder for {step_name}", "input_text": task.input_text, "session_id": context.session_id}
 
+        # Pass all prior step outputs so LLM-planned steps can chain naturally.
+        # Truncate each value to keep the prompt manageable.
         summarized_outputs = {
-            key: value
+            key: (json.dumps(value, ensure_ascii=False)[:400] if not isinstance(value, str) else value[:400])
             for key, value in step_outputs.items()
-            if key in {"single_step", "file_generate", "generate_workflow_artifact", "generate_runtime_patch", "validate_runtime_patch"}
         }
         prompt = (
             "Execute the requested workflow step and return a concise plain-text result.\n"

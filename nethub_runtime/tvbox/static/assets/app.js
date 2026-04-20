@@ -2414,7 +2414,7 @@ function deriveWorkItems() {
     const latestRouteRequest = String(latestRoute?.requestText || "").trim();
     const itemText = String(item.text || "").trim();
     const status = isLatest
-      ? (customAgentStudio.isThinking ? "working" : reply ? "packed" : "queued")
+      ? (isBuddyThinking || customAgentStudio.isThinking ? "working" : reply ? "packed" : "queued")
       : (reply ? "packed" : "sleeping");
     return {
       id: `work-${item.index}`,
@@ -2433,6 +2433,21 @@ function buildWorkPipeline(item) {
   const taskSpec = route.taskSpec || {};
   const cortex = route.cortex || {};
   const toolPlan = Array.isArray(route.toolPlan) ? route.toolPlan : [];
+
+  // ── Real workflow steps from the backend (compound pipelines) ──────────
+  const workflowSteps = Array.isArray(route.workflowSteps) ? route.workflowSteps : [];
+  if (workflowSteps.length > 0) {
+    return workflowSteps.map((step) => ({
+      id: step.name || step.label,
+      name: step.label || step.name,
+      agents: [{
+        name: step.label || step.name,
+        state: step.status || (item?.status === "packed" ? "packed" : item?.status === "working" ? "working" : "sleeping"),
+        preview: step.preview || "",
+      }],
+    }));
+  }
+
   const requiresNetwork = Boolean(
     taskSpec.requiresNetworkLookup
     || taskSpec.requiresNetwork
@@ -2571,6 +2586,7 @@ function renderWorkTab() {
               </div>
               <strong>${escapeHtml(agent.name)}</strong>
               <span>${escapeHtml(localizeWorkStatus(agent.state))}</span>
+              ${agent.preview ? `<small class="work-step-preview">${escapeHtml(agent.preview)}</small>` : ""}
             </article>
           `).join("")}
         </div>
@@ -4863,6 +4879,63 @@ async function saveCustomProvider() {
   await loadDashboard();
   updateSpokenLine(t("prompts.customProviderSaved", { label: body.label || body.id }));
 }
+/**
+ * Animate workflow steps in the Work tab one-by-one after a response arrives.
+ * Each step transitions: sleeping → working → packed with a short delay.
+ */
+async function animateWorkflowSteps(steps) {
+  if (!latestDashboard || steps.length === 0) return;
+  for (let i = 0; i < steps.length; i++) {
+    latestDashboard.lastVoiceRoute = {
+      ...latestDashboard.lastVoiceRoute,
+      workflowSteps: steps.map((s, j) => ({
+        ...s,
+        status: j < i ? "packed" : j === i ? "working" : "sleeping",
+      })),
+    };
+    renderWorkTab();
+    await new Promise((r) => setTimeout(r, 380));
+  }
+  // All steps completed
+  latestDashboard.lastVoiceRoute = {
+    ...latestDashboard.lastVoiceRoute,
+    workflowSteps: steps.map((s) => ({ ...s, status: "packed" })),
+  };
+  renderWorkTab();
+}
+
+/** Derive the default session id the backend uses for voice-chat requests. */
+function _voiceChatSessionId() {
+  return "tvbox:studio:voice-chat";
+}
+
+/**
+ * Poll /api/tvbox/execution-progress for the given session while a request is
+ * in-flight. Updates lastVoiceRoute.workflowSteps so the Work tab reflects the
+ * live backend step status. Stops when stopFlag.stop is set to true.
+ */
+async function _pollExecutionProgress(sessionId, requestText, stopFlag) {
+  while (!stopFlag.stop) {
+    await new Promise((r) => setTimeout(r, 800));
+    if (stopFlag.stop) break;
+    try {
+      const resp = await fetch(`/api/tvbox/execution-progress?session_id=${encodeURIComponent(sessionId)}`);
+      if (!resp.ok || stopFlag.stop) break;
+      const data = await resp.json();
+      const steps = Array.isArray(data.steps) ? data.steps : [];
+      if (steps.length > 0 && latestDashboard) {
+        latestDashboard.lastVoiceRoute = {
+          requestText,
+          workflowSteps: steps,
+        };
+        renderWorkTab();
+      }
+    } catch (_) {
+      // network error during poll — keep trying
+    }
+  }
+}
+
 async function sendVoiceMessage(message, options = {}) {
   const { speakReply = true, localeOverride = "" } = options;
   const clean = String(message || "").trim();
@@ -4871,11 +4944,37 @@ async function sendVoiceMessage(message, options = {}) {
   isBuddyThinking = true;
   renderFloatingBuddy();
   updateSpokenLine(t("voice.thinking"));
+
+  // ── Optimistic conversation insert ─────────────────────────────────────
+  // Push the new user message into the dashboard conversation NOW so that
+  // deriveWorkItems() finds it as the latest item and can attach the route.
+  const _now = new Date();
+  const _timeStr = _now.getHours().toString().padStart(2, "0") + ":" + _now.getMinutes().toString().padStart(2, "0");
+  if (latestDashboard) {
+    latestDashboard.conversation = latestDashboard.conversation || [];
+    latestDashboard.conversation.push({ speaker: "You", text: clean, time: _timeStr, createdAt: "" });
+    // Show initial "processing" placeholder so the Work tab shows the right request immediately
+    latestDashboard.lastVoiceRoute = {
+      requestText: clean,
+      workflowSteps: [{ name: "thinking", label: "⚙️ 处理中...", status: "working", preview: "" }],
+    };
+    renderWorkTab();
+  }
+
+  // ── Live step progress polling ──────────────────────────────────────────
+  const sessionId = _voiceChatSessionId();
+  const pollStop = { stop: false };
+  _pollExecutionProgress(sessionId, clean, pollStop);
+
   const response = await fetch("/api/voice/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message: clean, locale: localeOverride || currentLocale, speakReply: false })
+    body: JSON.stringify({ message: clean, locale: localeOverride || currentLocale, speakReply: false, sessionId })
   });
+
+  // Stop the live-poll loop now that the response is back
+  pollStop.stop = true;
+
   const payload = await response.json();
   isBuddyThinking = false;
   if (!response.ok) {
@@ -4889,7 +4988,13 @@ async function sendVoiceMessage(message, options = {}) {
   if (payload.voiceRoute && latestDashboard) {
     latestDashboard.lastVoiceRoute = payload.voiceRoute;
     latestDashboard.pendingVoiceClarification = payload.pendingVoiceClarification || null;
-    renderVoice(latestDashboard);
+    const steps = Array.isArray(payload.voiceRoute?.workflowSteps) ? payload.voiceRoute.workflowSteps : [];
+    if (steps.length > 0) {
+      // Replay final steps sequentially so the user sees each one complete
+      await animateWorkflowSteps(steps);
+    } else {
+      renderVoice(latestDashboard);
+    }
   }
   if (payload.assistantMemory && latestDashboard) {
     latestDashboard.assistantMemory = payload.assistantMemory;

@@ -650,7 +650,13 @@ class AICore:
             else:
                 # ========== Path B: 使用 Workflow（任务编排） ==========
                 self.logger.info("📌 Using Workflow (task orchestration)")
-                execution_result = self.execution_coordinator.execute(execution_plan, task, ctx)
+                # Run execute() in a thread so the async event loop stays free
+                # between steps — this lets the /execution-progress endpoint
+                # respond with live step status while execution is in flight.
+                import asyncio as _asyncio
+                execution_result = await _asyncio.to_thread(
+                    self.execution_coordinator.execute, execution_plan, task, ctx
+                )
                 execution_result["execution_type"] = "workflow"
                 execution_result["execution_plan"] = execution_plan
                 execution_result["autonomous_implementation_trace"] = autonomous_trace

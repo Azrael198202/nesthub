@@ -145,14 +145,30 @@ def _looks_like_document_name(value: str) -> bool:
 
 
 def _detect_document_action(text: str) -> str:
+    """Return the primary document action for *text*.
+
+    Compound actions take priority over single actions:
+    - summarize + translate + output-file → "summarize_translate_save"
+    - summarize + translate              → "summarize_and_translate"
+    Single actions are checked in priority order: translate > summarize > analyze.
+    """
     lowered = text.lower()
-    if any(marker in lowered for marker in _policy_markers("translate_markers")):
+    has_summarize = any(m in lowered for m in _policy_markers("summary_markers"))
+    has_translate = any(m in lowered for m in _policy_markers("translate_markers"))
+    if has_summarize and has_translate:
+        if _detect_output_file_format(text) is not None:
+            return "summarize_translate_save"
+        return "summarize_and_translate"
+    if has_translate:
         return "translate"
-    if any(marker in lowered for marker in _policy_markers("summary_markers")):
+    if has_summarize:
         return "summarize"
     if any(marker in lowered for marker in _policy_markers("analyze_markers")):
         return "analyze"
     return "summarize"
+
+
+_COMPOUND_ACTIONS = frozenset({"summarize_translate_save", "summarize_and_translate"})
 
 
 def _looks_like_visual_analysis_request(text: str) -> bool:
@@ -478,6 +494,172 @@ def _run_in_existing_loop(coro: Any) -> Any:
     return result.get("value")
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Compound pipeline: Step 1 – Summarize
+# ──────────────────────────────────────────────────────────────────────────────
+
+def handle_summarize_document_step(
+    coordinator: Any,
+    _step: dict[str, Any],
+    task: TaskSchema,
+    context: CoreContextSchema,
+    _step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    """Step 1 of the compound pipeline: extract text and produce a concise summary."""
+    targets = _resolve_analysis_targets(task.input_text, context)
+    if not targets:
+        return {
+            "artifact_type": "document",
+            "status": "no_document",
+            "message": "当前 session 中没有可分析的文档，请先上传或发送文档。",
+            "summary": "",
+            "source_documents": [],
+            "parsers": [],
+        }
+
+    extracted_chunks: list[str] = []
+    source_files: list[str] = []
+    parsers: list[str] = []
+    for item in targets:
+        path_value = str(item.get("received_path") or item.get("stored_path") or "").strip()
+        file_name = str(item.get("file_name") or Path(path_value).name or "document")
+        source_files.append(file_name)
+        if not path_value or not Path(path_value).exists():
+            continue
+        if _is_image_target(item):
+            continue
+        content, parser_name = _extract_document_text(Path(path_value))
+        parsers.append(parser_name)
+        if content.strip():
+            extracted_chunks.append(f"# {file_name}\n{content.strip()}")
+
+    combined_text = "\n\n".join(extracted_chunks).strip()
+    analysis_text = combined_text[:12000]
+    model_output = _run_in_existing_loop(
+        _invoke_document_model(
+            coordinator,
+            task_type="document_analysis",
+            prompt=(
+                "Summarize the following document content. "
+                "Highlight the main points, important facts, and any action items.\n\n"
+                f"{analysis_text}"
+            ),
+            system_prompt="You analyze user-provided documents. Return concise, structured plain text focused on the user's request.",
+        )
+    ) if analysis_text else ""
+
+    summary = model_output.strip() or _fallback_summary(analysis_text, source_files)
+    return {
+        "artifact_type": "document",
+        "status": "completed",
+        "message": f"已完成文档总结，共处理 {len(source_files)} 个文件。",
+        "summary": summary,
+        "content": combined_text[:2000],
+        "source_documents": source_files,
+        "parsers": parsers,
+        "document_count": len(source_files),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Compound pipeline: Step 2 – Translate summary
+# ──────────────────────────────────────────────────────────────────────────────
+
+def handle_translate_summary_step(
+    coordinator: Any,
+    _step: dict[str, Any],
+    task: TaskSchema,
+    context: CoreContextSchema,
+    step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    """Step 2 of the compound pipeline: translate the summary produced by Step 1."""
+    prior = step_outputs.get("summarize_document") or {}
+    text_to_translate = str(prior.get("summary") or "").strip()
+    if not text_to_translate:
+        return {
+            "artifact_type": "document",
+            "status": "no_content",
+            "message": "无可翻译的摘要内容，请确认步骤 1 已成功完成。",
+            "translation": "",
+        }
+
+    pending_request = _get_active_pending_request(context.session_state or {})
+    target_language = str(
+        task.constraints.get("target_language")
+        or (pending_request or {}).get("target_language")
+        or _detect_target_language(task.input_text, context)
+    )
+
+    model_output = _run_in_existing_loop(
+        _invoke_document_model(
+            coordinator,
+            task_type="document_analysis",
+            prompt=(
+                f"Translate the following text into {target_language}. "
+                "Preserve the structure and key information. "
+                "Return only the translated text, no explanation.\n\n"
+                f"{text_to_translate}"
+            ),
+            system_prompt=(
+                "You translate user-provided text. Preserve the original meaning, "
+                "keep structure when useful, and return plain text only."
+            ),
+        )
+    )
+
+    translation = model_output.strip() or text_to_translate
+    return {
+        "artifact_type": "document",
+        "status": "completed",
+        "message": f"已将摘要翻译为 {target_language}。",
+        "translation": translation,
+        "target_language": target_language,
+        "source_summary": text_to_translate,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Compound pipeline: Step 3 – Save to file
+# ──────────────────────────────────────────────────────────────────────────────
+
+def handle_save_document_file_step(
+    coordinator: Any,
+    _step: dict[str, Any],
+    task: TaskSchema,
+    context: CoreContextSchema,
+    step_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    """Step 3 of the compound pipeline: persist the translated summary as a text file."""
+    translate_out = step_outputs.get("translate_summary") or {}
+    summarize_out = step_outputs.get("summarize_document") or {}
+
+    file_content = (
+        str(translate_out.get("translation") or "").strip()
+        or str(summarize_out.get("summary") or "").strip()
+    )
+    if not file_content:
+        return {
+            "artifact_type": "document",
+            "status": "no_content",
+            "message": "没有可保存的内容，请确认前置步骤已成功完成。",
+            "artifact_path": "",
+        }
+
+    extension = _detect_output_file_format(task.input_text) or ".txt"
+    artifact_path = _persist_document_artifact(coordinator, file_content, context.trace_id, extension)
+    session_store = getattr(coordinator, "session_store", None)
+    pending_request = _get_active_pending_request(context.session_state or {})
+    if session_store is not None and pending_request is not None:
+        session_store.patch(context.session_id, {"pending_document_request": None})
+
+    return {
+        "artifact_type": "document",
+        "status": "completed",
+        "message": f"文件已生成：{Path(artifact_path).name if artifact_path else '(保存失败)'}",
+        "artifact_path": artifact_path or "",
+    }
+
+
 def handle_analyze_document_step(
     coordinator: Any,
     _step: dict[str, Any],
@@ -706,7 +888,18 @@ class DocumentTaskDecomposerPlugin:
     def match(self, task: TaskSchema) -> bool:
         return task.intent == "file_upload_task" and "document_action" in task.constraints
 
-    def run(self, _task: TaskSchema) -> list[SubTask]:
+    def run(self, task: TaskSchema) -> list[SubTask]:
+        action = str(task.constraints.get("document_action") or "summarize")
+        if action in _COMPOUND_ACTIONS:
+            steps_meta = [
+                ("summarize_document",   "Step 1: Summarize the uploaded document."),
+                ("translate_summary",    "Step 2: Translate the summary into the requested language."),
+                ("save_document_file",   "Step 3: Save the translated summary as a text file."),
+            ]
+            return [
+                SubTask(subtask_id=generate_id("subtask"), name=name, goal=goal)
+                for name, goal in steps_meta
+            ]
         return [
             SubTask(
                 subtask_id=generate_id("subtask"),
@@ -723,11 +916,56 @@ class DocumentWorkflowPlannerPlugin:
         return task.intent == "file_upload_task" and "document_action" in task.constraints
 
     def run(self, task: TaskSchema, _subtasks: list[SubTask]) -> WorkflowSchema:
-        return WorkflowSchema(
-            workflow_id=generate_id("workflow"),
-            task_id=task.task_id,
-            mode="normal",
-            steps=[
+        action = str(task.constraints.get("document_action") or "summarize")
+
+        if action in _COMPOUND_ACTIONS:
+            step_summarize = WorkflowStepSchema(
+                step_id=generate_id("step"),
+                name="summarize_document",
+                task_type=task.intent,
+                executor_type="tool",
+                inputs=["input_text", "session_state", "attachments"],
+                outputs=["summary", "content", "source_documents", "parsers"],
+                depends_on=[],
+                retry=0,
+                metadata={
+                    "goal": "Extract text from the uploaded document and produce a concise summary.",
+                    "display_label": "📄 文档总结",
+                },
+            )
+            step_translate = WorkflowStepSchema(
+                step_id=generate_id("step"),
+                name="translate_summary",
+                task_type=task.intent,
+                executor_type="tool",
+                inputs=["summarize_document.summary"],
+                outputs=["translation", "target_language"],
+                depends_on=["summarize_document"],
+                retry=0,
+                metadata={
+                    "goal": "Translate the summary produced in step 1 into the target language.",
+                    "display_label": "🌐 翻译摘要",
+                },
+            )
+            step_save = WorkflowStepSchema(
+                step_id=generate_id("step"),
+                name="save_document_file",
+                task_type=task.intent,
+                executor_type="tool",
+                inputs=["translate_summary.translation"],
+                outputs=["artifact_path"],
+                depends_on=["translate_summary"],
+                retry=0,
+                metadata={
+                    "goal": "Save the translated text as a downloadable text file.",
+                    "display_label": "💾 生成文件",
+                },
+            )
+            steps = [step_summarize, step_translate, step_save]
+            if action == "summarize_and_translate":
+                steps = [step_summarize, step_translate]
+        else:
+            steps = [
                 WorkflowStepSchema(
                     step_id=generate_id("step"),
                     name="analyze_document",
@@ -740,13 +978,20 @@ class DocumentWorkflowPlannerPlugin:
                     metadata={
                         "goal": "Summarize, analyze, or translate the uploaded document within the current session.",
                         "selection_basis": "document_runtime_plugin",
+                        "display_label": "📄 文档处理",
                     },
                 )
-            ],
+            ]
+
+        return WorkflowSchema(
+            workflow_id=generate_id("workflow"),
+            task_id=task.task_id,
+            mode="normal",
+            steps=steps,
             composition={
                 "plugin": "document_runtime_plugin",
                 "intent": task.intent,
-                "document_action": task.constraints.get("document_action"),
+                "document_action": action,
             },
         )
 
@@ -763,8 +1008,32 @@ class DocumentExecutionHandlerPlugin:
                     handler=lambda step, task, context, step_outputs: handle_analyze_document_step(
                         _coordinator, step, task, context, step_outputs
                     ),
-                    description="Summarize or translate session-bound uploaded documents.",
-                )
+                    description="Summarize or translate session-bound uploaded documents (single-action).",
+                ),
+                ExecutionHandlerPluginStepSpec(
+                    executor_type="tool",
+                    step_name="summarize_document",
+                    handler=lambda step, task, context, step_outputs: handle_summarize_document_step(
+                        _coordinator, step, task, context, step_outputs
+                    ),
+                    description="Step 1 of compound pipeline: extract text and summarize the document.",
+                ),
+                ExecutionHandlerPluginStepSpec(
+                    executor_type="tool",
+                    step_name="translate_summary",
+                    handler=lambda step, task, context, step_outputs: handle_translate_summary_step(
+                        _coordinator, step, task, context, step_outputs
+                    ),
+                    description="Step 2 of compound pipeline: translate the summary.",
+                ),
+                ExecutionHandlerPluginStepSpec(
+                    executor_type="tool",
+                    step_name="save_document_file",
+                    handler=lambda step, task, context, step_outputs: handle_save_document_file_step(
+                        _coordinator, step, task, context, step_outputs
+                    ),
+                    description="Step 3 of compound pipeline: save the result as a downloadable file.",
+                ),
             ],
         )
 

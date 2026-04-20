@@ -83,6 +83,11 @@ def _create_app() -> Any:
     if generated_dir.exists() and generated_dir.is_dir():
         app.mount("/generated", StaticFiles(directory=str(generated_dir)), name="generated")
 
+    # Also serve the package-internal generated dir (where document artifacts are written)
+    pkg_generated_dir = Path(__file__).resolve().parents[1] / "generated"
+    pkg_generated_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/pkg-generated", StaticFiles(directory=str(pkg_generated_dir)), name="pkg_generated")
+
     def _load_json(path: Path, fallback: dict[str, Any]) -> dict[str, Any]:
         if not path.exists():
             return copy.deepcopy(fallback)
@@ -281,10 +286,17 @@ def _create_app() -> Any:
     def _artifact_url(category: str, artifact_id: str, artifact_path: str | None = None) -> str:
         raw_path = str(artifact_path or "").strip()
         if raw_path:
+            path_obj = Path(raw_path).resolve()
+            # Try repo-root generated dir first
             try:
-                path_obj = Path(raw_path).resolve()
-                relative_generated = path_obj.relative_to(generated_dir.resolve())
-                return f"/generated/{relative_generated.as_posix()}"
+                relative = path_obj.relative_to(generated_dir.resolve())
+                return f"/generated/{relative.as_posix()}"
+            except Exception:
+                pass
+            # Then try package-level generated dir
+            try:
+                relative = path_obj.relative_to(pkg_generated_dir.resolve())
+                return f"/pkg-generated/{relative.as_posix()}"
             except Exception:
                 pass
         return f"/api/tvbox/generated-artifacts/open/{category}/{artifact_id}"
@@ -294,7 +306,8 @@ def _create_app() -> Any:
             "image": ("trace",),
             "audio": (),
             "video": (),
-            "file": (),
+            # Document pipeline writes to the "feature" bucket; support both names
+            "file": ("feature",),
         }
         candidate_categories = (category, *category_aliases.get(category, ()))
 
@@ -308,6 +321,12 @@ def _create_app() -> Any:
             candidates = sorted(directory.glob(f"{artifact_id}.*"))
             if candidates:
                 return candidates[0]
+
+        # Also search the package-level generated dir tree
+        if pkg_generated_dir.exists():
+            pkg_candidates = sorted(pkg_generated_dir.rglob(f"{artifact_id}.*"))
+            if pkg_candidates:
+                return pkg_candidates[0]
 
         # TV Box runtime artifacts such as generated images may be written
         # directly under the repo-local generated/ directory instead of the
@@ -338,6 +357,25 @@ def _create_app() -> Any:
                     "artifactType": artifact_type,
                 }
             )
+        # Also surface files produced by compound pipeline steps that store their
+        # artifact_path in final_output (e.g. save_document_file, file_generate).
+        final_output = (result.get("execution_result") or {}).get("final_output") or {}
+        for step_name in ("save_document_file", "file_generate", "generate_workflow_artifact"):
+            payload = final_output.get(step_name) or {}
+            ap = str(payload.get("artifact_path") or "").strip()
+            if not ap:
+                continue
+            file_name = Path(ap).name
+            if any(str(item.get("fileName") or "") == file_name for item in items):
+                continue  # already listed
+            items.append(
+                {
+                    "label": file_name,
+                    "fileName": file_name,
+                    "url": _artifact_url("file", Path(ap).stem, ap),
+                    "artifactType": "file",
+                }
+            )
         return items
 
     def _extract_reply_text(result: dict[str, Any]) -> str:
@@ -348,6 +386,16 @@ def _create_app() -> Any:
             if final_answer:
                 return final_answer
         final_output = execution_result.get("final_output") or {}
+        # Compound pipeline: surface the final step's message + artifact path
+        for compound_step in ("save_document_file", "translate_summary", "summarize_document"):
+            payload = final_output.get(compound_step) or {}
+            if payload.get("status") == "completed":
+                ap = str(payload.get("artifact_path") or "").strip()
+                msg = str(payload.get("message") or "").strip()
+                if ap:
+                    return f"{msg} 文件已准备好下载：{Path(ap).name}"
+                if msg:
+                    return msg
         for key in ("manage_information_agent", "query_information_knowledge", "file_read", "file_generate", "generate_workflow_artifact", "analyze_document", "single_step"):
             payload = final_output.get(key) or {}
             for field in ("content", "message", "answer", "summary", "translation", "artifact_path"):
@@ -356,6 +404,33 @@ def _create_app() -> Any:
                     return f"Generated artifact: {value}" if field == "artifact_path" else value
         task = result.get("task") or {}
         return f"NestHub completed {task.get('intent', 'the request')}."
+
+    _STEP_DISPLAY_LABELS: dict[str, str] = {
+        "summarize_document": "📄 文档总结",
+        "translate_summary":  "🌐 翻译摘要",
+        "save_document_file": "💾 生成文件",
+        "analyze_document":   "📄 文档处理",
+    }
+
+    def _extract_workflow_steps(result: dict[str, Any]) -> list[dict[str, Any]]:
+        """Build a `workflowSteps` list from the execution result for the Work-tab pipeline."""
+        steps = ((result.get("execution_result") or {}).get("steps") or [])
+        out: list[dict[str, Any]] = []
+        for step in steps:
+            name = str(step.get("name") or "")
+            if not name:
+                continue
+            raw_status = str(step.get("status") or "pending")
+            # Map backend statuses to frontend states
+            state = {"completed": "packed", "failed": "error", "skipped": "sleeping"}.get(raw_status, "working")
+            output = step.get("output") or {}
+            preview = str(
+                output.get("message") or output.get("summary") or
+                output.get("translation") or output.get("artifact_path") or ""
+            )[:120]
+            label = step.get("metadata", {}).get("display_label") or _STEP_DISPLAY_LABELS.get(name) or name
+            out.append({"name": name, "label": label, "status": state, "preview": preview})
+        return out
 
     def _to_runtime_agent_card(result: dict[str, Any]) -> dict[str, Any] | None:
         agent = result.get("agent")
@@ -427,6 +502,15 @@ def _create_app() -> Any:
         runtime_models = _to_model_provider_cards(result)
         if runtime_models:
             dashboard_state["modelProviders"] = runtime_models
+
+        # Persist workflow steps into lastVoiceRoute so the Work tab can render the real pipeline.
+        workflow_steps = _extract_workflow_steps(result)
+        existing_route = dashboard_state.get("lastVoiceRoute") or {}
+        dashboard_state["lastVoiceRoute"] = {
+            **existing_route,
+            "requestText": message,
+            "workflowSteps": workflow_steps,
+        }
 
         dashboard_state.setdefault("timelineEvents", []).append(
             {"time": _now_time(), "title": "NestHub Runtime", "detail": reply[:120]}
@@ -686,6 +770,21 @@ def _create_app() -> Any:
     @app.get("/api/dashboard")
     def api_dashboard():
         return _dashboard_snapshot()
+
+    @app.get("/api/tvbox/execution-progress")
+    def api_execution_progress(session_id: str | None = None):
+        """Return live per-step execution progress for the given session.
+
+        The frontend polls this during a request to get real-time step status.
+        Returns ``{"steps": [...]}`` where each step has name/label/status/preview.
+        Status values match the Work tab states: sleeping | working | packed | error.
+        """
+        from nethub_runtime.core.services.execution_coordinator import get_session_step_progress
+
+        sid = session_id or ""
+        if not sid:
+            return {"steps": []}
+        return {"steps": get_session_step_progress(sid)}
 
     @app.get("/api/i18n/settings")
     def api_i18n_settings(locale: str | None = None):
@@ -973,6 +1072,7 @@ def _create_app() -> Any:
             "artifacts": runtime_response["artifacts"],
             "assistantMemory": copy.deepcopy(dashboard_state.get("assistantMemory", {})),
             "audio": None,
+            "sessionId": session_id,
             "result": result,
         }
 
