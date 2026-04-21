@@ -117,6 +117,23 @@
       }
     ],
     "activation_keyword_templates": [],
+    "include_query_aliases_in_activation_keywords": false,
+    "creation_parsing": {
+      "field_markers": [
+        "请收集字段",
+        "收集字段",
+        "字段"
+      ],
+      "trigger_markers": [
+        "触发词",
+        "启动关键字",
+        "关键词"
+      ],
+      "completion_markers": [
+        "完成条件",
+        "完成短语"
+      ]
+    },
     "field_capture_markers": [
       "名称",
       "名字",
@@ -671,6 +688,123 @@
       {
         "pattern": "整理成md",
         "ext": ".md"
+      },
+      {
+        "pattern": "word文档",
+        "ext": ".docx"
+      },
+      {
+        "pattern": "word文件",
+        "ext": ".docx"
+      },
+      {
+        "pattern": "doc文档",
+        "ext": ".docx"
+      },
+      {
+        "pattern": "docx文档",
+        "ext": ".docx"
+      },
+      {
+        "pattern": "整理成word",
+        "ext": ".docx"
+      },
+      {
+        "pattern": "保存为word",
+        "ext": ".docx"
+      },
+      {
+        "pattern": "生成word",
+        "ext": ".docx"
+      },
+      {
+        "pattern": "输出word",
+        "ext": ".docx"
+      },
+      {
+        "pattern": "excel文件",
+        "ext": ".xlsx"
+      },
+      {
+        "pattern": "excel表格",
+        "ext": ".xlsx"
+      },
+      {
+        "pattern": "xls文件",
+        "ext": ".xlsx"
+      },
+      {
+        "pattern": "xlsx文件",
+        "ext": ".xlsx"
+      },
+      {
+        "pattern": "整理成excel",
+        "ext": ".xlsx"
+      },
+      {
+        "pattern": "保存为excel",
+        "ext": ".xlsx"
+      },
+      {
+        "pattern": "生成excel",
+        "ext": ".xlsx"
+      },
+      {
+        "pattern": "输出excel",
+        "ext": ".xlsx"
+      },
+      {
+        "pattern": "ppt文件",
+        "ext": ".pptx"
+      },
+      {
+        "pattern": "ppt文档",
+        "ext": ".pptx"
+      },
+      {
+        "pattern": "pptx文件",
+        "ext": ".pptx"
+      },
+      {
+        "pattern": "powerpoint",
+        "ext": ".pptx"
+      },
+      {
+        "pattern": "整理成ppt",
+        "ext": ".pptx"
+      },
+      {
+        "pattern": "生成ppt",
+        "ext": ".pptx"
+      },
+      {
+        "pattern": "输出ppt",
+        "ext": ".pptx"
+      },
+
+      {
+        "pattern": "pdf文件",
+        "ext": ".pdf"
+      },
+      {
+        "pattern": "pdf文档",
+        "ext": ".pdf"
+      },
+      {
+        "pattern": "导出pdf",
+        "ext": ".pdf"
+      },
+      {
+        "pattern": "保存为pdf",
+        "ext": ".pdf"
+      },
+      {
+        "pattern": "生成pdf",
+        "ext": ".pdf"
+      },
+      {
+        "pattern": "输出pdf",
+        "ext": ".pdf"
       }
     ],
     "output_delivery_words": [

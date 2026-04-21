@@ -76,6 +76,9 @@ class InformationAgentService:
                 templates.append(value)
         return templates
 
+    def _include_query_aliases_in_activation_keywords(self) -> bool:
+        return bool(self._information_collection_policy().get("include_query_aliases_in_activation_keywords", False))
+
     def _build_activation_keywords(
         self,
         *,
@@ -88,11 +91,12 @@ class InformationAgentService:
             value = str(item).strip()
             if value and value not in keywords:
                 keywords.append(value)
-        aliases = query_aliases or {}
-        for key in aliases.keys():
-            value = str(key).strip()
-            if value and value not in keywords:
-                keywords.append(value)
+        if self._include_query_aliases_in_activation_keywords():
+            aliases = query_aliases or {}
+            for key in aliases.keys():
+                value = str(key).strip()
+                if value and value not in keywords:
+                    keywords.append(value)
         for template in self._activation_keyword_templates():
             try:
                 value = template.format(entity_label=entity_label).strip()
@@ -110,6 +114,67 @@ class InformationAgentService:
             return False
         markers = set(self._completion_phrases())
         return any(marker and marker in text for marker in markers)
+
+    def _creation_parsing_policy(self) -> dict[str, Any]:
+        payload = self._information_collection_policy().get("creation_parsing", {})
+        return payload if isinstance(payload, dict) else {}
+
+    def _extract_marked_value(self, text: str, markers: list[str]) -> str:
+        for marker in markers:
+            marker_text = str(marker).strip()
+            if not marker_text:
+                continue
+            for separator in ("：", ":"):
+                token = f"{marker_text}{separator}"
+                if token in text:
+                    return text.split(token, 1)[1].strip()
+        return ""
+
+    def _split_list_values(self, text: str) -> list[str]:
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return []
+        parts = re.split(r"[，,、；;。\n]+", cleaned)
+        values: list[str] = []
+        for item in parts:
+            value = str(item).strip()
+            if value and value not in values:
+                values.append(value)
+        return values
+
+    def _parse_creation_structured_input(self, text: str) -> dict[str, Any]:
+        policy = self._creation_parsing_policy()
+        field_markers = [str(item) for item in list(policy.get("field_markers", []) or []) if str(item).strip()]
+        trigger_markers = [str(item) for item in list(policy.get("trigger_markers", []) or []) if str(item).strip()]
+        completion_markers = [str(item) for item in list(policy.get("completion_markers", []) or []) if str(item).strip()]
+        if not field_markers and not trigger_markers and not completion_markers:
+            return {}
+
+        fields_raw = self._extract_marked_value(text, field_markers)
+        triggers_raw = self._extract_marked_value(text, trigger_markers)
+        completion_raw = self._extract_marked_value(text, completion_markers)
+
+        fields = self._split_list_values(fields_raw)
+        triggers = self._split_list_values(triggers_raw)
+        completion_phrase = completion_raw.strip().strip("“”\"'")
+        if completion_phrase and len(completion_phrase) < 2:
+            completion_phrase = ""
+
+        schema_fields = []
+        for field in fields:
+            key = self.normalize_slug(field)
+            schema_fields.append(
+                {
+                    "key": key,
+                    "prompt": self._default_text("schema_prompt_template", "Please provide {key}.").format(key=field),
+                }
+            )
+
+        return {
+            "schema_fields": schema_fields,
+            "activation_keywords": triggers,
+            "completion_phrase": completion_phrase,
+        }
 
     def default_information_field_definitions(self) -> list[dict[str, str]]:
         configured_fields = self._information_collection_policy().get("default_fields", [])
@@ -344,6 +409,34 @@ class InformationAgentService:
             merged.setdefault("conversation", list(previous.get("conversation", [])))
             merged["conversation"] = [*list(previous.get("conversation", [])), {"role": "user", "content": user_text.strip()}]
         explicit_completion = self._explicit_creation_completion_requested(user_text, finalize_requested=finalize_requested)
+        parsed = self._parse_creation_structured_input(user_text)
+        if parsed:
+            if parsed.get("schema_fields"):
+                merged["schema_fields"] = self._normalize_schema_fields(parsed.get("schema_fields"))
+                merged["missing_fields"] = [
+                    item
+                    for item in list(merged.get("missing_fields") or [])
+                    if str(item) not in {"schema_fields"}
+                ]
+            if parsed.get("activation_keywords"):
+                merged["activation_keywords"] = self._build_activation_keywords(
+                    entity_label=str(merged.get("entity_label") or self._default_text("entity_label_default", "Information Item")),
+                    query_aliases=merged.get("query_aliases") or {},
+                    existing=[*list(merged.get("activation_keywords") or []), *list(parsed.get("activation_keywords") or [])],
+                )
+                merged["missing_fields"] = [
+                    item
+                    for item in list(merged.get("missing_fields") or [])
+                    if str(item) not in {"activation_keywords"}
+                ]
+            if parsed.get("completion_phrase"):
+                merged["completion_phrase"] = str(parsed.get("completion_phrase"))
+            if str(merged.get("next_action") or "") == "ask_user":
+                merged["next_question"] = self._message_text(
+                    "creation_continue_question",
+                    "If fields and completion condition are ready, reply with the completion phrase; otherwise continue refining.",
+                )
+
         # Guardrail: never auto-complete agent creation unless user explicitly confirms completion.
         if not explicit_completion:
             merged["completion_ready"] = False
@@ -779,6 +872,12 @@ class InformationAgentService:
             updated = self.session_store.patch(
                 context.session_id,
                 {
+                    "knowledge_collection": {
+                        "active": False,
+                        "field_index": 0,
+                        "fields": self.default_information_field_definitions(),
+                        "data": {},
+                    },
                     "agent_setup": {
                         "active": True,
                         "stage": "ai_workflow",

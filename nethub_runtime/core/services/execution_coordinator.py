@@ -75,6 +75,12 @@ class ExecutionCoordinator:
                 "defaults": {},
                 "default_fields": [],
                 "activation_keyword_templates": [],
+                "include_query_aliases_in_activation_keywords": False,
+                "creation_parsing": {
+                    "field_markers": [],
+                    "trigger_markers": [],
+                    "completion_markers": [],
+                },
                 "field_capture_markers": [],
                 "field_aliases": {},
                 "field_query_keywords": {},

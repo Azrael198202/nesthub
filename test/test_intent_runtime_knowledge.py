@@ -97,3 +97,125 @@ def test_runtime_keyword_signal_analyzer_uses_policy_query_markers_for_fallback(
     payload = analyzer.analyze("查4月21号和4月22号的安排")
 
     assert payload["action_flags"]["query_like"] is True
+
+
+def test_intent_analyzer_prioritizes_create_intent_over_active_collection_state(tmp_path: Path) -> None:
+    policy_path = tmp_path / "semantic_policy.json"
+    db_path = tmp_path / "semantic_policy_memory.sqlite3"
+    _write_policy(policy_path)
+    store = SemanticPolicyStore(policy_path=policy_path, db_path=db_path)
+    analyzer = IntentAnalyzer(semantic_policy_store=store)
+
+    context = CoreContextSchema(
+        trace_id="trace-create-priority",
+        session_id="session-create-priority",
+        metadata={},
+        session_state={
+            "knowledge_collection": {"active": True, "field_index": 2, "fields": [{"key": "summary"}], "data": {"item_name": "x"}},
+            "configured_agent": {"status": "active"},
+        },
+    )
+    task = __import__("asyncio").run(analyzer.analyze("创建一个日程和提醒智能体", context))
+
+    assert task.intent == "create_information_agent"
+
+
+def test_intent_analyzer_does_not_force_create_when_capture_signal_present(tmp_path: Path) -> None:
+    policy_path = tmp_path / "semantic_policy.json"
+    db_path = tmp_path / "semantic_policy_memory.sqlite3"
+    _write_policy(policy_path)
+    store = SemanticPolicyStore(policy_path=policy_path, db_path=db_path)
+    analyzer = IntentAnalyzer(semantic_policy_store=store)
+
+    # Seed memory with a create intent phrase to simulate runtime knowledge influence.
+    store.record_intent_knowledge(
+        "创建一个日程智能体",
+        {
+            "intent": "create_information_agent",
+            "domain": "agent_management",
+            "query_markers": [],
+            "record_markers": [],
+            "agent_markers": ["日程", "智能体"],
+            "goal_terms": ["创建", "日程", "智能体"],
+            "intent_hints": ["create_information_agent"],
+            "action_flags": {
+                "query_like": False,
+                "record_like": False,
+                "agent_create_like": True,
+                "finalize_like": False,
+                "knowledge_capture_like": False,
+                "multimodal_like": False,
+            },
+            "output_requirements": ["agent", "dialog"],
+            "constraints": {"need_agent": False},
+        },
+        source="test",
+        confidence=0.95,
+        evidence="seed",
+    )
+
+    context = CoreContextSchema(
+        trace_id="trace-capture-over-create",
+        session_id="session-capture-over-create",
+        metadata={},
+        session_state={
+            "configured_agent": {
+                "status": "active",
+                "activation_keywords": ["加日程", "查日程"],
+                "query_aliases": {"查日程": "date"},
+            },
+            "knowledge_collection": {"active": False},
+            "agent_setup": {"active": False},
+        },
+    )
+    task = __import__("asyncio").run(analyzer.analyze("加日程 4月22日，18点30分 飞机，从大阪到福冈", context))
+
+    assert task.intent != "create_information_agent"
+
+
+def test_intent_analyzer_does_not_use_create_hint_outside_setup(tmp_path: Path) -> None:
+    policy_path = tmp_path / "semantic_policy.json"
+    db_path = tmp_path / "semantic_policy_memory.sqlite3"
+    _write_policy(policy_path)
+    store = SemanticPolicyStore(policy_path=policy_path, db_path=db_path)
+    analyzer = IntentAnalyzer(semantic_policy_store=store)
+
+    store.record_intent_knowledge(
+        "创建一个日程智能体",
+        {
+            "intent": "create_information_agent",
+            "domain": "agent_management",
+            "query_markers": [],
+            "record_markers": [],
+            "agent_markers": ["日程", "智能体"],
+            "goal_terms": ["创建", "日程", "智能体"],
+            "intent_hints": ["create_information_agent"],
+            "action_flags": {
+                "query_like": False,
+                "record_like": False,
+                "agent_create_like": True,
+                "finalize_like": False,
+                "knowledge_capture_like": False,
+                "multimodal_like": False,
+            },
+            "output_requirements": ["agent", "dialog"],
+            "constraints": {"need_agent": False},
+        },
+        source="test",
+        confidence=0.95,
+        evidence="seed",
+    )
+
+    context = CoreContextSchema(
+        trace_id="trace-create-hint-guard",
+        session_id="session-create-hint-guard",
+        metadata={},
+        session_state={
+            "configured_agent": {"status": "active"},
+            "knowledge_collection": {"active": False},
+            "agent_setup": {"active": False},
+        },
+    )
+    task = __import__("asyncio").run(analyzer.analyze("触发词：查日程，加日程，修改日程，删除日程", context))
+
+    assert task.intent != "create_information_agent"

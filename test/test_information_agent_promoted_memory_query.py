@@ -171,3 +171,42 @@ def test_create_information_agent_restarts_workflow_when_agent_already_active(is
     payload = recreate_result["execution_result"]["final_output"]["manage_information_agent"]
     assert payload["dialog_state"]["stage"] == "ai_workflow"
     assert "当前没有可执行的信息型智能体操作" not in str(payload.get("message") or "")
+
+
+def test_create_information_agent_clears_stale_collection_and_restarts_workflow(isolated_generated_artifacts) -> None:
+    session_id = "promoted-memory-recreate-with-stale-collection"
+    core_engine.context_manager.session_store.patch(
+        session_id,
+        {
+            "configured_agent": {
+                "status": "active",
+                "agent_id": "stale_agent",
+                "name": "stale_agent",
+                "role": "stale role",
+                "knowledge_entity_label": "stale entity",
+                "knowledge_schema": [{"key": "item_name", "prompt": "item name"}],
+            },
+            "knowledge_collection": {
+                "active": True,
+                "field_index": 2,
+                "fields": [{"key": "summary", "prompt": "summary"}],
+                "data": {"item_name": "legacy"},
+            },
+            "agent_setup": {"active": False, "stage": "completed"},
+        },
+    )
+
+    recreate_response = client.post(
+        "/core/handle",
+        json={
+            "input_text": "创建一个日程和提醒智能体",
+            "context": {"session_id": session_id, "locale": "ja-JP", "timezone": "Asia/Tokyo"},
+            "output_format": "dict",
+            "use_langraph": False,
+        },
+    )
+    assert recreate_response.status_code == 200
+    recreate_result = recreate_response.json()["result"]
+    assert recreate_result["task"]["intent"] == "create_information_agent"
+    payload = recreate_result["execution_result"]["final_output"]["manage_information_agent"]
+    assert payload["dialog_state"]["stage"] == "ai_workflow"

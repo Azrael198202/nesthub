@@ -195,6 +195,17 @@ class SemanticIntentPlugin:
             and any(marker and marker in lowered_text for marker in field_capture_markers)
         )
 
+        explicit_create_requested = bool(action_flags.get("agent_create_like"))
+        hinted_create_requested = "create_information_agent" in intent_hints and bool(setup.get("active"))
+        create_requested = bool(explicit_create_requested or hinted_create_requested)
+        query_requested = bool(action_flags.get("query_like") or "query_agent_knowledge" in intent_hints)
+        capture_requested = bool(action_flags.get("knowledge_capture_like") or "capture_agent_knowledge" in intent_hints)
+
+        # Creation intent should take precedence over stale collection/setup state,
+        # but must not override explicit query/capture signals in active usage turns.
+        if create_requested and not (query_requested or capture_requested):
+            return ("create_information_agent", "agent_management", ["agent", "dialog"], {"need_agent": False})
+
         if collection.get("active"):
             return ("capture_agent_knowledge", "agent_management", ["knowledge", "dialog"], {"need_agent": False})
 
@@ -220,11 +231,6 @@ class SemanticIntentPlugin:
             or looks_like_field_capture
         ):
             return ("capture_agent_knowledge", "agent_management", ["knowledge", "dialog"], {"need_agent": False})
-
-        if action_flags.get("agent_create_like") or "create_information_agent" in intent_hints:
-            # Creation of information agents is a guided multi-turn workflow,
-            # not runtime autonomous agent generation.
-            return ("create_information_agent", "agent_management", ["agent", "dialog"], {"need_agent": False})
 
         return None
 
