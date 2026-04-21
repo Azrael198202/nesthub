@@ -179,3 +179,34 @@ def test_core_plus_engine_skips_forced_task_when_information_agent_session_activ
 
     metadata = dict((fake_core.last_context or {}).get("metadata") or {})
     assert "core_plus_forced_task" not in metadata
+
+
+def test_core_plus_engine_skips_forced_task_for_capture_like_input_when_agent_active(monkeypatch) -> None:
+    monkeypatch.setenv("NETHUB_CORE_ENGINE_VARIANT", "core_plus")
+    engine = create_core_engine()
+    fake_core = _FakeLegacyCoreWithSession(
+        payloads={
+            "s-agent-capture": {
+                "configured_agent": {
+                    "status": "active",
+                    "name": "runtime_agent",
+                    "role": "信息智能体",
+                    "knowledge_entity_label": "信息条目",
+                    "activation_keywords": [],
+                    "query_aliases": {},
+                }
+            }
+        }
+    )
+    wrapped = engine.__class__(base_core=fake_core)
+
+    asyncio.run(
+        wrapped.handle(
+            "4月22日 18点30分 飞机 从大阪到福冈",
+            context={"session_id": "s-agent-capture", "metadata": {}},
+            fmt="dict",
+        )
+    )
+
+    metadata = dict((fake_core.last_context or {}).get("metadata") or {})
+    assert "core_plus_forced_task" not in metadata

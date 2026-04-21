@@ -137,3 +137,37 @@ def test_query_information_knowledge_recovers_agent_from_promoted_facts_when_ses
     assert query_result["task"]["intent"] == "query_agent_knowledge"
     payload = query_result["execution_result"]["final_output"]["query_information_knowledge"]
     assert "vendor@example.com" in str(payload.get("answer") or "")
+
+
+def test_create_information_agent_restarts_workflow_when_agent_already_active(isolated_generated_artifacts) -> None:
+    session_id = "promoted-memory-recreate-active-agent"
+    for text in [
+        "帮我创建供应商资料智能体",
+        "主要记录供应商资料的信息。",
+        "完成创建供应商资料信息智能体",
+    ]:
+        response = client.post(
+            "/core/handle",
+            json={
+                "input_text": text,
+                "context": {"session_id": session_id, "locale": "ja-JP", "timezone": "Asia/Tokyo"},
+                "output_format": "dict",
+                "use_langraph": False,
+            },
+        )
+        assert response.status_code == 200
+
+    recreate_response = client.post(
+        "/core/handle",
+        json={
+            "input_text": "创建一个日程和提醒智能体",
+            "context": {"session_id": session_id, "locale": "ja-JP", "timezone": "Asia/Tokyo"},
+            "output_format": "dict",
+            "use_langraph": False,
+        },
+    )
+    assert recreate_response.status_code == 200
+    recreate_result = recreate_response.json()["result"]
+    payload = recreate_result["execution_result"]["final_output"]["manage_information_agent"]
+    assert payload["dialog_state"]["stage"] == "ai_workflow"
+    assert "当前没有可执行的信息型智能体操作" not in str(payload.get("message") or "")
