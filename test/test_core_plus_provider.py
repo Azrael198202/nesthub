@@ -113,3 +113,19 @@ def test_core_plus_engine_injects_forced_task_from_request_plan(monkeypatch) -> 
     assert forced_task["intent"] == "schedule_create"
     assert forced_task["domain"] == "data_ops"
     assert forced_task["constraints"]["need_agent"] is False
+
+
+def test_core_plus_engine_maps_agent_create_forced_task_to_agent_management(monkeypatch) -> None:
+    monkeypatch.setenv("NETHUB_CORE_ENGINE_VARIANT", "core_plus")
+    engine = create_core_engine()
+    fake_core = _FakeLegacyCore()
+    wrapped = engine.__class__(base_core=fake_core)
+
+    text = "创建一个日程和提醒智能体"
+    asyncio.run(wrapped.handle(text, context={"metadata": {}}, fmt="dict"))
+
+    metadata = dict((fake_core.last_context or {}).get("metadata") or {})
+    forced_task = dict(metadata.get("core_plus_forced_task") or {})
+    assert forced_task["intent"] == "create_information_agent"
+    assert forced_task["domain"] == "agent_management"
+    assert forced_task["constraints"]["need_agent"] is False

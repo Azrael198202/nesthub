@@ -43,6 +43,7 @@ class CorePlusEngine:
 
     def _forced_task_from_request_plan(self, request_plan: dict[str, Any], input_text: str) -> dict[str, Any]:
         selected_graph = str((request_plan.get("intent_router") or {}).get("selected_graph") or "intent_router_graph")
+        rule_intent = str((request_plan.get("rule_prejudge") or {}).get("intent") or "general_task")
         mapping: dict[str, dict[str, Any]] = {
             "schedule_graph": {
                 "intent": "schedule_create",
@@ -70,13 +71,43 @@ class CorePlusEngine:
                 "output_requirements": ["answer"],
             },
         }
+        intent_fallbacks: dict[str, dict[str, Any]] = {
+            "create_information_agent": {
+                "intent": "create_information_agent",
+                "domain": "agent_management",
+                "output_requirements": ["agent", "dialog"],
+            },
+            "refine_information_agent": {
+                "intent": "refine_information_agent",
+                "domain": "agent_management",
+                "output_requirements": ["agent", "dialog"],
+            },
+            "finalize_information_agent": {
+                "intent": "finalize_information_agent",
+                "domain": "agent_management",
+                "output_requirements": ["agent", "dialog"],
+            },
+            "capture_agent_knowledge": {
+                "intent": "capture_agent_knowledge",
+                "domain": "agent_management",
+                "output_requirements": ["knowledge", "dialog"],
+            },
+            "query_agent_knowledge": {
+                "intent": "query_agent_knowledge",
+                "domain": "knowledge_ops",
+                "output_requirements": ["answer", "knowledge_hits"],
+            },
+        }
         base = mapping.get(
             selected_graph,
-            {
-                "intent": str((request_plan.get("rule_prejudge") or {}).get("intent") or "general_task"),
-                "domain": "general",
-                "output_requirements": ["message"],
-            },
+            intent_fallbacks.get(
+                rule_intent,
+                {
+                    "intent": rule_intent,
+                    "domain": "general",
+                    "output_requirements": ["message"],
+                },
+            ),
         )
         return {
             "task_id": f"core_plus_forced_{selected_graph}",
