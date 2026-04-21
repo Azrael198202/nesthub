@@ -18,9 +18,9 @@ from typing import Any
 
 
 def _create_core_engine() -> Any:
-    from nethub_runtime.core.services.core_engine import AICore
+    from nethub_runtime.core.services.core_engine_provider import create_core_engine
 
-    return AICore()
+    return create_core_engine()
 
 
 def _load_bridge_config() -> tuple[str, str, int]:

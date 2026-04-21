@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from nethub_runtime.core.routers.core_api import router as core_router
-from nethub_runtime.core.services.core_engine import AICore
+from nethub_runtime.core.services.core_engine_provider import create_core_engine
 
 app = FastAPI(title="NestHub AI Core")
 app.include_router(core_router, prefix="/core")
@@ -31,7 +31,7 @@ class CoreEngine:
 	"""
 
 	def __init__(self) -> None:
-		self._core = AICore()
+		self._core = create_core_engine()
 
 	def handle(self, input_text: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
 		raw = asyncio.run(self._core.handle(input_text, context, fmt="dict", use_langraph=False))

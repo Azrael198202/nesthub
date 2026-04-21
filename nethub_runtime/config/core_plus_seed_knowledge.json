@@ -1,0 +1,51 @@
+{
+  "documents": [
+    {
+      "id": "router_governance",
+      "title": "Model gateway governance",
+      "content": "LiteLLM is the unified model gateway. Routing decisions should be expressed as task-class to provider/model mappings and not embedded as business literals in orchestration code.",
+      "metadata": {
+        "kind": "capability",
+        "component": "model_router",
+        "technology": "LiteLLM"
+      }
+    },
+    {
+      "id": "workflow_governance",
+      "title": "Workflow orchestration governance",
+      "content": "LangGraph orchestration should be decomposed into subgraphs. The runtime uses intent_router_graph, rag_qa_graph, expense_record_graph, schedule_graph, document_summary_graph, external_search_graph, and human_review_graph rather than one monolithic graph.",
+      "metadata": {
+        "kind": "workflow",
+        "component": "workflow_executor",
+        "technology": "LangGraph"
+      }
+    },
+    {
+      "id": "state_layering",
+      "title": "Three-layer state model",
+      "content": "Execution state is partitioned into session state, user long-term state, and task execution state. Human review checkpoints are stored in task execution state and may suspend the graph until resumed.",
+      "metadata": {
+        "kind": "runtime_model",
+        "component": "state_management"
+      }
+    },
+    {
+      "id": "retrieval_backends",
+      "title": "Retrieval backends",
+      "content": "Vector retrieval may use Weaviate, Qdrant, or pgvector/PostgreSQL. Document retrieval may use PostgreSQL, Elasticsearch, OpenSearch, or filesystem metadata. Graph retrieval may use Neo4j or an in-memory graph adapter for local execution.",
+      "metadata": {
+        "kind": "retrieval",
+        "component": "knowledge_base"
+      }
+    },
+    {
+      "id": "fallback_governance",
+      "title": "Fallback governance",
+      "content": "External information access is isolated into external_search_graph. Nodes in other graphs declare a fallback intent but do not run web access directly. Human review may precede or follow fallback when uncertainty remains.",
+      "metadata": {
+        "kind": "workflow",
+        "component": "external_search_graph"
+      }
+    }
+  ]
+}
