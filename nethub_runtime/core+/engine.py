@@ -125,6 +125,94 @@ class CorePlusEngine:
             },
         }
 
+    def _session_state_for_context(self, context: dict[str, Any] | None) -> dict[str, Any]:
+        session_id = str((context or {}).get("session_id") or "").strip()
+        if not session_id:
+            return {}
+        session_store = getattr(getattr(self._base_core, "context_manager", None), "session_store", None)
+        if session_store is None or not hasattr(session_store, "get"):
+            return {}
+        try:
+            payload = session_store.get(session_id)
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _runtime_agent_operation_markers(self) -> list[str]:
+        coordinator = getattr(self._base_core, "execution_coordinator", None)
+        store = getattr(coordinator, "semantic_policy_store", None)
+        if store is None:
+            return []
+        try:
+            policy = store.load_runtime_policy()
+        except Exception:
+            return []
+        if not isinstance(policy, dict):
+            return []
+
+        markers: list[str] = []
+
+        def _append_from(values: Any) -> None:
+            if not isinstance(values, list):
+                return
+            for item in values:
+                value = str(item).strip()
+                if value and value not in markers:
+                    markers.append(value)
+
+        _append_from(policy.get("query_markers"))
+        intent_detection = policy.get("intent_detection", {})
+        if isinstance(intent_detection, dict):
+            _append_from(intent_detection.get("query_markers"))
+            _append_from(intent_detection.get("group_query_markers"))
+        info_collection = policy.get("information_collection", {})
+        if isinstance(info_collection, dict):
+            _append_from(info_collection.get("list_query_markers"))
+            _append_from(info_collection.get("field_capture_markers"))
+            _append_from(info_collection.get("completion_phrases"))
+        return markers
+
+    def _should_skip_forced_task(self, *, input_text: str, context: dict[str, Any] | None) -> bool:
+        state = self._session_state_for_context(context)
+        if not state:
+            return False
+
+        setup = state.get("agent_setup") or {}
+        collection = state.get("knowledge_collection") or {}
+        configured_agent = state.get("configured_agent") or {}
+        if bool(setup.get("active")) or bool(collection.get("active")):
+            return True
+        if str(configured_agent.get("status") or "").strip() != "active":
+            return False
+
+        lowered = input_text.lower()
+        cues: list[str] = []
+        for item in list(configured_agent.get("activation_keywords") or []):
+            value = str(item).strip()
+            if value:
+                cues.append(value)
+        query_aliases = configured_agent.get("query_aliases") or {}
+        if isinstance(query_aliases, dict):
+            for key in query_aliases.keys():
+                value = str(key).strip()
+                if value:
+                    cues.append(value)
+        for item in (
+            configured_agent.get("name"),
+            configured_agent.get("role"),
+            configured_agent.get("knowledge_entity_label"),
+        ):
+            value = str(item or "").strip()
+            if value:
+                cues.append(value)
+
+        for cue in cues:
+            if cue in input_text or cue.lower() in lowered:
+                return True
+
+        runtime_markers = self._runtime_agent_operation_markers()
+        return any(marker in input_text or marker.lower() in lowered for marker in runtime_markers)
+
     async def handle(
         self,
         input_text: str,
@@ -138,7 +226,10 @@ class CorePlusEngine:
         request_plan = preparation["request_plan"]
         metadata["core_plus_request_plan"] = request_plan
         metadata["core_plus_preparation"] = preparation
-        metadata["core_plus_forced_task"] = self._forced_task_from_request_plan(request_plan, input_text)
+        if self._should_skip_forced_task(input_text=input_text, context=next_context):
+            metadata.pop("core_plus_forced_task", None)
+        else:
+            metadata["core_plus_forced_task"] = self._forced_task_from_request_plan(request_plan, input_text)
         next_context["metadata"] = metadata
         result = await self._base_core.handle(input_text, next_context, fmt=fmt, use_langraph=use_langraph)
         if fmt != "dict" or not isinstance(result, dict):
@@ -157,7 +248,10 @@ class CorePlusEngine:
         request_plan = preparation["request_plan"]
         metadata["core_plus_request_plan"] = request_plan
         metadata["core_plus_preparation"] = preparation
-        metadata["core_plus_forced_task"] = self._forced_task_from_request_plan(request_plan, input_text)
+        if self._should_skip_forced_task(input_text=input_text, context=next_context):
+            metadata.pop("core_plus_forced_task", None)
+        else:
+            metadata["core_plus_forced_task"] = self._forced_task_from_request_plan(request_plan, input_text)
         next_context["metadata"] = metadata
         yield {"event": "core_plus_planned", "core_version": self.version, "request_plan": request_plan, "dispatch": preparation.get("dispatch", {})}
         async for event in self._base_core.handle_stream(input_text, next_context, fmt=fmt):

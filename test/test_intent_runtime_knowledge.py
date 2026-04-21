@@ -13,6 +13,9 @@ def _write_policy(path: Path) -> None:
     path.write_text(
         json.dumps(
             {
+                "intent_detection": {
+                    "query_markers": ["查", "查询", "查看", "看看"]
+                },
                 "policy_memory": {
                     "enabled": True,
                     "auto_activate": {"enabled": True, "min_hits": 2, "min_confidence": 0.75},
@@ -82,3 +85,15 @@ def test_runtime_keyword_signal_analyzer_reuses_similar_intent_knowledge(tmp_pat
     assert payload["action_flags"]["agent_create_like"] is True
     assert "create_information_agent" in payload["intent_hints"]
     assert payload["knowledge_match"]["match_type"] in {"exact", "token_overlap"}
+
+
+def test_runtime_keyword_signal_analyzer_uses_policy_query_markers_for_fallback(tmp_path: Path) -> None:
+    policy_path = tmp_path / "semantic_policy.json"
+    db_path = tmp_path / "semantic_policy_memory.sqlite3"
+    _write_policy(policy_path)
+    store = SemanticPolicyStore(policy_path=policy_path, db_path=db_path)
+
+    analyzer = RuntimeKeywordSignalAnalyzer(model_router=None, semantic_policy_store=store)
+    payload = analyzer.analyze("查4月21号和4月22号的安排")
+
+    assert payload["action_flags"]["query_like"] is True

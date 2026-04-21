@@ -15,6 +15,20 @@
     "synonyms": {}
   },
   "intent_detection": {
+    "query_markers": [
+      "查",
+      "查询",
+      "查看",
+      "看看",
+      "检索",
+      "搜索",
+      "问",
+      "list",
+      "query",
+      "find",
+      "show",
+      "search"
+    ],
     "group_query_markers": [
       "按类别",
       "按时间",

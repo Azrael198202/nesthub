@@ -126,9 +126,39 @@ class RuntimeKeywordSignalAnalyzer:
         }
         return normalized
 
+    def _runtime_query_markers(self) -> list[str]:
+        if self.semantic_policy_store is None:
+            return []
+        try:
+            policy = self.semantic_policy_store.load_runtime_policy()
+        except Exception:
+            return []
+        if not isinstance(policy, dict):
+            return []
+        markers: list[str] = []
+        for item in list(policy.get("query_markers", []) or []):
+            value = str(item).strip()
+            if value and value not in markers:
+                markers.append(value)
+        intent_detection = policy.get("intent_detection", {})
+        if isinstance(intent_detection, dict):
+            for item in list(intent_detection.get("query_markers", []) or []):
+                value = str(item).strip()
+                if value and value not in markers:
+                    markers.append(value)
+        info_collection = policy.get("information_collection", {})
+        if isinstance(info_collection, dict):
+            for item in list(info_collection.get("list_query_markers", []) or []):
+                value = str(item).strip()
+                if value and value not in markers:
+                    markers.append(value)
+        return markers
+
     def _fallback_analysis(self, text: str) -> dict[str, Any]:
         tokens = self._tokenize(text)
-        question_like = any(symbol in text for symbol in ("?", "？"))
+        lowered = text.lower()
+        query_markers = self._runtime_query_markers()
+        question_like = any(symbol in text for symbol in ("?", "？")) or any(marker in text or marker.lower() in lowered for marker in query_markers)
         numeric_like = bool(re.search(r"\d", text))
         create_like = any(token.lower() in {"agent", "create", "build", "assistant"} for token in tokens)
         finalize_like = any(token.lower() in {"done", "finish", "complete", "finalize"} for token in tokens)
