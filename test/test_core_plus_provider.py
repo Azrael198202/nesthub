@@ -19,8 +19,10 @@ class _FakeModelRouter:
 class _FakeLegacyCore:
     def __init__(self) -> None:
         self.model_router = _FakeModelRouter()
+        self.last_context: dict[str, Any] | None = None
 
     async def handle(self, input_text: str, context: dict[str, Any] | None = None, fmt: str = "dict", use_langraph: bool = True) -> dict[str, Any]:
+        self.last_context = dict(context or {})
         return {
             "task": {
                 "task_id": "task_1",
@@ -37,6 +39,7 @@ class _FakeLegacyCore:
         }
 
     async def handle_stream(self, input_text: str, context: dict[str, Any] | None = None, fmt: str = "dict"):
+        self.last_context = dict(context or {})
         yield {"event": "intent_analyzed", "intent": "data_record"}
         yield {
             "event": "final",
@@ -94,3 +97,19 @@ def test_core_plus_engine_enriches_final_stream_event(monkeypatch) -> None:
     assert events[0]["event"] == "core_plus_planned"
     final_event = next(event for event in events if event["event"] == "final")
     assert final_event["result"]["execution_result"]["core_plus"]["training_signal"]["eligible"] is True
+
+
+def test_core_plus_engine_injects_forced_task_from_request_plan(monkeypatch) -> None:
+    monkeypatch.setenv("NETHUB_CORE_ENGINE_VARIANT", "core_plus")
+    engine = create_core_engine()
+    fake_core = _FakeLegacyCore()
+    wrapped = engine.__class__(base_core=fake_core)
+
+    text = "看看我的日程安排，如果4月22号没有预约，给我制定一个1天的大阪观光计划。6点到了之后，提醒我去坐6点30的飞机。"
+    asyncio.run(wrapped.handle(text, context={"metadata": {}}, fmt="dict"))
+
+    metadata = dict((fake_core.last_context or {}).get("metadata") or {})
+    forced_task = dict(metadata.get("core_plus_forced_task") or {})
+    assert forced_task["intent"] == "schedule_create"
+    assert forced_task["domain"] == "data_ops"
+    assert forced_task["constraints"]["need_agent"] is False

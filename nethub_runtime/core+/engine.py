@@ -41,6 +41,59 @@ class CorePlusEngine:
     def _enrich_result(self, result: dict[str, Any], request_plan: dict[str, Any]) -> dict[str, Any]:
         return self.pipeline.enrich_result(result, request_plan)
 
+    def _forced_task_from_request_plan(self, request_plan: dict[str, Any], input_text: str) -> dict[str, Any]:
+        selected_graph = str((request_plan.get("intent_router") or {}).get("selected_graph") or "intent_router_graph")
+        mapping: dict[str, dict[str, Any]] = {
+            "schedule_graph": {
+                "intent": "schedule_create",
+                "domain": "data_ops",
+                "output_requirements": ["message", "records"],
+            },
+            "expense_record_graph": {
+                "intent": "record_expense",
+                "domain": "data_management",
+                "output_requirements": ["message", "records"],
+            },
+            "document_summary_graph": {
+                "intent": "document_summary",
+                "domain": "content_generation",
+                "output_requirements": ["summary"],
+            },
+            "external_search_graph": {
+                "intent": "web_research_task",
+                "domain": "knowledge_ops",
+                "output_requirements": ["summary"],
+            },
+            "rag_qa_graph": {
+                "intent": "query_agent_knowledge",
+                "domain": "knowledge_ops",
+                "output_requirements": ["answer"],
+            },
+        }
+        base = mapping.get(
+            selected_graph,
+            {
+                "intent": str((request_plan.get("rule_prejudge") or {}).get("intent") or "general_task"),
+                "domain": "general",
+                "output_requirements": ["message"],
+            },
+        )
+        return {
+            "task_id": f"core_plus_forced_{selected_graph}",
+            "intent": base["intent"],
+            "domain": base["domain"],
+            "constraints": {"need_agent": False},
+            "output_requirements": list(base["output_requirements"]),
+            "metadata": {
+                "forced_by_core_plus": True,
+                "selected_graph": selected_graph,
+                "request_plan_version": str(request_plan.get("version") or "core_plus"),
+                "input_preview": input_text[:120],
+                "capability_orchestration": dict(request_plan.get("capability_orchestration") or {}),
+                "request_plan": request_plan,
+            },
+        }
+
     async def handle(
         self,
         input_text: str,
@@ -54,6 +107,7 @@ class CorePlusEngine:
         request_plan = preparation["request_plan"]
         metadata["core_plus_request_plan"] = request_plan
         metadata["core_plus_preparation"] = preparation
+        metadata["core_plus_forced_task"] = self._forced_task_from_request_plan(request_plan, input_text)
         next_context["metadata"] = metadata
         result = await self._base_core.handle(input_text, next_context, fmt=fmt, use_langraph=use_langraph)
         if fmt != "dict" or not isinstance(result, dict):
@@ -72,6 +126,7 @@ class CorePlusEngine:
         request_plan = preparation["request_plan"]
         metadata["core_plus_request_plan"] = request_plan
         metadata["core_plus_preparation"] = preparation
+        metadata["core_plus_forced_task"] = self._forced_task_from_request_plan(request_plan, input_text)
         next_context["metadata"] = metadata
         yield {"event": "core_plus_planned", "core_version": self.version, "request_plan": request_plan, "dispatch": preparation.get("dispatch", {})}
         async for event in self._base_core.handle_stream(input_text, next_context, fmt=fmt):

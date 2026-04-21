@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import importlib
+import threading
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from pathlib import Path
@@ -332,6 +333,127 @@ class ExecutionUpgradePipeline:
 				}
 		return {"rule_hit": False, "rule_id": "", "intent": "", "workflow": "", "confidence": 0.0, "markers": []}
 
+	def _invoke_model_json(self, *, task_type: str, system_prompt: str, prompt: str, timeout_sec: int = 20) -> dict[str, Any] | None:
+		model_router = getattr(self.base_core, "model_router", None)
+		if model_router is None:
+			return None
+
+		holder: dict[str, Any] = {}
+
+		def _runner() -> None:
+			try:
+				holder["response"] = asyncio.run(
+					model_router.invoke(
+						task_type=task_type,
+						prompt=prompt,
+						system_prompt=system_prompt,
+						temperature=0.2,
+					)
+				)
+			except Exception as exc:
+				holder["error"] = exc
+
+		thread = threading.Thread(target=_runner, daemon=True)
+		thread.start()
+		thread.join(timeout=timeout_sec)
+		raw = holder.get("response")
+		if not isinstance(raw, str):
+			return None
+		cleaned = raw.strip()
+		if cleaned.startswith("```"):
+			cleaned = cleaned.split("\n", 1)[-1]
+			if cleaned.endswith("```"):
+				cleaned = cleaned[:-3]
+			cleaned = cleaned.strip()
+		if cleaned.startswith("json\n"):
+			cleaned = cleaned.replace("json\n", "", 1).strip()
+		if cleaned.startswith("Model response (mock):"):
+			return None
+		try:
+			payload = json.loads(cleaned)
+		except Exception:
+			return None
+		return payload if isinstance(payload, dict) else None
+
+	def _generate_workflow_plan(
+		self,
+		*,
+		input_text: str,
+		local_capabilities: list[str],
+		external_capabilities: list[str],
+		matched_markers: list[str] | None = None,
+	) -> list[dict[str, Any]]:
+		ordered = [(name, "local") for name in local_capabilities] + [(name, "external") for name in external_capabilities]
+		base_steps = [
+			{"name": str(name).strip(), "kind": kind}
+			for name, kind in ordered
+			if str(name).strip()
+		]
+		if not base_steps:
+			return []
+
+		default_plan = [
+			{
+				"name": step["name"],
+				"kind": step["kind"],
+				"label": step["name"].replace("_", " ").strip().title(),
+				"preview": "执行外部能力" if step["kind"] == "external" else "执行本地能力",
+			}
+			for step in base_steps
+		]
+
+		model_payload = self._invoke_model_json(
+			task_type="task_planning",
+			system_prompt=(
+				"You are NestHub workflow planner. Return JSON only.\n"
+				"Generate concise, user-facing workflow step labels and previews."
+			),
+			prompt=(
+				"Build workflow steps for the current user request.\n"
+				f"input_text={json.dumps(input_text, ensure_ascii=False)}\n"
+				f"matched_markers={json.dumps(list(matched_markers or []), ensure_ascii=False)}\n"
+				f"available_steps={json.dumps(base_steps, ensure_ascii=False)}\n"
+				"Return JSON with key steps, where steps is an array of objects:\n"
+				"{\"name\": string, \"kind\": \"local\"|\"external\", \"label\": string, \"preview\": string}\n"
+				"Rules:\n"
+				"1) name must come from available_steps;\n"
+				"2) preserve execution order;\n"
+				"3) label/preview should be specific to this user input."
+			),
+		)
+		if not isinstance(model_payload, dict):
+			return default_plan
+
+		raw_steps = model_payload.get("steps")
+		if not isinstance(raw_steps, list):
+			return default_plan
+
+		allowed = {step["name"]: step["kind"] for step in base_steps}
+		generated_by_name: dict[str, dict[str, Any]] = {}
+		for item in raw_steps:
+			if not isinstance(item, dict):
+				continue
+			name = str(item.get("name") or "").strip()
+			if name not in allowed:
+				continue
+			kind = str(item.get("kind") or allowed[name]).strip().lower()
+			if kind not in {"local", "external"}:
+				kind = allowed[name]
+			label = str(item.get("label") or "").strip() or name.replace("_", " ").strip().title()
+			preview = str(item.get("preview") or "").strip() or ("执行外部能力" if kind == "external" else "执行本地能力")
+			generated_by_name[name] = {"name": name, "kind": kind, "label": label, "preview": preview}
+
+		merged: list[dict[str, Any]] = []
+		for step in base_steps:
+			name = step["name"]
+			merged.append(generated_by_name.get(name, {
+				"name": name,
+				"kind": step["kind"],
+				"label": name.replace("_", " ").strip().title(),
+				"preview": "执行外部能力" if step["kind"] == "external" else "执行本地能力",
+			}))
+		return merged
+
 	def _match_capability_orchestration(self, input_text: str) -> dict[str, Any]:
 		lowered = input_text.lower()
 		patterns = list((self.profile.get("capability_orchestration", {}) or {}).get("patterns", []))
@@ -341,12 +463,21 @@ class ExecutionUpgradePipeline:
 			markers = [str(marker) for marker in item.get("markers", []) if str(marker).strip()]
 			matched_markers = [marker for marker in markers if marker.lower() in lowered or marker in input_text]
 			if len(matched_markers) >= max(2, min(len(markers), 2)):
+				local_capabilities = [str(item_name).strip() for item_name in list(item.get("local_capabilities", []) or []) if str(item_name).strip()]
+				external_capabilities = [str(item_name).strip() for item_name in list(item.get("external_capabilities", []) or []) if str(item_name).strip()]
+				workflow_plan = self._generate_workflow_plan(
+					input_text=input_text,
+					local_capabilities=local_capabilities,
+					external_capabilities=external_capabilities,
+					matched_markers=matched_markers,
+				)
 				return {
 					"matched": True,
 					"pattern_id": str(item.get("pattern_id") or ""),
 					"matched_markers": matched_markers,
-					"local_capabilities": list(item.get("local_capabilities", []) or []),
-					"external_capabilities": list(item.get("external_capabilities", []) or []),
+					"local_capabilities": local_capabilities,
+					"external_capabilities": external_capabilities,
+					"workflow_plan": workflow_plan,
 					"force_need_external": bool(item.get("force_need_external", False)),
 					"trigger_autonomous_implementation": bool(item.get("trigger_autonomous_implementation", False)),
 				}
@@ -356,6 +487,7 @@ class ExecutionUpgradePipeline:
 			"matched_markers": [],
 			"local_capabilities": [],
 			"external_capabilities": [],
+			"workflow_plan": [],
 			"force_need_external": False,
 			"trigger_autonomous_implementation": False,
 		}

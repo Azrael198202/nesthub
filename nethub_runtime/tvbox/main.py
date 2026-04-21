@@ -11,6 +11,7 @@ import copy
 import json
 import re
 import base64
+import os
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 import asyncio
@@ -129,7 +130,14 @@ def _create_app() -> Any:
         "modelCatalog": [],
         "runtimeProfile": {"label": "Demo", "summary": "Demo runtime", "localRoles": [], "cloudRoles": [], "localDetected": []},
         "assistantAvatar": {"mode": "house", "customModelUrl": "", "backupMode": "house", "defaultMode": "house", "label": "Demo", "techStack": []},
-        "languageSettings": {"supported": [{"code": "en-US", "label": "English", "sample": "Hello"}], "current": "en-US"},
+        "languageSettings": {
+            "supported": [
+                {"code": "zh-CN", "label": "简体中文", "sample": "你好，HomeHub"},
+                {"code": "en-US", "label": "English", "sample": "Hello, HomeHub"},
+                {"code": "ja-JP", "label": "日本語", "sample": "こんにちは、HomeHub"},
+            ],
+            "current": "en-US",
+        },
         "weather": {"location": "Tokyo", "condition": "Cloudy", "temperatureC": 20, "highC": 23, "lowC": 16, "gpsEnabled": False},
         "systemStatus": {"mode": "ready", "boxHealth": "Healthy"},
         "conversation": [],
@@ -150,7 +158,43 @@ def _create_app() -> Any:
     }
     cortex_fallback: dict[str, Any] = {"ok": True, "seed": {"agentId": "demo", "agentName": "Demo Brain", "stage": "shared-brain"}, "request": {}, "item": {}}
 
-    dashboard_state = _load_json(demo_dir / "dashboard.demo.json", dashboard_fallback)
+    def _startup_greeting(locale: str) -> str:
+        normalized = normalize_locale(locale or "en-US", "en-US")
+        if normalized == "zh-CN":
+            return "你好，我是 HomeHub。已准备就绪，可以告诉我今天要处理什么。"
+        if normalized == "ja-JP":
+            return "こんにちは、HomeHubです。準備できています。今日の依頼をどうぞ。"
+        return "Hello, this is HomeHub. I am ready. Tell me what you want to handle today."
+
+    def _build_initial_dashboard_state() -> dict[str, Any]:
+        # Default: start clean. Demo seed is opt-in via env.
+        use_demo_seed = str(os.getenv("NETHUB_TVBOX_USE_DEMO_SEED", "")).strip().lower() in {"1", "true", "yes", "on"}
+        state = _load_json(demo_dir / "dashboard.demo.json", dashboard_fallback) if use_demo_seed else copy.deepcopy(dashboard_fallback)
+        state.setdefault("languageSettings", {})
+        state["languageSettings"].setdefault("supported", copy.deepcopy(dashboard_fallback["languageSettings"]["supported"]))
+        locale = normalize_locale(str(state["languageSettings"].get("current") or "en-US"), "en-US")
+        state["languageSettings"]["current"] = locale
+        state.setdefault("voiceProfile", {})
+        state["voiceProfile"]["locale"] = locale
+
+        # Always clear runtime-volatile data on boot to avoid stale/garbage UI state.
+        state["conversation"] = []
+        state["lastVoiceRoute"] = {}
+        state["activeAgents"] = []
+        state["timelineEvents"] = []
+        state["customAgents"] = []
+        state["customAgentRecentActions"] = []
+        state["studyPlanAgents"] = []
+        state["studyPlanRecentActions"] = []
+        state["pendingVoiceClarification"] = None
+
+        # Optional localized greeting as first message.
+        state["conversation"].append(
+            {"speaker": "HomeHub", "text": _startup_greeting(locale), "time": datetime.now(UTC).astimezone().strftime("%H:%M"), "createdAt": ""}
+        )
+        return state
+
+    dashboard_state = _build_initial_dashboard_state()
     cortex_template = _load_json(demo_dir / "cortex_unpacked.demo.json", cortex_fallback)
     artifact_store = GeneratedArtifactStore()
     core_engine = _create_core_engine()
@@ -396,9 +440,10 @@ def _create_app() -> Any:
                     return f"{msg} 文件已准备好下载：{Path(ap).name}"
                 if msg:
                     return msg
-        for key in ("manage_information_agent", "query_information_knowledge", "file_read", "file_generate", "generate_workflow_artifact", "analyze_document", "single_step"):
-            payload = final_output.get(key) or {}
-            for field in ("content", "message", "answer", "summary", "translation", "artifact_path"):
+        for key, payload in final_output.items():
+            if not isinstance(payload, dict):
+                continue
+            for field in ("content", "message", "answer", "summary", "translation", "itinerary", "reminder", "artifact_path"):
                 value = str(payload.get(field) or "").strip()
                 if value:
                     return f"Generated artifact: {value}" if field == "artifact_path" else value
@@ -412,8 +457,83 @@ def _create_app() -> Any:
         "analyze_document":   "📄 文档处理",
     }
 
-    def _extract_workflow_steps(result: dict[str, Any]) -> list[dict[str, Any]]:
-        """Build a `workflowSteps` list from the execution result for the Work-tab pipeline."""
+    def _workflow_status_from_raw(raw_status: str) -> str:
+        normalized = str(raw_status or "").strip().lower()
+        return {
+            "completed": "packed",
+            "success": "packed",
+            "ok": "packed",
+            "failed": "error",
+            "error": "error",
+            "skipped": "sleeping",
+            "pending": "sleeping",
+        }.get(normalized, "working")
+
+    def _capability_label(capability: str) -> str:
+        name = str(capability or "").strip()
+        if not name:
+            return ""
+        return name.replace("_", " ").strip().title()
+
+    def _request_plan_to_workflow_steps(request_plan: dict[str, Any] | None) -> list[dict[str, Any]]:
+        plan = dict(request_plan or {})
+        orchestration = dict(plan.get("capability_orchestration") or {})
+        configured_workflow_plan = [
+            dict(item)
+            for item in list(orchestration.get("workflow_plan") or [])
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        ]
+        if configured_workflow_plan:
+            steps: list[dict[str, Any]] = [
+                {"name": "intent_router", "label": "🧠 意图路由与任务拆解", "status": "working", "preview": "解析复合请求并构建执行流程"},
+            ]
+            for step in configured_workflow_plan:
+                capability = str(step.get("name") or "").strip()
+                kind = str(step.get("kind") or "").strip().lower()
+                preview = str(step.get("preview") or "").strip()
+                if not preview:
+                    preview = "执行外部能力" if kind == "external" else "执行本地能力"
+                steps.append(
+                    {
+                        "name": capability,
+                        "label": str(step.get("label") or _capability_label(capability)),
+                        "status": "sleeping",
+                        "preview": preview,
+                    }
+                )
+            steps.append({"name": "result_packaging", "label": "📦 结果组装与回复", "status": "sleeping", "preview": "汇总计划与提醒并返回"})
+            return steps
+
+        local_caps = [str(item).strip() for item in orchestration.get("local_capabilities") or [] if str(item).strip()]
+        external_caps = [str(item).strip() for item in orchestration.get("external_capabilities") or [] if str(item).strip()]
+        if not local_caps and not external_caps:
+            return []
+
+        steps: list[dict[str, Any]] = [
+            {"name": "intent_router", "label": "🧠 意图路由与任务拆解", "status": "working", "preview": "解析复合请求并构建执行流程"},
+        ]
+        for capability in local_caps:
+            steps.append(
+                {
+                    "name": capability,
+                    "label": _capability_label(capability),
+                    "status": "sleeping",
+                    "preview": "执行本地能力",
+                }
+            )
+        for capability in external_caps:
+            steps.append(
+                {
+                    "name": capability,
+                    "label": _capability_label(capability),
+                    "status": "sleeping",
+                    "preview": "执行外部能力",
+                }
+            )
+        steps.append({"name": "result_packaging", "label": "📦 结果组装与回复", "status": "sleeping", "preview": "汇总计划与提醒并返回"})
+        return steps
+
+    def _execution_steps_to_workflow_steps(result: dict[str, Any]) -> list[dict[str, Any]]:
         steps = ((result.get("execution_result") or {}).get("steps") or [])
         out: list[dict[str, Any]] = []
         for step in steps:
@@ -421,16 +541,56 @@ def _create_app() -> Any:
             if not name:
                 continue
             raw_status = str(step.get("status") or "pending")
-            # Map backend statuses to frontend states
-            state = {"completed": "packed", "failed": "error", "skipped": "sleeping"}.get(raw_status, "working")
+            state = _workflow_status_from_raw(raw_status)
             output = step.get("output") or {}
             preview = str(
                 output.get("message") or output.get("summary") or
-                output.get("translation") or output.get("artifact_path") or ""
+                output.get("translation") or output.get("itinerary") or
+                output.get("reminder") or output.get("model_source") or
+                output.get("artifact_path") or ""
             )[:120]
             label = step.get("metadata", {}).get("display_label") or _STEP_DISPLAY_LABELS.get(name) or name
             out.append({"name": name, "label": label, "status": state, "preview": preview})
         return out
+
+    def _extract_workflow_steps(result: dict[str, Any]) -> list[dict[str, Any]]:
+        """Build a `workflowSteps` list from the execution result for the Work-tab pipeline."""
+        execution_steps = _execution_steps_to_workflow_steps(result)
+        execution_by_name = {str(item.get("name") or ""): item for item in execution_steps if str(item.get("name") or "")}
+        core_plus_plan = (((result.get("execution_result") or {}).get("core_plus") or {}).get("request_plan") or {})
+        plan_steps = _request_plan_to_workflow_steps(core_plus_plan if isinstance(core_plus_plan, dict) else {})
+        if not plan_steps:
+            return execution_steps
+
+        merged: list[dict[str, Any]] = []
+        matched_count = 0
+        for step in plan_steps:
+            name = str(step.get("name") or "")
+            runtime = execution_by_name.get(name)
+            if runtime:
+                matched_count += 1
+                merged.append(
+                    {
+                        "name": name,
+                        "label": step.get("label") or runtime.get("label") or name,
+                        "status": runtime.get("status") or step.get("status") or "sleeping",
+                        "preview": runtime.get("preview") or step.get("preview") or "",
+                    }
+                )
+            else:
+                merged.append(step)
+
+        # If planned ids and runtime ids don't overlap at all, show real
+        # execution steps only; planned steps would be visually misleading.
+        if matched_count == 0 and execution_steps:
+            return execution_steps
+
+        planned_names = {str(item.get("name") or "") for item in merged}
+        for runtime in execution_steps:
+            runtime_name = str(runtime.get("name") or "")
+            if runtime_name and runtime_name not in planned_names:
+                merged.append(runtime)
+        return merged
 
     def _to_runtime_agent_card(result: dict[str, Any]) -> dict[str, Any] | None:
         agent = result.get("agent")
@@ -785,6 +945,32 @@ def _create_app() -> Any:
         if not sid:
             return {"steps": []}
         return {"steps": get_session_step_progress(sid)}
+
+    @app.post("/api/tvbox/workflow-plan")
+    async def api_workflow_plan(request: Request):
+        body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+        message = str(body.get("message", "")).strip()
+        session_id = str(body.get("sessionId") or _tvbox_session_id(body.get("agentId") or "voice-chat"))
+        if not message:
+            return {"ok": True, "steps": [], "requestPlan": {}}
+
+        build_plan = getattr(core_engine, "_build_request_plan", None)
+        if not callable(build_plan):
+            return {"ok": True, "steps": [], "requestPlan": {}}
+
+        try:
+            request_plan = build_plan(
+                message,
+                {
+                    "session_id": session_id,
+                    "metadata": {"source": "tvbox_workflow_plan_preview"},
+                },
+            )
+        except Exception:
+            return {"ok": True, "steps": [], "requestPlan": {}}
+
+        steps = _request_plan_to_workflow_steps(request_plan if isinstance(request_plan, dict) else {})
+        return {"ok": True, "steps": steps, "requestPlan": request_plan if isinstance(request_plan, dict) else {}}
 
     @app.get("/api/i18n/settings")
     def api_i18n_settings(locale: str | None = None):

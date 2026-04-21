@@ -48,6 +48,7 @@ from nethub_runtime.core.services.memory_promotion_service import MemoryPromotio
 from nethub_runtime.core.services.training_dataset_export_service import TrainingDatasetExportService
 from nethub_runtime.core.services.training_fine_tune_runner_service import TrainingFineTuneRunnerService
 from nethub_runtime.core.services.training_pipeline_service import TrainingPipelineService
+from nethub_runtime.core.schemas.task_schema import TaskSchema
 
 
 class AICore:
@@ -340,6 +341,23 @@ class AICore:
     def _should_apply_goal_repair(self, task: Any) -> bool:
         return task.domain not in {"agent_management", "knowledge_ops"}
 
+    def _task_from_core_plus_forced_metadata(self, input_text: str, metadata: dict[str, Any] | None) -> TaskSchema | None:
+        payload = dict(metadata or {}).get("core_plus_forced_task")
+        if not isinstance(payload, dict):
+            return None
+        intent = str(payload.get("intent") or "").strip()
+        if not intent:
+            return None
+        return TaskSchema(
+            task_id=str(payload.get("task_id") or f"task_forced_{abs(hash(input_text)) % 10_000_000:07d}"),
+            intent=intent,
+            input_text=input_text,
+            domain=str(payload.get("domain") or "general"),
+            constraints=dict(payload.get("constraints") or {"need_agent": False}),
+            output_requirements=list(payload.get("output_requirements") or []),
+            metadata=dict(payload.get("metadata") or {}),
+        )
+
     def _build_repair_preferences(self, repair_history: list[dict[str, Any]]) -> dict[str, Any]:
         preferences = {
             "analysis_before_retry": False,
@@ -557,7 +575,10 @@ class AICore:
         
         try:
             # ========== Step 1: 意图分析 ==========
-            task = await self.intent_analyzer.analyze(input_text, ctx)
+            forced_task = self._task_from_core_plus_forced_metadata(input_text, ctx.metadata)
+            task = forced_task or await self.intent_analyzer.analyze(input_text, ctx)
+            if forced_task is not None:
+                self.logger.info("  Intent forced by core_plus: %s, Domain: %s", task.intent, task.domain)
             self.logger.info(f"  Intent: {task.intent}, Domain: {task.domain}")
 
             # ========== Step 2: 统一生成工作流与节点能力计划 ==========
@@ -933,7 +954,8 @@ class AICore:
 
         try:
             # --- Stage 1: Intent analysis ---
-            task = await self.intent_analyzer.analyze(input_text, ctx)
+            forced_task = self._task_from_core_plus_forced_metadata(input_text, ctx.metadata)
+            task = forced_task or await self.intent_analyzer.analyze(input_text, ctx)
             yield {
                 "event": "intent_analyzed",
                 "intent": task.intent,

@@ -13,7 +13,7 @@ class DataOpsTaskDecomposerPlugin:
     priority = 100
 
     def match(self, task: TaskSchema) -> bool:
-        return task.domain == "data_ops"
+        return task.domain in {"data_ops", "data_management"}
 
     def run(self, task: TaskSchema) -> list[SubTask]:
         if task.intent == "data_record":
