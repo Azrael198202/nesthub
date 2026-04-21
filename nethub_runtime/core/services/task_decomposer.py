@@ -33,7 +33,17 @@ class AgentManagementTaskDecomposerPlugin:
     priority = 95
 
     def match(self, task: TaskSchema) -> bool:
-        return task.domain in {"agent_management", "knowledge_ops"}
+        if task.domain in {"agent_management", "knowledge_ops"}:
+            return True
+        # Guardrail: even if upstream routing mistakenly labels domain as
+        # "general", agent-lifecycle intents must still use this decomposer.
+        return task.intent in {
+            "create_information_agent",
+            "refine_information_agent",
+            "finalize_information_agent",
+            "capture_agent_knowledge",
+            "query_agent_knowledge",
+        }
 
     def run(self, task: TaskSchema) -> list[SubTask]:
         if task.intent in {"create_information_agent", "refine_information_agent", "finalize_information_agent", "capture_agent_knowledge"}:
