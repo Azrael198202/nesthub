@@ -320,6 +320,21 @@ class ExecutionUpgradePipeline:
 
 	def _match_rule(self, input_text: str) -> dict[str, Any]:
 		lowered = input_text.lower()
+		# High-priority guard: "create agent" requests must not be swallowed
+		# by domain marker rules such as schedule_rule.
+		agent_create_markers = ("创建", "新建", "建立", "create", "build")
+		agent_noun_markers = ("智能体", "助手", "agent", "bot")
+		if any(marker in input_text or marker in lowered for marker in agent_create_markers) and any(
+			marker in input_text or marker in lowered for marker in agent_noun_markers
+		):
+			return {
+				"rule_hit": True,
+				"rule_id": "agent_create_rule",
+				"intent": "create_information_agent",
+				"workflow": "intent_router_graph",
+				"confidence": 0.95,
+				"markers": [marker for marker in [*agent_create_markers, *agent_noun_markers] if marker in input_text or marker in lowered],
+			}
 		for rule in self.profile.get("intent_rules", []):
 			markers = [str(item) for item in rule.get("markers", [])]
 			if any(marker.lower() in lowered or marker in input_text for marker in markers):
@@ -389,6 +404,11 @@ class ExecutionUpgradePipeline:
 			for name, kind in ordered
 			if str(name).strip()
 		]
+		lowered = input_text.lower()
+		reminder_markers = ("提醒", "航班", "飞机", "机场", "闹钟", "起飞", "到点", "remind", "flight", "airport")
+		has_reminder_signal = any(marker in input_text or marker in lowered for marker in reminder_markers)
+		if not has_reminder_signal:
+			base_steps = [step for step in base_steps if step.get("name") != "reminder_create_trigger"]
 		if not base_steps:
 			return []
 

@@ -191,6 +191,35 @@ def test_pipeline_builds_capability_orchestration_for_schedule_trip_and_flight_r
     assert request_plan["intent_router"]["need_external"] is True
 
 
+def test_pipeline_skips_reminder_step_when_user_only_requests_daytime_trip_plan() -> None:
+    pipeline = ExecutionUpgradePipeline(base_core=_FakeCore())
+
+    request_plan = pipeline.build_request_plan(
+        "看看我的日程安排，如果4月22号白天没有预约，给我制定一个白天的大阪观光计划。",
+        {"metadata": {}},
+    )
+    workflow_plan = list((request_plan.get("capability_orchestration") or {}).get("workflow_plan") or [])
+
+    names = [str(item.get("name") or "") for item in workflow_plan if isinstance(item, dict)]
+    assert "schedule_availability_query" in names
+    assert "travel_itinerary_generation" in names
+    assert "reminder_create_trigger" not in names
+
+
+def test_pipeline_rule_prejudge_prioritizes_agent_creation_intent() -> None:
+    pipeline = ExecutionUpgradePipeline(base_core=_FakeCore())
+
+    request_plan = pipeline.build_request_plan(
+        "我想创建一个日程和提醒智能体",
+        {"metadata": {}},
+    )
+
+    rule = request_plan["rule_prejudge"]
+    assert rule["rule_hit"] is True
+    assert rule["intent"] == "create_information_agent"
+    assert rule["rule_id"] == "agent_create_rule"
+
+
 def test_dispatcher_exposes_autonomous_capability_targets() -> None:
     pipeline = ExecutionUpgradePipeline(base_core=_FakeCore())
     request_plan = pipeline.build_request_plan(
