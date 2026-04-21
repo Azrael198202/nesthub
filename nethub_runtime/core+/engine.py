@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from nethub_runtime.core.services.core_engine import AICore
+from nethub_runtime.core.services.runtime_keyword_signal_analyzer import RuntimeKeywordSignalAnalyzer
 from nethub_runtime.execution.pipeline import ExecutionUpgradePipeline
 from nethub_runtime.execution.task_runner import ExecutionTaskRunner
 
@@ -138,39 +139,16 @@ class CorePlusEngine:
             return {}
         return payload if isinstance(payload, dict) else {}
 
-    def _runtime_agent_operation_markers(self) -> list[str]:
+    def _keyword_signals(self, text: str) -> dict[str, Any]:
         coordinator = getattr(self._base_core, "execution_coordinator", None)
-        store = getattr(coordinator, "semantic_policy_store", None)
-        if store is None:
-            return []
+        semantic_policy_store = getattr(coordinator, "semantic_policy_store", None)
+        model_router = getattr(self._base_core, "model_router", None)
+        analyzer = RuntimeKeywordSignalAnalyzer(model_router=model_router, semantic_policy_store=semantic_policy_store)
         try:
-            policy = store.load_runtime_policy()
+            payload = analyzer.analyze(text)
         except Exception:
-            return []
-        if not isinstance(policy, dict):
-            return []
-
-        markers: list[str] = []
-
-        def _append_from(values: Any) -> None:
-            if not isinstance(values, list):
-                return
-            for item in values:
-                value = str(item).strip()
-                if value and value not in markers:
-                    markers.append(value)
-
-        _append_from(policy.get("query_markers"))
-        intent_detection = policy.get("intent_detection", {})
-        if isinstance(intent_detection, dict):
-            _append_from(intent_detection.get("query_markers"))
-            _append_from(intent_detection.get("group_query_markers"))
-        info_collection = policy.get("information_collection", {})
-        if isinstance(info_collection, dict):
-            _append_from(info_collection.get("list_query_markers"))
-            _append_from(info_collection.get("field_capture_markers"))
-            _append_from(info_collection.get("completion_phrases"))
-        return markers
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
     def _should_skip_forced_task(self, *, input_text: str, context: dict[str, Any] | None) -> bool:
         state = self._session_state_for_context(context)
@@ -185,33 +163,17 @@ class CorePlusEngine:
         if str(configured_agent.get("status") or "").strip() != "active":
             return False
 
-        lowered = input_text.lower()
-        cues: list[str] = []
-        for item in list(configured_agent.get("activation_keywords") or []):
-            value = str(item).strip()
-            if value:
-                cues.append(value)
-        query_aliases = configured_agent.get("query_aliases") or {}
-        if isinstance(query_aliases, dict):
-            for key in query_aliases.keys():
-                value = str(key).strip()
-                if value:
-                    cues.append(value)
-        for item in (
-            configured_agent.get("name"),
-            configured_agent.get("role"),
-            configured_agent.get("knowledge_entity_label"),
-        ):
-            value = str(item or "").strip()
-            if value:
-                cues.append(value)
+        keyword_signals = self._keyword_signals(input_text)
+        action_flags = keyword_signals.get("action_flags", {}) if isinstance(keyword_signals, dict) else {}
+        intent_hints = set(keyword_signals.get("intent_hints", [])) if isinstance(keyword_signals, dict) else set()
 
-        for cue in cues:
-            if cue in input_text or cue.lower() in lowered:
-                return True
+        if bool(action_flags.get("query_like")) or bool(action_flags.get("knowledge_capture_like")):
+            return True
 
-        runtime_markers = self._runtime_agent_operation_markers()
-        return any(marker in input_text or marker.lower() in lowered for marker in runtime_markers)
+        return bool(
+            {"query_agent_knowledge", "capture_agent_knowledge", "refine_information_agent", "finalize_information_agent"}
+            & intent_hints
+        )
 
     async def handle(
         self,
