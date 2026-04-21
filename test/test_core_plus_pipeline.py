@@ -206,6 +206,51 @@ def test_dispatcher_exposes_autonomous_capability_targets() -> None:
     assert "travel_itinerary_generation" in dispatch["autonomous_actions"]["external_capability_targets"]
 
 
+def test_pipeline_full_run_for_compound_schedule_trip_reminder_case() -> None:
+    pipeline = ExecutionUpgradePipeline(base_core=_FakeCore())
+    input_text = "看看我的日程安排，如果4月22号没有预约，给我制定一个1天的大阪观光计划。6点到了之后，提醒我去坐6点30的飞机。"
+    context = {"session_id": "s-compound", "metadata": {}}
+    # Step 1: Prepare (builds request plan, layered state, dispatch)
+
+    prepared = pipeline.prepare(input_text, context)
+    if asyncio.iscoroutine(prepared):
+        import asyncio as _asyncio
+        prepared = _asyncio.run(prepared)
+    request_plan = prepared["request_plan"]
+    dispatcher = ExecutionGraphDispatcher(pipeline.profile)
+    dispatch = dispatcher.dispatch(request_plan, task={"intent": "schedule_create"})
+    runtime_stats = pipeline.build_runtime_stats(request_plan, {"should_fallback_external": False})
+
+    # Step 2: Validate orchestration
+    orchestration = request_plan["capability_orchestration"]
+    assert orchestration["matched"] is True
+    assert "schedule_availability_query" in orchestration["local_capabilities"]
+    assert "reminder_create_trigger" in orchestration["local_capabilities"]
+    assert "travel_itinerary_generation" in orchestration["external_capabilities"]
+    assert request_plan["intent_router"]["need_external"] is True
+    assert dispatch["autonomous_actions"]["trigger_autonomous_implementation"] is True
+
+    # Step 3: Simulate execution result (mocked)
+    result = {
+        "task": {"intent": "schedule_create", "output_requirements": ["itinerary", "reminder"]},
+        "execution_result": {
+            "steps": [
+                {"name": "schedule_availability_query", "status": "completed", "output": {"available": True}},
+                {"name": "travel_itinerary_generation", "status": "completed", "output": {"plan": "大阪一日游：11:00-18:00"}},
+                {"name": "reminder_create_trigger", "status": "completed", "output": {"reminder": "18:00 去机场，18:30 登机"}},
+            ],
+            "final_output": {
+                "itinerary": "大阪一日游：11:00-18:00",
+                "reminder": "18:00 去机场，18:30 登机"
+            },
+        },
+    }
+    enriched = pipeline.enrich_result(result, request_plan, preparation=prepared)
+    # Step 4: Validate final output
+    assert enriched["execution_result"]["final_output"]["itinerary"].startswith("大阪一日游")
+    assert "18:00" in enriched["execution_result"]["final_output"]["reminder"]
+
+
 def test_pipeline_persists_and_resumes_human_review_checkpoint() -> None:
     core = _FakeCore()
     pipeline = ExecutionUpgradePipeline(base_core=core)

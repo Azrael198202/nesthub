@@ -332,33 +332,33 @@ class ExecutionUpgradePipeline:
 				}
 		return {"rule_hit": False, "rule_id": "", "intent": "", "workflow": "", "confidence": 0.0, "markers": []}
 
-		def _match_capability_orchestration(self, input_text: str) -> dict[str, Any]:
-			lowered = input_text.lower()
-			patterns = list((self.profile.get("capability_orchestration", {}) or {}).get("patterns", []))
-			for item in patterns:
-				if not isinstance(item, dict):
-					continue
-				markers = [str(marker) for marker in item.get("markers", []) if str(marker).strip()]
-				matched_markers = [marker for marker in markers if marker.lower() in lowered or marker in input_text]
-				if len(matched_markers) >= max(2, min(len(markers), 2)):
-					return {
-						"matched": True,
-						"pattern_id": str(item.get("pattern_id") or ""),
-						"matched_markers": matched_markers,
-						"local_capabilities": list(item.get("local_capabilities", []) or []),
-						"external_capabilities": list(item.get("external_capabilities", []) or []),
-						"force_need_external": bool(item.get("force_need_external", False)),
-						"trigger_autonomous_implementation": bool(item.get("trigger_autonomous_implementation", False)),
-					}
-			return {
-				"matched": False,
-				"pattern_id": "",
-				"matched_markers": [],
-				"local_capabilities": [],
-				"external_capabilities": [],
-				"force_need_external": False,
-				"trigger_autonomous_implementation": False,
-			}
+	def _match_capability_orchestration(self, input_text: str) -> dict[str, Any]:
+		lowered = input_text.lower()
+		patterns = list((self.profile.get("capability_orchestration", {}) or {}).get("patterns", []))
+		for item in patterns:
+			if not isinstance(item, dict):
+				continue
+			markers = [str(marker) for marker in item.get("markers", []) if str(marker).strip()]
+			matched_markers = [marker for marker in markers if marker.lower() in lowered or marker in input_text]
+			if len(matched_markers) >= max(2, min(len(markers), 2)):
+				return {
+					"matched": True,
+					"pattern_id": str(item.get("pattern_id") or ""),
+					"matched_markers": matched_markers,
+					"local_capabilities": list(item.get("local_capabilities", []) or []),
+					"external_capabilities": list(item.get("external_capabilities", []) or []),
+					"force_need_external": bool(item.get("force_need_external", False)),
+					"trigger_autonomous_implementation": bool(item.get("trigger_autonomous_implementation", False)),
+				}
+		return {
+			"matched": False,
+			"pattern_id": "",
+			"matched_markers": [],
+			"local_capabilities": [],
+			"external_capabilities": [],
+			"force_need_external": False,
+			"trigger_autonomous_implementation": False,
+		}
 
 	def build_request_plan(self, input_text: str, context: dict[str, Any] | None, task: dict[str, Any] | None = None) -> dict[str, Any]:
 		rule = self._match_rule(input_text)
