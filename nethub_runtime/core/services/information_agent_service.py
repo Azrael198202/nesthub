@@ -45,6 +45,21 @@ class InformationAgentService:
         normalized = [str(item).strip() for item in phrases if str(item).strip()]
         return normalized or [self._default_completion_phrase()]
 
+    def _creation_followup_prompt(self) -> str:
+        configured = str(self._information_collection_policy().get("creation_followup_prompt") or "").strip()
+        if configured:
+            return configured
+        return "请继续补充智能体信息；完成时回复配置的完成短语。"
+
+    def _explicit_creation_completion_requested(self, user_text: str, *, finalize_requested: bool = False) -> bool:
+        if finalize_requested:
+            return True
+        text = str(user_text or "").strip()
+        if not text:
+            return False
+        markers = set(self._completion_phrases())
+        return any(marker and marker in text for marker in markers)
+
     def default_information_field_definitions(self) -> list[dict[str, str]]:
         return [
             {"key": "item_name", "prompt": "好的，请问要记录的对象名称是什么？"},
@@ -245,6 +260,16 @@ class InformationAgentService:
         if user_text.strip():
             merged.setdefault("conversation", list(previous.get("conversation", [])))
             merged["conversation"] = [*list(previous.get("conversation", [])), {"role": "user", "content": user_text.strip()}]
+        explicit_completion = self._explicit_creation_completion_requested(user_text, finalize_requested=finalize_requested)
+        # Guardrail: never auto-complete agent creation unless user explicitly confirms completion.
+        if not explicit_completion:
+            merged["completion_ready"] = False
+            if str(merged.get("next_action") or "") == "finalize_agent":
+                merged["next_action"] = "ask_user"
+                merged["next_question"] = (
+                    str(merged.get("next_question") or "").strip()
+                    or self._creation_followup_prompt()
+                )
         return merged
 
     def _build_blueprint_from_workflow_state(self, workflow_state: dict[str, Any]) -> dict[str, Any]:
@@ -622,7 +647,8 @@ class InformationAgentService:
         collection = state.get("knowledge_collection") or {}
 
         if task.intent == "create_information_agent" and not setup.get("active") and configured_agent.get("status") != "active":
-            workflow_state = self._advance_agent_creation_workflow(self._default_agent_workflow_state(text), text)
+            # First turn always enters guided creation mode; do not auto-finalize.
+            workflow_state = self._default_agent_workflow_state(text)
             updated = self.session_store.patch(
                 context.session_id,
                 {
@@ -641,7 +667,7 @@ class InformationAgentService:
                 "workflow_state": workflow_state,
             }
 
-        if task.intent in {"refine_information_agent", "finalize_information_agent"} and setup.get("active"):
+        if task.intent in {"create_information_agent", "refine_information_agent", "finalize_information_agent"} and setup.get("active"):
             previous_workflow_state = setup.get("workflow_state") or self._default_agent_workflow_state()
             workflow_state = self._advance_agent_creation_workflow(
                 previous_workflow_state,

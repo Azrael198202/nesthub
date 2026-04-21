@@ -49,6 +49,7 @@
       "完成创建"
     ],
     "default_completion_phrase": "完成添加",
+    "creation_followup_prompt": "请继续补充智能体用途、字段和触发词；确认完成时请回复你配置的完成短语。",
     "field_capture_markers": [
       "名称",
       "名字",

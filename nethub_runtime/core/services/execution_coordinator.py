@@ -70,6 +70,7 @@ class ExecutionCoordinator:
             "information_collection": {
                 "completion_phrases": [],
                 "default_completion_phrase": "",
+                "creation_followup_prompt": "",
                 "field_capture_markers": [],
                 "field_aliases": {},
                 "field_query_keywords": {},
