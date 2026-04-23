@@ -1,0 +1,173 @@
+NestHub Runtime 工作流总览（当前 core_brain 版本）
+更新日期：2026-04-23
+
+==================================================
+A. 从 TVBox 输入到 TVBox 显示回答：端到端主链路
+==================================================
+
+[1] 前端输入与发起请求
+- 文件：nethub_runtime/tvbox/static/assets/app.js
+- 入口函数：sendVoiceMessage() (约 L4989)
+- 关键动作：
+  1. 清洗用户输入
+  2. 本地乐观更新 latestDashboard.conversation
+  3. 可选预览请求：POST /api/tvbox/workflow-plan
+  4. 轮询进度：GET /api/tvbox/execution-progress
+  5. 正式请求：POST /api/voice/chat
+
+[2] TVBox 后端接收并转发给核心引擎
+- 文件：nethub_runtime/tvbox/main.py
+- 路由：@app.post("/api/voice/chat") (约 L1179)
+- 关键动作：
+  1. 解析 body（message / locale / attachments / sessionId）
+  2. 标准化附件与输入类型
+  3. 调 core_engine.handle(runtime_message, context, fmt="dict")
+
+[3] core_engine 实际实现
+- 文件：nethub_runtime/core/services/core_engine_provider.py
+- create_core_engine() 固定返回 CoreBrainEngine
+- 真正引擎：nethub_runtime/core_brain/engine.py
+
+[4] core_brain 内部执行
+- 文件：nethub_runtime/core_brain/engine.py
+- 入口：CoreBrainEngine.handle() (约 L82)
+- 将 context 映射为 ChatRequest 后调用 facade.handle_chat()
+
+- 文件：nethub_runtime/core_brain/brain/chat/brain_facade.py
+- 入口：BrainFacade.handle_chat() (约 L40)
+- 执行顺序：
+  1. ContextBuilder.build()：组装五层上下文
+  2. ChatService.analyze_intent()：意图识别
+  3. RouterService.select_route()：模型路由
+  4. ChatService.generate_answer()：生成回答
+  5. 写回 session/task/long-term memory
+  6. build_runtime_result()：组装 TVBox 兼容输出
+
+[5] 返回 TVBox 后端并更新 dashboard_state
+- 文件：nethub_runtime/tvbox/main.py
+- _record_runtime_result() (约 L606)：
+  - 更新 conversation
+  - 更新 lastVoiceRoute.workflowSteps
+  - 更新 timelineEvents / modelProviders / customAgents（如有）
+- _extract_reply_text() (约 L425)：从 execution_result.final_output 抽取 reply
+- /api/voice/chat 返回 payload：
+  - reply
+  - conversation
+  - voiceRoute
+  - artifacts
+  - result（完整原始结果）
+
+[6] 前端渲染最终回答
+- 文件：nethub_runtime/tvbox/static/assets/app.js
+- 收到 payload 后：
+  1. updateConversation(payload.conversation)
+  2. 更新 lastVoiceRoute
+  3. 调 renderVoice / renderWorkTab
+  4. 页面显示 HomeHub 回复与步骤进度
+
+
+==================================================
+B. 关键目录与职责（按 nethub_runtime）
+==================================================
+
+[根入口]
+- nethub_runtime/main.py
+  - 总进程入口
+  - 启动 app + TVBox + line_demo 轮询线程
+
+[应用装配]
+- nethub_runtime/app/
+  - bootstrap.py：平台探测、能力注册、环境管理器初始化
+  - main.py：注入 core_engine，产出 app context
+
+[核心引擎]
+- nethub_runtime/core_brain/
+  - app/：core-brain API app 入口
+  - brain/api/：chat/health DTO 与路由
+  - brain/chat/：核心编排（facade/service/response）
+  - brain/context/：五层上下文组装
+  - brain/routing/：路由策略与升级策略
+  - brain/llm/：model/prompt/schema 注册与 LLM 调用
+  - brain/memory/：session/task/long_term/execution 的 repo + service
+  - brain/workflows/：工作流执行边界（当前轻量）
+  - brain/kb/：KB 检索接口（当前占位）
+  - configs/：app/models/prompts/routing/schemas 配置源
+  - engine.py：对外统一 handle / handle_stream
+
+[兼容层]
+- nethub_runtime/core/
+  - main.py：兼容 API app（/api 与 /core 前缀）
+  - routers/core_api.py：/handle /handle/stream /core-brain/chat /core/chat
+  - services/core_engine_provider.py：引擎工厂
+  - services/core_engine.py：AICore 兼容别名（继承 CoreBrainEngine）
+  - models.py / enums.py：通用结构与枚举（被多模块复用）
+
+[UI 与交互]
+- nethub_runtime/tvbox/
+  - main.py：TVBox 后端 API（voice/chat、dashboard、runtime memory等）
+  - static/：前端页面资源（app.js / app.css / index.html）
+  - components/：i18n 构建等共享逻辑
+  - i18n/locales/：多语言资源
+
+[模型层]
+- nethub_runtime/models/
+  - model_router.py：LiteLLM 路由、fallback、模型冷却
+  - local_model_manager.py：HF GGUF 推荐与 Ollama 导入
+  - openai_provider.py / ollama_provider.py / provider.py：provider 抽象与实现
+
+[能力与依赖安装]
+- nethub_runtime/capability/
+  - registry.py：本地能力快照
+  - resolver.py：缺失依赖分析
+  - install_plan.py：安装计划结构化
+- nethub_runtime/environment/
+  - manager.py：按 plan 调 installers
+  - installers/：pip/tool/ollama 安装实现
+
+[运行与工具]
+- nethub_runtime/runtime/
+  - command_runner.py：命令执行统一封装
+  - policies.py：ShellPolicy 白名单策略
+- nethub_runtime/tools/
+  - base.py：Tool 抽象
+  - shell_tool.py / python_tool.py：工具执行器
+
+[蓝图与产物]
+- nethub_runtime/blueprint/
+  - manifest.py：BlueprintManifest
+  - loader.py：YAML -> Manifest
+  - executor.py：依赖检查 + 安装 + 执行占位
+- nethub_runtime/generated/
+  - store.py：统一 Artifact 存储与枚举
+  - 子目录：agents/blueprints/code/features/traces/datasets/local_models
+
+[平台与训练]
+- nethub_runtime/platform/
+  - detector.py：运行环境探测
+  - os_profile.py：补充平台建议
+- nethub_runtime/training/
+  - run.py：训练 runner CLI 入口（当前简化）
+
+[集成]
+- nethub_runtime/integrations/
+  - im/line_demo.py：LINE bridge demo 轮询
+  - external_log_monitor.py：拉取并保存外部日志快照
+  - external_api/mail/storage/web：预留目录
+
+[占位目录]
+- nethub_runtime/agents/
+  - 当前文件为空骨架，待后续补实装或移除
+
+
+==================================================
+C. 当前链路的两个现实状态（避免误判）
+==================================================
+
+1) /api/tvbox/workflow-plan
+- 前端仍会请求，但 core_brain 无 _build_request_plan
+- 因此通常返回空 steps
+
+2) /api/tvbox/execution-progress
+- 依赖 core/services/execution_coordinator.py 的 get_session_step_progress()
+- 当前实现为兼容桩，默认返回 []
+

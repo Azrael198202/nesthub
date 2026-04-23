@@ -1,6 +1,8 @@
 # NestHub 系统架构概览
 
-> 更新日期：2026-04-20
+> 更新日期：2026-04-23
+> 
+> 模块级说明与复用落位请同时参考：`docs/01_architecture/nethub_runtime_module_guide.md`
 
 ---
 
