@@ -171,3 +171,5 @@ C. 当前链路的两个现实状态（避免误判）
 - 依赖 core/services/execution_coordinator.py 的 get_session_step_progress()
 - 当前实现为兼容桩，默认返回 []
 
+ /mnt/data/core_brain_schemas
+
