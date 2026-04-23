@@ -401,44 +401,73 @@ class InformationAgentService:
         return payload if isinstance(payload, dict) else None
 
     def _advance_agent_creation_workflow(self, previous: dict[str, Any], user_text: str, *, finalize_requested: bool = False) -> dict[str, Any]:
+        """
+        多轮字段/触发词/完成条件补全与归一化，提升健壮性和体验。
+        """
         payload = self._invoke_agent_workflow_model(previous, user_text, finalize_requested=finalize_requested)
         if payload is None:
-            return self._fallback_agent_workflow_update(previous, user_text, finalize_requested=finalize_requested)
-        merged = self._normalize_agent_workflow_state(payload, previous)
+            merged = self._fallback_agent_workflow_update(previous, user_text, finalize_requested=finalize_requested)
+        else:
+            merged = self._normalize_agent_workflow_state(payload, previous)
+        # conversation 补全
+        conversation = list(merged.get("conversation") or previous.get("conversation") or [])
         if user_text.strip():
-            merged.setdefault("conversation", list(previous.get("conversation", [])))
-            merged["conversation"] = [*list(previous.get("conversation", [])), {"role": "user", "content": user_text.strip()}]
-        explicit_completion = self._explicit_creation_completion_requested(user_text, finalize_requested=finalize_requested)
-        parsed = self._parse_creation_structured_input(user_text)
-        if parsed:
-            if parsed.get("schema_fields"):
-                merged["schema_fields"] = self._normalize_schema_fields(parsed.get("schema_fields"))
-                merged["missing_fields"] = [
-                    item
-                    for item in list(merged.get("missing_fields") or [])
-                    if str(item) not in {"schema_fields"}
-                ]
-            if parsed.get("activation_keywords"):
-                merged["activation_keywords"] = self._build_activation_keywords(
-                    entity_label=str(merged.get("entity_label") or self._default_text("entity_label_default", "Information Item")),
-                    query_aliases=merged.get("query_aliases") or {},
-                    existing=[*list(merged.get("activation_keywords") or []), *list(parsed.get("activation_keywords") or [])],
-                )
-                merged["missing_fields"] = [
-                    item
-                    for item in list(merged.get("missing_fields") or [])
-                    if str(item) not in {"activation_keywords"}
-                ]
-            if parsed.get("completion_phrase"):
-                merged["completion_phrase"] = str(parsed.get("completion_phrase"))
-            if str(merged.get("next_action") or "") == "ask_user":
-                merged["next_question"] = self._message_text(
-                    "creation_continue_question",
-                    "If fields and completion condition are ready, reply with the completion phrase; otherwise continue refining.",
-                )
-
-        # Guardrail: never auto-complete agent creation unless user explicitly confirms completion.
-        if not explicit_completion:
+            conversation.append({"role": "user", "content": user_text.strip()})
+        # 多轮补全所有字段/触发词/完成条件
+        policy = self._information_collection_policy()
+        field_markers = [str(item) for item in list(policy.get("creation_parsing", {}).get("field_markers", [])) if str(item).strip()]
+        trigger_markers = [str(item) for item in list(policy.get("creation_parsing", {}).get("trigger_markers", [])) if str(item).strip()]
+        completion_markers = [str(item) for item in list(policy.get("creation_parsing", {}).get("completion_markers", [])) if str(item).strip()]
+        all_fields = []
+        all_triggers = []
+        all_completion_phrases = []
+        for msg in conversation:
+            content = str(msg.get("content") or "")
+            # 字段
+            fields_raw = self._extract_marked_value(content, field_markers)
+            all_fields.extend(self._split_list_values(fields_raw))
+            # 触发词
+            triggers_raw = self._extract_marked_value(content, trigger_markers)
+            all_triggers.extend(self._split_list_values(triggers_raw))
+            # 完成条件
+            completion_raw = self._extract_marked_value(content, completion_markers)
+            if completion_raw:
+                all_completion_phrases.append(completion_raw.strip().strip("“”\"'"))
+        # 字段归一化
+        field_aliases = policy.get("field_aliases", {})
+        normalized_fields = []
+        for field in all_fields:
+            key = self.normalize_slug(field)
+            key = field_aliases.get(field, key)
+            if key and key not in normalized_fields:
+                normalized_fields.append(key)
+        # 触发词去重
+        normalized_triggers = []
+        for trig in all_triggers:
+            trig = trig.strip()
+            if trig and trig not in normalized_triggers:
+                normalized_triggers.append(trig)
+        # 合并到 merged
+        if normalized_fields:
+            merged["schema_fields"] = self._normalize_schema_fields([{"key": k, "prompt": self._default_text("schema_prompt_template", "请补充 {key}。" ).format(key=k)} for k in normalized_fields])
+            merged["missing_fields"] = [item for item in list(merged.get("missing_fields") or []) if str(item) != "schema_fields"]
+        if normalized_triggers:
+            merged["activation_keywords"] = self._build_activation_keywords(
+                entity_label=str(merged.get("entity_label") or self._default_text("entity_label_default", "Information Item")),
+                query_aliases=merged.get("query_aliases") or {},
+                existing=[*list(merged.get("activation_keywords") or []), *normalized_triggers],
+            )
+            merged["missing_fields"] = [item for item in list(merged.get("missing_fields") or []) if str(item) != "activation_keywords"]
+        if all_completion_phrases:
+            merged["completion_phrase"] = all_completion_phrases[-1]
+        # 判断是否可以自动完成
+        if normalized_fields and normalized_triggers:
+            merged["completion_ready"] = True
+            merged["next_action"] = "finalize_agent"
+            merged["next_question"] = ""
+            merged["missing_fields"] = []
+        else:
+            # 没补全则继续追问
             merged["completion_ready"] = False
             if str(merged.get("next_action") or "") == "finalize_agent":
                 merged["next_action"] = "ask_user"
@@ -446,6 +475,7 @@ class InformationAgentService:
                     str(merged.get("next_question") or "").strip()
                     or self._creation_followup_prompt()
                 )
+        merged["conversation"] = conversation
         return merged
 
     def _build_blueprint_from_workflow_state(self, workflow_state: dict[str, Any]) -> dict[str, Any]:
