@@ -18,45 +18,18 @@
       "justMyCode": false
     },
     {
-      "name": "Run TV Box UI (nethub_runtime.ui.tvbox.main)",
+      "name": "Run TV Box UI (nethub_runtime.tvbox.main)",
       "type": "python",
       "request": "launch",
-      "module": "nethub_runtime.ui.tvbox.main",
+      "module": "nethub_runtime.tvbox.main",
       "console": "integratedTerminal",
       "justMyCode": false
     },
     {
-      "name": "Run NestHub Debug Console",
+      "name": "Run NestHub Debug Console (core-brain)",
       "type": "python",
       "request": "launch",
       "module": "uvicorn",
-      "env": {
-        "NETHUB_CORE_ENGINE_VARIANT": "legacy"
-      },
-      "args": [
-        "nethub_runtime.tvbox.main:_create_app",
-        "--factory",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        "7788"
-      ],
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "serverReadyAction": {
-        "pattern": "Uvicorn running on (https?://\\S+)",
-        "uriFormat": "%s/",
-        "action": "openExternally"
-      }
-    },
-    {
-      "name": "Run NestHub Debug Console (core+)",
-      "type": "python",
-      "request": "launch",
-      "module": "uvicorn",
-      "env": {
-        "NETHUB_CORE_ENGINE_VARIANT": "core_plus"
-      },
       "args": [
         "nethub_runtime.tvbox.main:_create_app",
         "--factory",

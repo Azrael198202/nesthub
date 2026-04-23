@@ -1,0 +1,9 @@
+type: object
+required: [intent_name, confidence]
+properties:
+  intent_name:
+    type: string
+  confidence:
+    type: number
+    minimum: 0
+    maximum: 1

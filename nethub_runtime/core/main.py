@@ -12,6 +12,7 @@ from nethub_runtime.core.routers.core_api import router as core_router
 from nethub_runtime.core.services.core_engine_provider import create_core_engine
 
 app = FastAPI(title="NestHub AI Core")
+app.include_router(core_router, prefix="/api")
 app.include_router(core_router, prefix="/core")
 
 SEMANTIC_MEMORY_DASHBOARD_DIR = Path(__file__).resolve().parents[2] / "examples" / "semantic-memory-dashboard"

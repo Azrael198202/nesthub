@@ -1,0 +1,21 @@
+routing:
+  intent: qwen3-intent-local
+  chat: qwen3-chat-local
+
+models:
+  - id: qwen3-intent-local
+    provider: ollama
+    model: ollama_chat/qwen3:4b
+    fallback: openai-chat-fallback
+    capabilities: [intent, json_output]
+
+  - id: qwen3-chat-local
+    provider: ollama
+    model: ollama_chat/qwen3:4b
+    fallback: openai-chat-fallback
+    capabilities: [chat]
+
+  - id: openai-chat-fallback
+    provider: openai
+    model: gpt-4o-mini
+    capabilities: [chat, intent]

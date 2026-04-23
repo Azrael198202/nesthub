@@ -1,0 +1,6 @@
+name: core-brain
+version: phase0
+system_context:
+  role: nesthub-core-brain
+  objective: understand-route-decompose-execute-writeback
+  default_language: zh-CN

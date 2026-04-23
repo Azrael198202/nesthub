@@ -19,6 +19,18 @@ class HandleRequest(BaseModel):
     use_langraph: bool = True
 
 
+class CoreBrainChatRequest(BaseModel):
+    session_id: str = "default"
+    task_id: str | None = None
+    user_id: str = "tvbox"
+    message: str
+    mode: str = "chat"
+    context_policy: str = "default"
+    allow_external: bool = True
+    stream: bool = False
+    client: dict[str, Any] = Field(default_factory=lambda: {"name": "tvbox", "version": "0.1.0"})
+
+
 class HandleResponse(BaseModel):
     result: Any
 
@@ -55,6 +67,7 @@ class TrainingRunStartRequest(BaseModel):
 
 core_engine = create_core_engine()
 
+
 @router.post("/handle")
 async def handle(payload: HandleRequest) -> HandleResponse:
     result = await core_engine.handle(
@@ -64,6 +77,31 @@ async def handle(payload: HandleRequest) -> HandleResponse:
         payload.use_langraph,
     )
     return HandleResponse(result=result)
+
+
+@router.post("/core-brain/chat")
+async def core_brain_chat(payload: CoreBrainChatRequest) -> dict[str, Any]:
+    return await core_engine.handle(
+        payload.message,
+        {
+            "session_id": payload.session_id,
+            "task_id": payload.task_id,
+            "metadata": {
+                "user_id": payload.user_id,
+                "allow_external": payload.allow_external,
+                "mode": payload.mode,
+                "context_policy": payload.context_policy,
+                "client": payload.client,
+            },
+        },
+        fmt="dict",
+        use_langraph=True,
+    )
+
+
+@router.post("/core/chat")
+async def compat_core_chat(payload: CoreBrainChatRequest) -> dict[str, Any]:
+    return await core_brain_chat(payload)
 
 
 @router.post("/handle/stream")

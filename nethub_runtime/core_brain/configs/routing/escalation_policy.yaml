@@ -1,0 +1,3 @@
+escalation:
+  allow_external_default: true
+  external_on_confidence_below: 0.55

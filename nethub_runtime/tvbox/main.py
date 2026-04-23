@@ -555,42 +555,7 @@ def _create_app() -> Any:
 
     def _extract_workflow_steps(result: dict[str, Any]) -> list[dict[str, Any]]:
         """Build a `workflowSteps` list from the execution result for the Work-tab pipeline."""
-        execution_steps = _execution_steps_to_workflow_steps(result)
-        execution_by_name = {str(item.get("name") or ""): item for item in execution_steps if str(item.get("name") or "")}
-        core_plus_plan = (((result.get("execution_result") or {}).get("core_plus") or {}).get("request_plan") or {})
-        plan_steps = _request_plan_to_workflow_steps(core_plus_plan if isinstance(core_plus_plan, dict) else {})
-        if not plan_steps:
-            return execution_steps
-
-        merged: list[dict[str, Any]] = []
-        matched_count = 0
-        for step in plan_steps:
-            name = str(step.get("name") or "")
-            runtime = execution_by_name.get(name)
-            if runtime:
-                matched_count += 1
-                merged.append(
-                    {
-                        "name": name,
-                        "label": step.get("label") or runtime.get("label") or name,
-                        "status": runtime.get("status") or step.get("status") or "sleeping",
-                        "preview": runtime.get("preview") or step.get("preview") or "",
-                    }
-                )
-            else:
-                merged.append(step)
-
-        # If planned ids and runtime ids don't overlap at all, show real
-        # execution steps only; planned steps would be visually misleading.
-        if matched_count == 0 and execution_steps:
-            return execution_steps
-
-        planned_names = {str(item.get("name") or "") for item in merged}
-        for runtime in execution_steps:
-            runtime_name = str(runtime.get("name") or "")
-            if runtime_name and runtime_name not in planned_names:
-                merged.append(runtime)
-        return merged
+        return _execution_steps_to_workflow_steps(result)
 
     def _to_runtime_agent_card(result: dict[str, Any]) -> dict[str, Any] | None:
         agent = result.get("agent")
