@@ -3,8 +3,8 @@ from __future__ import annotations
 from nethub_runtime.blueprint.manifest import BlueprintManifest
 from nethub_runtime.capability.install_plan import build_missing_plan
 from nethub_runtime.capability.registry import CapabilityRegistry
-from nethub_runtime.core.enums import InstallTarget
-from nethub_runtime.core.models import InstallRequirement, RuntimeProfile
+from nethub_runtime.common.enums import InstallTarget
+from nethub_runtime.common.models import InstallRequirement, RuntimeProfile
 
 
 class CapabilityResolver:

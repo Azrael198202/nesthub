@@ -4,11 +4,11 @@ import argparse
 import json
 from typing import Any
 
-from nethub_runtime.core.config.settings import SEMANTIC_POLICY_PATH
-from nethub_runtime.core.memory.semantic_policy_store import SemanticPolicyStore
-from nethub_runtime.core.services.training_fine_tune_runner_service import TrainingFineTuneRunnerService
-from nethub_runtime.core.services.training_pipeline_service import TrainingPipelineService
+from nethub_runtime.config.runtime_paths import SEMANTIC_POLICY_PATH
+from nethub_runtime.core_brain.services.training_fine_tune_runner_service import TrainingFineTuneRunnerService
+from nethub_runtime.core_brain.services.training_pipeline_service import TrainingPipelineService
 from nethub_runtime.generated.store import GeneratedArtifactStore
+from nethub_runtime.memory.semantic_policy_store import SemanticPolicyStore
 
 
 def build_runner_service() -> TrainingFineTuneRunnerService:

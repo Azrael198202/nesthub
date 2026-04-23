@@ -10,7 +10,7 @@ import httpx
 from api.public_api.models.bridge_message import BridgeMessage
 from api.public_api.storage.memory_store import MemoryStore
 from api.public_api.storage.temp_file_store import TempFileStore
-from nethub_runtime.core.services.progress_formatter import ProgressFormatter
+from nethub_runtime.core_brain.services.progress_formatter import ProgressFormatter
 
 class BridgeService:
     def __init__(self, store: MemoryStore, temp_file_store: TempFileStore):

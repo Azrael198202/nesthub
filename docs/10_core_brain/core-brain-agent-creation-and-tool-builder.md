@@ -1,4 +1,5 @@
 # core-brain-agent-creation-and-tool-builder.md
+
 Updated: 2026-04-23
 
 ## 0. Purpose
@@ -56,6 +57,7 @@ Recommended naming:
 - Internal runtime term: `Agent`
 
 Reason:
+
 - `Assistant` is easier for users to understand
 - `Agent` is still required internally because it is a runtime object with state, assignment, and lifecycle
 
@@ -194,16 +196,19 @@ This order is recommended because it matches runtime execution and makes tracing
 
 ## Stage 1. Request normalization
 
-### Goal
+### Stage 1. Goal
+
 Normalize UI/API input into typed request contract.
 
-### Input
+### Stage 1. Input
+
 - raw text
 - session id
 - locale
 - attachments if any
 
-### Output
+### Stage 1. Output
+
 ```json
 {
   "request_id": "req_001",
@@ -214,7 +219,8 @@ Normalize UI/API input into typed request contract.
 }
 ```
 
-### Notes
+### Stage 1. Notes
+
 - Do not perform business logic here
 - This stage only normalizes input
 
@@ -222,10 +228,12 @@ Normalize UI/API input into typed request contract.
 
 ## Stage 2. Intent classification
 
-### Goal
+### Stage 2.Goal
+
 Determine whether the request is a normal business intent or an agent creation intent.
 
-### Output
+### Stage 2.Output
+
 ```json
 {
   "intent_id": "intent_1001",
@@ -235,13 +243,16 @@ Determine whether the request is a normal business intent or an agent creation i
 }
 ```
 
-### Rules
+### Stage 2. Rules
+
 - If confidence is low, escalate to stronger external model
 - If result is invalid JSON, escalate to stronger external model
 - If classification is ambiguous, ask clarification questions
 
-### Model routing rule
+### Stage 2. Model routing rule
+
 Recommended:
+
 - local model first for speed
 - external strong model fallback for low confidence or invalid output
 
@@ -249,10 +260,12 @@ Recommended:
 
 ## Stage 3. Requirement collection
 
-### Goal
+### Stage 3.Goal
+
 Collect all missing information required to create the new assistant or tool.
 
-### Requirement categories
+### Stage 3.Requirement categories
+
 At minimum, collect:
 
 1. role name
@@ -266,7 +279,8 @@ At minimum, collect:
 9. activation mode
 10. storage and integration constraints
 
-### Output example
+### Stage 3.Output example
+
 ```json
 {
   "requirement_id": "req_1001",
@@ -309,7 +323,8 @@ At minimum, collect:
 }
 ```
 
-### Rules
+### Stage 3.Rules
+
 - Do not generate blueprint if requirement completeness is below threshold
 - Requirement collection may become a sub-dialog
 - Requirement collection itself must be traceable
@@ -318,10 +333,12 @@ At minimum, collect:
 
 ## Stage 4. Blueprint generation
 
-### Goal
+### Stage 4. Goal
+
 Generate the structured runtime definition of the new agent type.
 
-### Output example
+### Stage 4. Output example
+
 ```json
 {
   "blueprint_id": "bp_schedule_manager_v1",
@@ -387,7 +404,8 @@ Generate the structured runtime definition of the new agent type.
 }
 ```
 
-### Rules
+### Stage 4. Rules
+
 - Blueprint defines an agent type, not an agent instance
 - Blueprint must be versioned
 - Blueprint must declare tool requirements
@@ -398,10 +416,12 @@ Generate the structured runtime definition of the new agent type.
 
 ## Stage 5. Agent-Creation Workflow generation
 
-### Goal
+### Stage 5. Goal
+
 Generate the workflow that creates the new agent capability.
 
-### Output example
+### Stage 5. Output example
+
 ```json
 {
   "workflow_id": "wf_create_schedule_agent_001",
@@ -546,7 +566,8 @@ Generate the workflow that creates the new agent capability.
 }
 ```
 
-### Rules
+### Stage 5. Rules
+
 - This workflow is not the future business workflow of the agent
 - This workflow is the creation workflow for the new capability
 - Every task must be traceable and validatable
@@ -555,17 +576,20 @@ Generate the workflow that creates the new agent capability.
 
 ## Stage 6. Tool resolution
 
-### Goal
+### Stage 6. Goal
+
 Resolve every tool required by the blueprint.
 
-### Resolution order
+### Stage 6. Resolution order
+
 For each required tool:
 
 1. check prebuilt tool registry
 2. if not found, check external adapter registry
 3. if still not found, trigger runtime tool generation via `tool_builder`
 
-### Resolution result example
+### Stage 6. Resolution result example
+
 ```json
 {
   "resolved_tools": [
@@ -583,7 +607,8 @@ For each required tool:
 }
 ```
 
-### Rules
+### Stage 6. Rules
+
 - Blueprint may reference tools that do not yet exist
 - Tool existence must be resolved before final registration
 - Tool generation must itself be governed workflow execution
@@ -592,10 +617,12 @@ For each required tool:
 
 ## Stage 7. Artifact validation
 
-### Goal
+### Stage 7. Goal
+
 Validate all generated artifacts before registration.
 
-### Required validations
+### Stage 7. Required validations
+
 - blueprint schema validation
 - workflow schema validation
 - tool schema validation
@@ -604,7 +631,8 @@ Validate all generated artifacts before registration.
 - dependency validation
 - runtime safety validation
 
-### Output example
+### Stage 7. Output example
+
 ```json
 {
   "validation_id": "val_001",
@@ -622,7 +650,8 @@ Validate all generated artifacts before registration.
 }
 ```
 
-### Rules
+### Stage 7. Rules
+
 - No artifact may be registered before validation succeeds
 - Failed artifact must be retained in `generated/failed/`
 - Validation results must be recorded in trace
@@ -631,10 +660,12 @@ Validate all generated artifacts before registration.
 
 ## Stage 8. Artifact registration
 
-### Goal
+### Stage 8. Goal
+
 Register validated blueprint, workflow, and tool artifacts.
 
-### Artifact lifecycle
+### Stage 8. Artifact lifecycle
+
 All artifacts must use lifecycle state:
 
 ```text
@@ -645,7 +676,8 @@ active -> archive
 failed -> archive
 ```
 
-### Minimal artifact manifest
+### Stage 8. Minimal artifact manifest
+
 ```json
 {
   "id": "artifact_001",
@@ -659,7 +691,8 @@ failed -> archive
 }
 ```
 
-### Recommended extra fields
+### Stage 8. Recommended extra fields
+
 - created_at
 - updated_at
 - workflow_id
@@ -673,15 +706,18 @@ failed -> archive
 
 ## Stage 9. Runtime agent instantiation
 
-### Goal
+### Stage 9. Goal
+
 Create runtime agent instance if requested.
 
-### Input
+### Stage 9. Input
+
 - registered blueprint
 - resolved tools
 - activation mode
 
-### Output example
+### Stage 9. Output example
+
 ```json
 {
   "agent_id": "agent_schedule_001",
@@ -706,7 +742,8 @@ Create runtime agent instance if requested.
 }
 ```
 
-### Rules
+### Stage 9. Rules
+
 - Agent must reference exactly one blueprint
 - Agent must not exist without blueprint binding
 - Agent activation must be explicit
@@ -716,10 +753,12 @@ Create runtime agent instance if requested.
 
 ## Stage 10. Response assembly
 
-### Goal
+### Stage 10. Goal
+
 Return clear result to the user and to runtime integrations such as TVBox.
 
-### Response should include
+### Stage 10. Response should include
+
 - whether creation succeeded
 - created blueprint id
 - created workflow id
@@ -728,7 +767,8 @@ Return clear result to the user and to runtime integrations such as TVBox.
 - runtime agent id if activated
 - clarification requests if incomplete
 
-### Example response
+### Stage 10. Example response
+
 ```json
 {
   "status": "success",
@@ -754,6 +794,7 @@ Return clear result to the user and to runtime integrations such as TVBox.
 Every important task in the creation pipeline must generate trace.
 
 ### Minimal trace example
+
 ```json
 {
   "trace_id": "trace_010",
@@ -794,6 +835,7 @@ Every important task in the creation pipeline must generate trace.
 ```
 
 ### Mandatory trace fields
+
 - intent_id
 - workflow_id
 - task_id
@@ -808,6 +850,7 @@ Every important task in the creation pipeline must generate trace.
 - error_reason
 
 ### Rules
+
 - trace is not optional
 - trace is not plain text log only
 - trace must be machine-readable
@@ -820,7 +863,9 @@ Every important task in the creation pipeline must generate trace.
 Validation must happen at two levels.
 
 ### 7.1 Step-level validation
+
 Check:
+
 - schema correctness
 - required fields
 - build success
@@ -828,14 +873,17 @@ Check:
 - task objective completion
 
 ### 7.2 Intent-level validation
+
 Check:
+
 - blueprint_created
 - creation_workflow_created
 - agent_registered
 - tool_registered if required
 - agent_activated if requested
 
-### Rules
+### 7.2 Rules
+
 - Step success does not mean intent success
 - Final result must be checked against `expected_outcome`
 
@@ -866,11 +914,13 @@ nethub_runtime/core_brain/brain/tools/
 ### 8.3 Roles of submodules
 
 #### registry/
+
 - store tool metadata
 - load known tools
 - search existing tools by name, domain, capability
 
 #### resolver/
+
 - choose between:
   - prebuilt
   - external_adapter
@@ -878,6 +928,7 @@ nethub_runtime/core_brain/brain/tools/
 - trigger `tool_builder` when generation is required
 
 #### builder/
+
 - collect tool requirements
 - generate tool specification
 - generate tool schema
@@ -886,12 +937,14 @@ nethub_runtime/core_brain/brain/tools/
 - generate registration manifest
 
 #### validator/
+
 - validate tool schema
 - validate tool build result
 - validate execution safety
 - validate runtime dependencies
 
 #### sandbox/
+
 - execute generated tool in safe runtime
 - run smoke test
 - capture runtime errors before registration
@@ -912,7 +965,8 @@ Tool Request
 -> Tool Activation
 ```
 
-### Rules
+### 8.4 Rules
+
 - tool builder is itself a governed workflow
 - every stage must emit trace
 - generated tool must not be registered without validation
@@ -922,10 +976,13 @@ Tool Request
 ## 8.5 Tool Requirement Collection
 
 ### Goal
+
 Collect all information needed to generate a usable tool.
 
 ### Required fields
+
 At minimum:
+
 - tool_name
 - tool_domain
 - purpose
@@ -938,6 +995,7 @@ At minimum:
 - external API requirements if any
 
 ### Example
+
 ```json
 {
   "tool_request_id": "tool_req_001",
@@ -977,10 +1035,12 @@ At minimum:
 
 ## 8.6 Tool Spec Generation
 
-### Goal
+### 8.6 Goal
+
 Generate the structured metadata definition for the new tool.
 
 ### Example tool spec
+
 ```json
 {
   "tool_name": "calendar_tool",
@@ -1003,7 +1063,8 @@ Generate the structured metadata definition for the new tool.
 }
 ```
 
-### Rules
+### 8.6 Rules
+
 - spec must be schema-valid
 - spec must explicitly declare implementation type
 - spec must explicitly declare execution mode
@@ -1011,11 +1072,13 @@ Generate the structured metadata definition for the new tool.
 Allowed values:
 
 `implementation_type`
+
 - prebuilt
 - external_adapter
 - generated_code
 
 `execution_mode`
+
 - local_runtime
 - remote_api
 - sandbox_runtime
@@ -1024,10 +1087,12 @@ Allowed values:
 
 ## 8.7 Tool Contract Generation
 
-### Goal
+### 8.7 Goal
+
 Generate input and output schema definitions for the tool.
 
 ### Example contracts
+
 ```json
 {
   "input_schema": {
@@ -1057,7 +1122,8 @@ Generate input and output schema definitions for the tool.
 }
 ```
 
-### Rules
+### 8.7 Rules
+
 - contracts must be generated before code generation
 - code generation must target the contracts
 - validation must use the same contracts
@@ -1066,17 +1132,21 @@ Generate input and output schema definitions for the tool.
 
 ## 8.8 Tool Code Generation
 
-### Goal
+### 8.8 Goal
+
 Generate runnable tool code from the tool spec and contracts.
 
 ### Generated outputs
+
 At minimum:
+
 - tool implementation file
 - tool registration metadata
 - contract files
 - smoke test stub
 
 ### Example codegen output metadata
+
 ```json
 {
   "tool_name": "calendar_tool",
@@ -1091,7 +1161,8 @@ At minimum:
 }
 ```
 
-### Rules
+### 8.8 Rules
+
 - code comments must be in English
 - generated code must not contain hidden hardcoded business data
 - generated code must conform to tool contract
@@ -1101,10 +1172,12 @@ At minimum:
 
 ## 8.9 Tool Validation
 
-### Goal
+### 8.9 Goal
+
 Verify that the generated tool is usable and safe enough to register.
 
 ### Validation categories
+
 - schema validation
 - static structure validation
 - dependency validation
@@ -1113,6 +1186,7 @@ Verify that the generated tool is usable and safe enough to register.
 - sandbox safety validation
 
 ### Example validation result
+
 ```json
 {
   "tool_name": "calendar_tool",
@@ -1126,7 +1200,8 @@ Verify that the generated tool is usable and safe enough to register.
 }
 ```
 
-### Rules
+### 8.9 Rules
+
 - failed tool must go to `generated/failed/`
 - successful tool may move to `generated/registered/`
 - activation requires validation success
@@ -1135,10 +1210,12 @@ Verify that the generated tool is usable and safe enough to register.
 
 ## 8.10 Tool Registration
 
-### Goal
+### 8.10 Goal
+
 Register validated tool into tool registry.
 
 ### Registration result example
+
 ```json
 {
   "tool_name": "calendar_tool",
@@ -1149,7 +1226,8 @@ Register validated tool into tool registry.
 }
 ```
 
-### Rules
+### 8.10 Rules
+
 - registration must create artifact manifest
 - registration must update tool registry
 - registration must be traceable
@@ -1158,10 +1236,12 @@ Register validated tool into tool registry.
 
 ## 8.11 Tool Activation
 
-### Goal
+### 8.11 Goal
+
 Allow the registered tool to be used by future blueprints and runtime agents.
 
-### Rules
+### 8.11 Rules
+
 - registration and activation are not the same event
 - some tools may remain registered but inactive
 - activation should update tool availability snapshot
@@ -1173,6 +1253,7 @@ Allow the registered tool to be used by future blueprints and runtime agents.
 Every stage of tool builder must generate trace.
 
 Recommended task list:
+
 1. collect_tool_requirements
 2. generate_tool_spec
 3. generate_tool_contracts
@@ -1182,6 +1263,7 @@ Recommended task list:
 7. activate_tool
 
 Each task must generate:
+
 - trace
 - validation result
 - artifact references if produced
@@ -1191,24 +1273,28 @@ Each task must generate:
 ## 9. Recommended Codex Implementation Plan
 
 ### Phase 1
+
 - implement `agent_creation_intent` routing
 - implement requirement collection structures
 - implement blueprint generation JSON
 - implement creation workflow JSON
 
 ### Phase 2
+
 - implement tool resolver
 - implement tool registry
 - implement `tool_builder` interfaces
 - implement artifact manifest
 
 ### Phase 3
+
 - implement tool spec generation
 - implement tool contract generation
 - implement tool code generation
 - implement tool validation
 
 ### Phase 4
+
 - implement registration and activation
 - implement runtime agent instantiation
 - bind trace + validation + memory writeback

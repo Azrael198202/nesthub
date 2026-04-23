@@ -183,6 +183,7 @@ def apply_lora(model_config):
 User: Build accounting system
 
 → AI generates:
+
 - workflow
 - DB schema
 - API
@@ -193,6 +194,7 @@ User: Build accounting system
 ## 15. External API Fallback Rule
 
 For intent analysis and workflow decomposition, the system must use a strong external API as a fallback when:
+
 - the local model fails
 - the local model returns invalid JSON
 - the confidence is below threshold
@@ -200,13 +202,13 @@ For intent analysis and workflow decomposition, the system must use a strong ext
 - the result does not pass schema validation
 
 Recommended fallback order:
+
 1. OpenAI
 2. Anthropic
 3. Gemini
 4. Groq
 
 All code comments must be written in English.
-
 
 ---
 
@@ -220,6 +222,7 @@ Codex, Claude Code, and any developer must follow these definitions strictly.
 Intent is the structured representation of the user's goal.
 
 Rules:
+
 - Intent describes what the user wants to achieve
 - Intent does not describe execution order
 - Intent must be represented in structured JSON
@@ -249,6 +252,7 @@ Example:
 Workflow is the execution plan generated from the intent.
 
 Rules:
+
 - Workflow describes how the system will try to achieve the intent
 - Workflow is composed of ordered or graph-based steps
 - Each step has a clear objective, input, output, and validation condition
@@ -277,9 +281,11 @@ Example:
 Blueprint is the structured runtime definition of an agent type.
 
 Definition:
+
 - Blueprint defines the role, capabilities, tools, input/output contracts, execution policies, and collaboration rules of an agent type
 
 Rules:
+
 - Blueprint is NOT a running agent instance
 - Blueprint is NOT the workflow itself
 - Blueprint is NOT only a prompt
@@ -317,6 +323,7 @@ Example:
 Agent is a runtime execution role instantiated from a blueprint.
 
 Rules:
+
 - Agent is a runtime object
 - Agent is created dynamically when needed
 - Agent is assigned to workflow steps or tasks
@@ -342,6 +349,7 @@ Example:
 Trace is the structured execution evidence of workflow steps.
 
 Rules:
+
 - Trace is mandatory for every important workflow step
 - Trace is not plain text log only
 - Trace must capture step goal, input, output, assigned agent, validation result, retry count, fallback status, and error reason
@@ -376,9 +384,11 @@ Example:
 Validation must happen at two levels.
 
 #### Step-level validation
+
 Check whether the current workflow step produced the expected output.
 
 Rules:
+
 - Validate schema
 - Validate business completeness
 - Validate tool execution result
@@ -386,9 +396,11 @@ Rules:
 - Retry or fallback if validation fails
 
 #### Intent-level validation
+
 Check whether the final workflow result actually satisfies the original user intent.
 
 Rules:
+
 - Final success is defined by intent fulfillment
 - Even if many steps succeeded, the final result can still fail
 - Missing required outcomes means intent failure
@@ -445,4 +457,3 @@ The architecture principle is:
 
 This principle is the root contract for all future code generation.
 Any generated code violating this principle must be considered incorrect.
-

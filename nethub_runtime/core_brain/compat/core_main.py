@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+
+from nethub_runtime.core_brain.api.legacy_core_api import router as core_router
+from nethub_runtime.core_brain.services.core_engine_provider import create_core_engine
+
+app = FastAPI(title="NestHub AI Core")
+app.include_router(core_router, prefix="/api")
+app.include_router(core_router, prefix="/core")
+
+SEMANTIC_MEMORY_DASHBOARD_DIR = Path(__file__).resolve().parents[3] / "examples" / "semantic-memory-dashboard"
+if SEMANTIC_MEMORY_DASHBOARD_DIR.exists():
+    app.mount(
+        "/examples/semantic-memory-dashboard",
+        StaticFiles(directory=str(SEMANTIC_MEMORY_DASHBOARD_DIR), html=True),
+        name="semantic-memory-dashboard",
+    )
+
+
+class CoreEngine:
+    """Synchronous wrapper kept for legacy tests and script compatibility."""
+
+    def __init__(self) -> None:
+        self._core = create_core_engine()
+
+    def handle(self, input_text: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        raw = asyncio.run(self._core.handle(input_text, context, fmt="dict", use_langraph=False))
+        if not isinstance(raw, dict):
+            return {"task": {}, "workflow": {"steps": []}, "result": []}
+
+        task = raw.get("task", {})
+        execution_result = raw.get("execution_result", {})
+        final_output = execution_result.get("final_output", {})
+
+        workflow_plan = raw.get("workflow_plan", {})
+        steps = list(workflow_plan.get("steps", final_output.keys()))
+        records = final_output.get("extract_records", {}).get("records", [])
+
+        return {
+            "task": task,
+            "workflow": {"steps": steps},
+            "result": records,
+            "execution_result": execution_result,
+        }

@@ -99,7 +99,9 @@
 `core-brain` 中的模型必须分成以下层级：
 
 ### A. 本地基础模型层
+
 用于：
+
 - 对话
 - 意图识别
 - workflow 拆解
@@ -114,18 +116,22 @@
 - `DeepSeek` 系列（按你本地可用版本落地）
 
 ### B. 本地 LoRA 适配层
+
 用于：
+
 - 意图分析增强
 - workflow 拆解增强
 - 企业私域术语适配
 - 输出格式稳定性增强
 
 LoRA 不单独作为模型使用，而是：
+
 - 绑定到基础模型
 - 作为 adapter 注册
 - 通过模型配置路由
 
 ### C. 外部模型层
+
 统一通过 LiteLLM 接入：
 
 - OpenAI
@@ -146,7 +152,7 @@ LoRA 不单独作为模型使用，而是：
 ### 默认职责分配表
 
 | 任务类型 | 首选模型 | 备选模型 | 说明 |
-|---|---|---|---|
+| ------- | --- | --- | -- |
 | 普通聊天 | Qwen3-4B-Instruct-2507 | 外部轻量模型 | 优先低成本、低延迟 |
 | 意图识别 | Qwen3-4B + Intent LoRA | Qwen3.5-35B-A3B | 必须输出 JSON |
 | workflow 拆解 | Qwen3.5-35B-A3B + Workflow LoRA | DeepSeek | 重点看结构和稳定性 |
@@ -487,9 +493,11 @@ output_mode: json_only
 ## 6.1 上下文层定义
 
 ### Layer 1：系统上下文（System Context）
+
 固定层。
 
 包含：
+
 - AI OS 角色定义
 - 当前支持能力
 - 输出格式要求
@@ -499,14 +507,17 @@ output_mode: json_only
 - schema 约束
 
 特点：
+
 - 基本不变
 - 不属于聊天历史
 - 由配置注入
 
 ### Layer 2：主会话上下文（Main Session Context）
+
 当前用户主题状态摘要。
 
 只存：
+
 - 当前目标
 - 当前阶段
 - 已确认信息
@@ -515,18 +526,22 @@ output_mode: json_only
 - 当前下一步建议
 
 禁止：
+
 - 原样塞入全部历史消息
 
 ### Layer 3：Task Session Context
+
 主会话下按任务拆分。
 
 示例：
+
 - `task_001`：收集家庭成员字段
 - `task_002`：生成 workflow
 - `task_003`：生成 blueprint
 - `task_004`：生成提醒规则
 
 每个 task 仅保留：
+
 - 任务目标
 - 输入材料
 - 当前状态
@@ -535,9 +550,11 @@ output_mode: json_only
 - 下一步动作
 
 ### Layer 4：长期记忆 / 知识库上下文（Long-term Memory / KB Context）
+
 不是聊天记录，而是提炼后的长期知识。
 
 示例：
+
 - 用户常用语言
 - 用户输出偏好
 - 用户正在做 AI OS / workflow / agent 系统
@@ -548,9 +565,11 @@ output_mode: json_only
 只在需要时检索，不全量注入。
 
 ### Layer 5：临时执行上下文（Ephemeral Execution Context）
+
 本次执行临时态。
 
 内容：
+
 - 上一步工具结果
 - 当前 step 结果 JSON
 - 执行轨迹
@@ -592,7 +611,9 @@ LLM / workflow engine
 ## 7.1 存储职责分离
 
 ### PostgreSQL
+
 保存结构化、强一致内容：
+
 - session_state
 - task_state
 - workflow_run
@@ -601,7 +622,9 @@ LLM / workflow engine
 - user_profile_structured
 
 ### Weaviate
+
 保存可检索语义知识：
+
 - intent patterns
 - workflow templates
 - blueprint templates
@@ -610,7 +633,9 @@ LLM / workflow engine
 - schema explanation docs
 
 ### Elasticsearch
+
 保存：
+
 - 调用日志
 - 工具轨迹
 - 中间结果
@@ -618,7 +643,9 @@ LLM / workflow engine
 - prompt / response 审计索引
 
 ### Redis
+
 保存：
+
 - 短时缓存
 - task lock
 - request dedupe
@@ -859,6 +886,7 @@ TVBox
 ```
 
 即：
+
 - 保留旧入参格式
 - 在 adapter 层转换为新 DTO
 - 不要把旧协议污染到内部模块
@@ -1277,31 +1305,40 @@ training/
 ## 16. 参考项目如何借鉴（不是照搬）
 
 ## 16.1 Claude Code
+
 借鉴点：
+
 - 工程感强
 - 对代码任务的分步处理
 - 工具使用有边界
 - CLI / 代理执行流程清晰
 
 不照搬点：
+
 - 不把 `core-brain` 做成纯 CLI 编码代理
 - 不把 Anthropic 专属流程写死成系统核心
 
 ## 16.2 TuriXAI / TuriX-CUA
+
 借鉴点：
+
 - 任务执行与动作链路清晰
 - 可把“计划 → 执行 → 校验”思想迁移到 workflow
 
 不照搬点：
+
 - `core-brain` 第一阶段不做桌面 computer use 主链路
 
 ## 16.3 OpenClaw
+
 借鉴点：
+
 - 多通道接入思路
 - Agent 框架分层
 - 对渠道与模型的解耦意识
 
 不照搬点：
+
 - 不把“多渠道 bot 框架”直接等价成 `core-brain`
 
 ---
@@ -1309,7 +1346,9 @@ training/
 ## 17. 螺旋式开发路线（强制按阶段推进）
 
 ## Phase 0：骨架打通
+
 必须完成：
+
 - FastAPI 可启动
 - `/api/core-brain/chat` 可调用
 - TVBox 可对接
@@ -1317,7 +1356,9 @@ training/
 - session / task state 基本可写
 
 ## Phase 1：本地对话 + 意图识别
+
 必须完成：
+
 - 本地模型路由
 - Prompt / Schema 注册
 - intent JSON 输出
@@ -1325,21 +1366,27 @@ training/
 - task summary
 
 ## Phase 2：workflow 拆解 + 知识库
+
 必须完成：
+
 - Weaviate 建表
 - Intent KB 检索
 - Workflow 模板检索
 - workflow 拆解输出
 
 ## Phase 3：LoRA + 升级路由
+
 必须完成：
+
 - Intent LoRA 接入
 - Workflow LoRA 接入
 - 外部模型升级策略
 - 结果校验与重试
 
 ## Phase 4：Blueprint / Tool / Memory 增强
+
 必须完成：
+
 - blueprint 生成
 - tool registry
 - MCP gateway
@@ -1378,6 +1425,7 @@ training/
 ## 19. 第一阶段交付清单（必须完成）
 
 ### 代码层
+
 - [ ] `core_brain` 新目录初始化
 - [ ] FastAPI 基础启动
 - [ ] TVBox chat 接口
@@ -1391,6 +1439,7 @@ training/
 - [ ] Elasticsearch trace writer 骨架
 
 ### 配置层
+
 - [ ] app 配置
 - [ ] 模型配置
 - [ ] routing policy
@@ -1403,6 +1452,7 @@ training/
 - [ ] lora registry 配置
 
 ### 文档层
+
 - [ ] README
 - [ ] `.env.example`
 - [ ] `configs/README.md`

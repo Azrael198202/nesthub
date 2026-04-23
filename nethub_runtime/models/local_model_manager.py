@@ -6,14 +6,14 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from nethub_runtime.core.config.settings import LOCAL_MODEL_REGISTRY_PATH, ensure_core_config_dir
+from nethub_runtime.config.runtime_paths import LOCAL_MODEL_REGISTRY_PATH, ensure_runtime_config_dir
 
 
 class LocalModelManager:
     """Manage downloadable local models and import Hugging Face GGUF models into Ollama."""
 
     def __init__(self, registry_path: Path | None = None, storage_root: Path | None = None) -> None:
-        ensure_core_config_dir()
+        ensure_runtime_config_dir()
         self.registry_path = registry_path or LOCAL_MODEL_REGISTRY_PATH
         self.storage_root = storage_root or (Path(__file__).resolve().parent.parent / "generated" / "local_models")
         self.storage_root.mkdir(parents=True, exist_ok=True)

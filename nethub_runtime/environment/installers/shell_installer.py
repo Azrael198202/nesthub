@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nethub_runtime.core.models import RuntimeProfile
+from nethub_runtime.common.models import RuntimeProfile
 
 
 class ShellBootstrapHelper:

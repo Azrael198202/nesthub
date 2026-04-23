@@ -19,7 +19,7 @@ from typing import Any
 
 
 def _create_core_engine() -> Any:
-    from nethub_runtime.core.services.core_engine_provider import create_core_engine
+    from nethub_runtime.core_brain.services.core_engine_provider import create_core_engine
 
     return create_core_engine()
 
@@ -776,9 +776,15 @@ def _create_app() -> Any:
 
     def _build_model_catalog() -> list[dict[str, Any]]:
         """Build a model catalog list from model_routes.json and local_model_registry.json."""
-        config_dir = Path(__file__).resolve().parents[1] / "config"
-        routes_path = config_dir / "model_routes.json"
-        local_reg_path = config_dir / "local_model_registry.json"
+        from nethub_runtime.config.runtime_paths import (
+            LOCAL_MODEL_REGISTRY_PATH,
+            MODEL_ROUTES_PATH,
+            ensure_runtime_config_dir,
+        )
+
+        ensure_runtime_config_dir()
+        routes_path = MODEL_ROUTES_PATH
+        local_reg_path = LOCAL_MODEL_REGISTRY_PATH
 
         routes: dict[str, Any] = _load_json(routes_path, {})
         local_reg: dict[str, Any] = _load_json(local_reg_path, {})
@@ -904,7 +910,7 @@ def _create_app() -> Any:
         Returns ``{"steps": [...]}`` where each step has name/label/status/preview.
         Status values match the Work tab states: sleeping | working | packed | error.
         """
-        from nethub_runtime.core.services.execution_coordinator import get_session_step_progress
+        from nethub_runtime.core_brain.services.execution_coordinator import get_session_step_progress
 
         sid = session_id or ""
         if not sid:

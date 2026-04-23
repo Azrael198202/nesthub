@@ -10,15 +10,24 @@ def build_runtime_result(
     task_id: str,
     intent: dict[str, Any],
     route: dict[str, Any],
+    workflow_plan: dict[str, Any],
     answer_text: str,
+    long_term_memory_written: bool,
+    traces: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    plan_steps = list(workflow_plan.get("steps") or [])
     steps = [
-        {"name": "preprocess", "status": "completed", "output": {"message": "input normalized"}},
-        {"name": "load_context", "status": "completed", "output": {"message": "context assembled"}},
-        {"name": "intent_analysis", "status": "completed", "output": intent},
-        {"name": "decide_route", "status": "completed", "output": route},
-        {"name": "generate_result", "status": "completed", "output": {"message": answer_text}},
-        {"name": "writeback_state", "status": "completed", "output": {"message": "memory updated"}},
+        {
+            "id": step.get("task_id"),
+            "step_index": step.get("step_index"),
+            "name": step.get("name"),
+            "status": "completed",
+            "objective": step.get("objective"),
+            "inputs": step.get("input_schema"),
+            "outputs": step.get("output_schema"),
+            "validation": step.get("validation_rule"),
+        }
+        for step in plan_steps
     ]
 
     return {
@@ -31,17 +40,28 @@ def build_runtime_result(
         "state_updates": {
             "main_session_updated": True,
             "task_session_updated": True,
-            "long_term_memory_written": False,
+            "long_term_memory_written": long_term_memory_written,
         },
         # Compatibility fields used by TVBox runtime parser.
-        "task": {"task_id": task_id, "intent": intent.get("intent_name", "general_chat"), "domain": "general"},
-        "workflow_plan": {"steps": [item["name"] for item in steps]},
+        "task": {"task_id": task_id, "intent": intent.get("name", "general_chat"), "domain": "general"},
+        "workflow_plan": workflow_plan,
         "execution_result": {
             "execution_type": "chat",
             "steps": steps,
+            "structured_trace": traces,
             "final_output": {"answer": {"content": answer_text, "message": answer_text}},
             "execution_plan": [
-                {"name": "generate_result", "capability": {"model_choice": route}},
+                {
+                    "name": "execute_response",
+                    "executor_type": "model_route",
+                    "capability": {"model_choice": route},
+                    "selector": {
+                        "reason": "local_first_with_fallback",
+                        "intent_confidence": float(intent.get("confidence") or 0.0),
+                    },
+                    "inputs": ["message", "context_bundle", "intent"],
+                    "outputs": ["answer"],
+                },
             ],
             "core_brain": {"version": "phase0"},
         },

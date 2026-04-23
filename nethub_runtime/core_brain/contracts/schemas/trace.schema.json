@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nethub.local/schemas/trace.schema.json",
+  "title": "Trace Schema",
+  "description": "Structured execution evidence for workflow tasks.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "trace_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workflow_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "step_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "intent_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agent_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agent_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "blueprint_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "tool_calls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tool_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "success",
+              "failed",
+              "skipped"
+            ]
+          },
+          "input_ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "output_ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "tool_name",
+          "status",
+          "input_ref",
+          "output_ref",
+          "error_reason"
+        ]
+      }
+    },
+    "task_input": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "task_output": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "validation_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "step_goal_met": {
+          "type": "boolean"
+        },
+        "schema_valid": {
+          "type": "boolean"
+        },
+        "intent_alignment": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "step_goal_met",
+        "schema_valid",
+        "intent_alignment",
+        "messages"
+      ]
+    },
+    "retry_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fallback_used": {
+      "type": "boolean"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "failed",
+        "running",
+        "pending",
+        "skipped"
+      ]
+    },
+    "error_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "trace_id",
+    "workflow_id",
+    "task_id",
+    "step_index",
+    "intent_id",
+    "agent_id",
+    "agent_type",
+    "blueprint_id",
+    "tool_calls",
+    "task_input",
+    "task_output",
+    "validation_result",
+    "retry_count",
+    "fallback_used",
+    "status",
+    "error_reason",
+    "started_at",
+    "finished_at"
+  ]
+}

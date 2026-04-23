@@ -4,8 +4,11 @@ from typing import Any
 
 
 class SchemaRegistry:
-    def __init__(self, intent_schema: dict[str, Any]) -> None:
-        self.intent_schema = intent_schema
+    def __init__(self, schemas: dict[str, dict[str, Any]]) -> None:
+        self.schemas = dict(schemas)
 
     def get_intent_schema(self) -> dict[str, Any]:
-        return dict(self.intent_schema)
+        return dict(self.schemas.get("intent") or {})
+
+    def get_schema(self, name: str) -> dict[str, Any]:
+        return dict(self.schemas.get(name) or {})

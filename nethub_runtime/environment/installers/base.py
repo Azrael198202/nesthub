@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from nethub_runtime.core.models import InstallRequirement, RuntimeProfile
+from nethub_runtime.common.models import InstallRequirement, RuntimeProfile
 
 
 class BaseInstaller(ABC):

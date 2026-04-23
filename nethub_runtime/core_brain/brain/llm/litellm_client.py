@@ -4,34 +4,36 @@ import json
 import os
 from typing import Any
 
+from nethub_runtime.models.runtime.litellm_runtime import LiteLLMRuntime
+
 
 class LiteLLMClient:
     def __init__(self) -> None:
-        self._litellm_completion = None
+        self._runtime: LiteLLMRuntime | None = None
         enabled = str(os.getenv("NETHUB_CORE_BRAIN_ENABLE_LITELLM", "")).strip().lower() in {"1", "true", "yes", "on"}
         if not enabled:
             return
         try:
             from litellm import completion  # type: ignore
 
-            self._litellm_completion = completion
+            self._runtime = LiteLLMRuntime(completion_fn=completion)
         except Exception:
-            self._litellm_completion = None
+            self._runtime = None
 
     async def call(self, model_config: dict[str, Any], messages: list[dict[str, str]]) -> str:
         model_name = str(model_config.get("model") or "")
         fallback_name = str(model_config.get("fallback") or "")
 
-        if self._litellm_completion is None or not model_name:
+        if self._runtime is None or not model_name:
             return self._mock_response(messages)
 
         try:
-            response = self._litellm_completion(model=model_name, messages=messages)
+            response = self._runtime.complete(model=model_name, messages=messages)
             return self._extract_text(response)
         except Exception:
             if fallback_name:
                 try:
-                    response = self._litellm_completion(model=fallback_name, messages=messages)
+                    response = self._runtime.complete(model=fallback_name, messages=messages)
                     return self._extract_text(response)
                 except Exception:
                     pass
@@ -65,9 +67,9 @@ class LiteLLMClient:
             lowered = user_msg.lower()
             intent_name = "general_chat"
             if any(word in lowered for word in ["agent", "智能体"]):
-                intent_name = "agent_creation"
+                intent_name = "create_agent"
             elif any(word in lowered for word in ["workflow", "流程", "计划"]):
                 intent_name = "workflow_decomposition"
-            return json.dumps({"intent_name": intent_name, "confidence": 0.72})
+            return json.dumps({"name": intent_name, "confidence": 0.72})
 
         return f"已收到请求：{user_msg}"

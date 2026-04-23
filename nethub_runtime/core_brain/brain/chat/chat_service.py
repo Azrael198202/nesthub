@@ -32,9 +32,21 @@ class ChatService:
         parsed = parse_json_text(response_text)
         if parsed is None:
             return {"intent_name": "general_chat", "confidence": 0.6}
+        raw_name = str(parsed.get("name") or parsed.get("intent_name") or "general_chat")
+        confidence = float(parsed.get("confidence") or 0.6)
+        entities = parsed.get("entities") if isinstance(parsed.get("entities"), dict) else {}
+        constraints = parsed.get("constraints") if isinstance(parsed.get("constraints"), dict) else {}
+        clarification_questions = parsed.get("clarification_questions")
+        if not isinstance(clarification_questions, list):
+            clarification_questions = []
         return {
-            "intent_name": str(parsed.get("intent_name") or "general_chat"),
-            "confidence": float(parsed.get("confidence") or 0.6),
+            "name": raw_name,
+            "intent_name": raw_name,
+            "description": str(parsed.get("description") or ""),
+            "confidence": confidence,
+            "entities": entities,
+            "constraints": constraints,
+            "clarification_questions": [str(item) for item in clarification_questions if isinstance(item, str)],
         }
 
     async def generate_answer(

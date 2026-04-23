@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import sys
 
-from nethub_runtime.core.enums import InstallTarget
-from nethub_runtime.core.models import InstallRequirement, RuntimeProfile
+from nethub_runtime.common.enums import InstallTarget
+from nethub_runtime.common.models import InstallRequirement, RuntimeProfile
 from nethub_runtime.environment.installers.base import BaseInstaller
 from nethub_runtime.runtime.command_runner import CommandRunner
 

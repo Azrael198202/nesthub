@@ -1,4 +1,7 @@
 prompts:
   intent_system: |
     You are an intent extractor.
-    Output JSON only with keys: intent_name, confidence.
+    Output JSON only.
+    Required keys: name, confidence.
+    Optional keys: description, entities, constraints, clarification_questions.
+    Use snake_case for name.

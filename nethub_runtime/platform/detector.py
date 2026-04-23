@@ -5,8 +5,8 @@ import shutil
 import socket
 import sys
 
-from nethub_runtime.core.enums import OSType
-from nethub_runtime.core.models import RuntimeProfile
+from nethub_runtime.common.enums import OSType
+from nethub_runtime.common.models import RuntimeProfile
 from nethub_runtime.platform.os_profile import enrich_runtime_notes
 
 

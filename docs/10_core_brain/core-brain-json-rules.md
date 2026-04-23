@@ -1,4 +1,5 @@
 # core-brain-json-rules.md
+
 Updated: 2026-04-23
 
 ## 0. Purpose
@@ -77,6 +78,7 @@ Intent must be divided into two major categories.
 Normal intent means the user wants the system to complete a business or operational objective.
 
 Examples:
+
 - manage_schedule
 - create_reminder
 - record_expense
@@ -90,6 +92,7 @@ Normal intent does NOT mean the user is trying to create a new runtime capabilit
 Agent-creation intent means the user wants the system to create a new agent capability at runtime.
 
 Examples:
+
 - create_agent
 - create_schedule_agent
 - create_tool_agent
@@ -106,6 +109,7 @@ This kind of intent must trigger:
 7. agent instantiation or deferred activation
 
 Important rule:
+
 - agent-creation intent is NOT the same as normal business execution intent
 - it is a meta-intent
 - it creates future execution capability
@@ -186,6 +190,7 @@ Intent must always be structured.
 ### 3.3 Intent Rules
 
 Mandatory rules:
+
 - `intent_type` must be one of:
   - `normal_intent`
   - `agent_creation_intent`
@@ -378,6 +383,7 @@ Workflow is the execution plan derived from intent.
 ### 4.3 Workflow Rules
 
 Mandatory rules:
+
 - `workflow_type` must be one of:
   - `business_execution`
   - `agent_creation`
@@ -433,6 +439,7 @@ A workflow task is the smallest traceable execution unit.
 ### 5.2 Task Rules
 
 Mandatory rules:
+
 - task must be independently traceable
 - task must be independently retryable
 - task must be independently validatable
@@ -505,6 +512,7 @@ Blueprint defines the structured runtime definition of an agent type.
 ### 6.2 Blueprint Rules
 
 Mandatory rules:
+
 - blueprint defines an agent type, not an agent instance
 - blueprint must be versioned
 - blueprint must declare capabilities
@@ -549,6 +557,7 @@ Agent is the runtime instance created from blueprint.
 ### 7.2 Agent Rules
 
 Mandatory rules:
+
 - agent must reference exactly one blueprint
 - agent must be a runtime object
 - agent must have explicit state
@@ -606,6 +615,7 @@ Trace is the structured execution evidence for every important task.
 ### 8.2 Trace Rules
 
 Mandatory rules:
+
 - every important task must generate a trace
 - trace must be machine-readable
 - trace must capture:
@@ -656,6 +666,7 @@ Tool must also be explicitly structured.
 ### 9.2 Tool Rules
 
 Mandatory rules:
+
 - tool must define input and output contracts
 - tool must define implementation type
 - tool must define execution mode
@@ -663,11 +674,13 @@ Mandatory rules:
 - tool may be prebuilt or runtime-generated
 
 Allowed `implementation_type` values:
+
 - `prebuilt`
 - `generated_code`
 - `external_adapter`
 
 Allowed `execution_mode` values:
+
 - `local_runtime`
 - `remote_api`
 - `sandbox_runtime`
@@ -681,10 +694,12 @@ Yes. NestHub should support both modes.
 ### 10.1 Prebuilt Tool Mode
 
 Example:
+
 - calendar_tool already exists
 - reminder_tool already exists
 
 In this mode:
+
 - blueprint resolves a known tool
 - workflow can execute immediately
 
@@ -692,6 +707,7 @@ In this mode:
 
 Example:
 User says:
+
 - "Create a calendar tool"
 - "Build a schedule tool for my family"
 - "I need a custom calendar integration tool"
@@ -718,6 +734,7 @@ Therefore:
 ## 11. Tool Creation Workflow
 
 If the user says:
+
 - "Create a calendar tool"
 
 the runtime should follow this pattern.
@@ -876,6 +893,7 @@ When `intent_type = agent_creation_intent`, the system must execute this sequenc
 9. instantiate the runtime agent if activation is requested
 
 Important:
+
 - agent creation must itself follow intent → workflow → task → trace → validation
 - meta-creation flow must obey the same execution discipline as normal flow
 
@@ -900,6 +918,7 @@ NestHub is allowed to create tools at runtime.
 This is not optional in the long-term architecture.
 
 That means:
+
 - NestHub may ask the user for the missing requirements of the tool
 - NestHub may generate schema, code, and registration artifacts
 - NestHub may then bind the new tool into future blueprints and workflows

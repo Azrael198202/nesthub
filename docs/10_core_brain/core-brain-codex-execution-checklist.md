@@ -1,4 +1,5 @@
 # core-brain-codex-execution-checklist.md
+
 Updated: 2026-04-23
 
 ## 0. Purpose
@@ -132,6 +133,7 @@ nethub_runtime/core_brain/main.py
 ```
 
 Responsibilities:
+
 - Create the FastAPI app for core-brain
 - Mount routes from `core_brain/api/`
 - Expose the only formal brain-facing API entry
@@ -160,6 +162,7 @@ nethub_runtime/core_brain/contracts/validation.py
 ```
 
 Requirements:
+
 - Use typed DTOs or typed models
 - Minimize raw dict usage across module boundaries
 - Make TVBox payload conversion terminate into typed request/response models
@@ -176,11 +179,13 @@ nethub_runtime/core_brain/api/health.py
 ```
 
 Optional later:
+
 ```text
 nethub_runtime/core_brain/api/routes.py
 ```
 
 Responsibilities:
+
 - HTTP request mapping
 - DTO conversion
 - Pass typed requests into brain orchestration
@@ -193,16 +198,19 @@ Do not place planning or execution logic here.
 ### 4.4 Refactor chat layer
 
 Keep:
+
 ```text
 nethub_runtime/core_brain/brain/chat/
 ```
 
 Limit this layer to:
+
 - request adapters
 - response builders
 - thin facade
 
 Codex must move heavy logic out of chat into:
+
 - orchestration/
 - planning/
 - execution/
@@ -221,6 +229,7 @@ nethub_runtime/core_brain/brain/orchestration/pipeline.py
 ```
 
 Responsibilities:
+
 - Main end-to-end coordination
 - Stage ordering
 - Fallback escalation coordination
@@ -239,6 +248,7 @@ nethub_runtime/core_brain/brain/planning/route_service.py
 ```
 
 Responsibilities:
+
 - Intent analysis
 - Workflow planning
 - Task-to-model-profile selection
@@ -257,6 +267,7 @@ nethub_runtime/core_brain/brain/execution/agent_executor.py
 ```
 
 Responsibilities:
+
 - Execute workflow steps
 - Invoke tools
 - Invoke runtime agents
@@ -279,6 +290,7 @@ nethub_runtime/core_brain/brain/workflows/builder/
 Move current lightweight workflow logic here.
 
 Codex must ensure:
+
 - workflow planning is explicit
 - workflow execution is explicit
 - workflow state is persisted
@@ -298,6 +310,7 @@ nethub_runtime/core_brain/brain/agents/state/store.py
 ```
 
 Responsibilities:
+
 - Instantiate runtime agents from blueprints
 - Bind agents to workflow steps
 - Manage runtime state
@@ -317,6 +330,7 @@ nethub_runtime/core_brain/brain/trace/replay/service.py
 ```
 
 Responsibilities:
+
 - Record structured traces
 - Store traces
 - Evaluate step-level success
@@ -338,6 +352,7 @@ nethub_runtime/core_brain/brain/validation/result/service.py
 ```
 
 Responsibilities:
+
 - Schema validation
 - Step-level validation
 - Intent-level validation
@@ -373,12 +388,14 @@ nethub_runtime/models/health/
 ```
 
 Responsibilities:
+
 - providers/: provider abstraction and concrete providers
 - router/: fallback, cooldown, retry, timeout, route transport logic
 - runtime/: low-level completion / structured completion runtime
 - health/: provider availability and health checks
 
 Important:
+
 - Prompt registry must not remain here
 - Schema registry must not remain here
 - Semantic task model choice must not remain here
@@ -394,6 +411,7 @@ nethub_runtime/core_brain/brain/llm/
 ```
 
 Limit it to:
+
 - prompt registry
 - schema registry
 - task-to-model-profile mapping
@@ -414,6 +432,7 @@ nethub_runtime/blueprints_core/
 Move or refactor current blueprint mechanism code here.
 
 Responsibilities:
+
 - blueprint registry
 - blueprint loading
 - blueprint validation
@@ -438,6 +457,7 @@ nethub_runtime/generated/archive/
 Add artifact manifest support.
 
 Each artifact manifest must contain:
+
 - id
 - type
 - source_intent
@@ -448,6 +468,7 @@ Each artifact manifest must contain:
 - registered_at
 
 Recommended extra fields:
+
 - created_at
 - updated_at
 - blueprint_id
@@ -462,6 +483,7 @@ Recommended extra fields:
 ## 5. Logic Migration Checklist
 
 ### 5.1 Entry migration
+
 - [ ] Create `core_brain/main.py`
 - [ ] Move brain-facing API app creation into `core_brain/main.py`
 - [ ] Move route modules into `core_brain/api/`
@@ -471,6 +493,7 @@ Recommended extra fields:
 - [ ] Remove `core/` after compatibility verification
 
 ### 5.2 Chat thinning
+
 - [ ] Identify heavy logic inside `brain/chat/`
 - [ ] Move orchestration logic to `brain/orchestration/`
 - [ ] Move planning logic to `brain/planning/`
@@ -478,6 +501,7 @@ Recommended extra fields:
 - [ ] Keep `chat/` thin
 
 ### 5.3 Workflow promotion
+
 - [ ] Move current workflow helper logic into formal workflow modules
 - [ ] Add workflow planning objects
 - [ ] Add workflow state persistence
@@ -485,12 +509,14 @@ Recommended extra fields:
 - [ ] Add workflow builder logic
 
 ### 5.4 LLM separation
+
 - [ ] Move provider runtime logic into `models/`
 - [ ] Keep prompt/schema registries in `brain/llm/`
 - [ ] Remove provider transport logic from semantic layer
 - [ ] Add structured completion boundary
 
 ### 5.5 KB implementation
+
 - [ ] Create intent KB retrieval
 - [ ] Create workflow KB retrieval
 - [ ] Create blueprint KB retrieval
@@ -498,12 +524,14 @@ Recommended extra fields:
 - [ ] Connect retrieval to planning/context injection
 
 ### 5.6 Agent runtime
+
 - [ ] Add blueprint-to-agent instantiation flow
 - [ ] Add agent scheduler
 - [ ] Add runtime state management
 - [ ] Bind agents to workflow steps
 
 ### 5.7 Trace and validation
+
 - [ ] Add structured trace recording
 - [ ] Add step-level validation
 - [ ] Add intent-level validation
@@ -511,6 +539,7 @@ Recommended extra fields:
 - [ ] Bind validation to final response correctness
 
 ### 5.8 Generated artifacts
+
 - [ ] Add lifecycle directories
 - [ ] Add artifact manifest model
 - [ ] Add status transitions
@@ -518,6 +547,7 @@ Recommended extra fields:
 - [ ] Separate mechanism layer from generated artifact layer
 
 ### 5.9 Contracts
+
 - [ ] Create typed DTOs
 - [ ] Replace raw dict boundaries gradually
 - [ ] Map TVBox request to typed request model
@@ -530,7 +560,8 @@ Recommended extra fields:
 
 Codex must preserve the TVBox main interaction path.
 
-### Must continue working:
+### Must continue working
+
 - TVBox sends `/api/voice/chat`
 - Request reaches core-brain
 - Core-brain returns typed result
@@ -538,7 +569,8 @@ Codex must preserve the TVBox main interaction path.
 - TVBox can still render workflow progress
 - TVBox can still extract reply text
 
-### Codex actions:
+### Codex actions
+
 - [ ] Keep compatibility payload fields if currently used by TVBox
 - [ ] Internally map them to typed contracts
 - [ ] Avoid breaking the existing dashboard update flow
@@ -567,21 +599,25 @@ Do not leave dead imports after the migration.
 Codex must verify the following after refactor:
 
 ### 8.1 Import validation
+
 - [ ] No import still depends on removed `core/`
 - [ ] No import still depends on removed `core_brain/app/`
 
 ### 8.2 App startup validation
+
 - [ ] `nethub_runtime/core_brain/main.py` can create app successfully
 - [ ] Routes mount successfully
 - [ ] No circular import blocks startup
 
 ### 8.3 TVBox smoke test
+
 - [ ] TVBox `/api/voice/chat` still works
 - [ ] Core-brain returns a valid response
 - [ ] Reply can be extracted
 - [ ] Workflow steps can still be displayed
 
 ### 8.4 Workflow smoke test
+
 - [ ] Intent can be analyzed
 - [ ] Workflow can be built
 - [ ] At least one step can be executed
@@ -589,6 +625,7 @@ Codex must verify the following after refactor:
 - [ ] Validation result is produced
 
 ### 8.5 Artifact smoke test
+
 - [ ] A generated artifact can enter `drafts/`
 - [ ] It can be registered
 - [ ] It can be marked `active`

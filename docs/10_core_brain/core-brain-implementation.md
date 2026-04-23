@@ -183,6 +183,7 @@ def apply_lora(model_config):
 User: Build accounting system
 
 → AI generates:
+
 - workflow
 - DB schema
 - API

@@ -3,8 +3,8 @@ from __future__ import annotations
 from nethub_runtime.blueprint.manifest import BlueprintManifest
 from nethub_runtime.capability.registry import CapabilityRegistry
 from nethub_runtime.capability.resolver import CapabilityResolver
-from nethub_runtime.core.enums import ExecutionStatus
-from nethub_runtime.core.models import BlueprintExecutionContext, ExecuteResult, RuntimeProfile
+from nethub_runtime.common.enums import ExecutionStatus
+from nethub_runtime.common.models import BlueprintExecutionContext, ExecuteResult, RuntimeProfile
 from nethub_runtime.environment.manager import EnvironmentManager
 
 

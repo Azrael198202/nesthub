@@ -1,23 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
-from nethub_runtime.core_brain.brain.api.dto.chat_request import ChatRequest
-from nethub_runtime.core_brain.engine import CoreBrainEngine
+from nethub_runtime.core_brain.api.chat import chat as chat_endpoint
+from nethub_runtime.core_brain.api.chat import compat_core_chat as compat_core_chat_endpoint
+from nethub_runtime.core_brain.api.chat import core_brain_chat as core_brain_chat_endpoint
 
 router = APIRouter()
-_ENGINE = CoreBrainEngine()
-
-
-def get_engine() -> CoreBrainEngine:
-    return _ENGINE
-
-
-@router.post("/core-brain/chat")
-async def core_brain_chat(req: ChatRequest, engine: CoreBrainEngine = Depends(get_engine)) -> dict:
-    return await engine.facade.handle_chat(req)
-
-
-@router.post("/core/chat")
-async def compat_core_chat(req: ChatRequest, engine: CoreBrainEngine = Depends(get_engine)) -> dict:
-    return await engine.facade.handle_chat(req)
+router.add_api_route("/core-brain/chat", core_brain_chat_endpoint, methods=["POST"])
+router.add_api_route("/core/chat", compat_core_chat_endpoint, methods=["POST"])
+router.add_api_route("/chat", chat_endpoint, methods=["POST"])

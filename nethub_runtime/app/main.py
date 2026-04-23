@@ -5,7 +5,7 @@ from typing import Any
 from pathlib import Path
 
 from nethub_runtime.app.bootstrap import bootstrap_runtime
-from nethub_runtime.core.services.core_engine_provider import create_core_engine
+from nethub_runtime.core_brain.services.core_engine_provider import create_core_engine
 
 LOGGER = logging.getLogger("nethub_runtime.app.main")
 

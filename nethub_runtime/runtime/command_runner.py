@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess
 
-from nethub_runtime.core.models import CommandResult
+from nethub_runtime.common.models import CommandResult
 
 
 class CommandRunner:

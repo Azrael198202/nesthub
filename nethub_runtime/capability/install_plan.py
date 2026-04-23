@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from nethub_runtime.core.models import InstallPlan, InstallRequirement
-from nethub_runtime.core.enums import ExecutionStatus
+from nethub_runtime.common.models import InstallPlan, InstallRequirement
+from nethub_runtime.common.enums import ExecutionStatus
 
 
 def build_missing_plan(requirements: list[InstallRequirement]) -> InstallPlan:

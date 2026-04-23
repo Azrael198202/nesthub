@@ -41,6 +41,11 @@ def ensure_generated_dirs() -> dict[str, Path]:
     datasets_root = root / "datasets"
     paths = {
         "root": root,
+        "drafts": root / "drafts",
+        "registered": root / "registered",
+        "active": root / "active",
+        "failed": root / "failed",
+        "archive": root / "archive",
         "code": root / "code",
         "blueprints": root / "blueprints",
         "agents": root / "agents",

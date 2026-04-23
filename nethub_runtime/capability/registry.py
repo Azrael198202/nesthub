@@ -4,7 +4,7 @@ import importlib.metadata as metadata
 import json
 from pathlib import Path
 
-from nethub_runtime.core.models import RegistryState
+from nethub_runtime.common.models import RegistryState
 from nethub_runtime.config.settings import ensure_app_dirs
 
 

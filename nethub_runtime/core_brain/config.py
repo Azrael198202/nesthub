@@ -6,6 +6,8 @@ from typing import Any
 
 import yaml
 
+from nethub_runtime.core_brain.contracts.registry import ContractSchemaRegistry
+
 
 @dataclass(slots=True)
 class CoreBrainConfig:
@@ -13,7 +15,7 @@ class CoreBrainConfig:
     model_registry: dict[str, Any]
     prompt_registry: dict[str, Any]
     routing_policy: dict[str, Any]
-    intent_schema: dict[str, Any]
+    contract_schemas: dict[str, dict[str, Any]]
 
 
 class ConfigLoader:
@@ -26,7 +28,7 @@ class ConfigLoader:
             model_registry=self._read_yaml("models/registry.yaml"),
             prompt_registry=self._read_yaml("prompts/registry.yaml"),
             routing_policy=self._read_yaml("routing/escalation_policy.yaml"),
-            intent_schema=self._read_yaml("schemas/intent.schema.json"),
+            contract_schemas=ContractSchemaRegistry().load_all(),
         )
 
     def _read_yaml(self, relative_path: str) -> dict[str, Any]:

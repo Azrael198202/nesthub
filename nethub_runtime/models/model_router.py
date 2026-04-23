@@ -715,8 +715,8 @@ class ModelRouter:
     ) -> None:
         """Persist a full invocation record (score + schema + tool calls) to the runtime learning store."""
         try:
-            from nethub_runtime.core.memory.runtime_learning_store import RuntimeLearningStore
-            from nethub_runtime.core.config.settings import SEMANTIC_POLICY_PATH
+            from nethub_runtime.config.runtime_paths import SEMANTIC_POLICY_PATH
+            from nethub_runtime.memory.runtime_learning_store import RuntimeLearningStore
 
             store = RuntimeLearningStore(SEMANTIC_POLICY_PATH)
             detail_parts = [

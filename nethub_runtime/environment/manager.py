@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from nethub_runtime.capability.registry import CapabilityRegistry
-from nethub_runtime.core.enums import InstallTarget
-from nethub_runtime.core.models import InstallPlan, RuntimeProfile
+from nethub_runtime.common.enums import InstallTarget
+from nethub_runtime.common.models import InstallPlan, RuntimeProfile
 from nethub_runtime.environment.installers.ollama_installer import OllamaInstaller
 from nethub_runtime.environment.installers.pip_installer import PipInstaller
 from nethub_runtime.environment.installers.tool_installer import ToolInstaller
