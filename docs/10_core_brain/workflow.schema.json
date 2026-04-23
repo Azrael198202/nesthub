@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nethub.local/schemas/workflow.schema.json",
+  "title": "Workflow Schema",
+  "description": "Workflow plan derived from an intent.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "workflow_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workflow_type": {
+      "type": "string",
+      "enum": [
+        "business_execution",
+        "agent_creation"
+      ]
+    },
+    "source_intent_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "registered",
+        "active",
+        "paused",
+        "completed",
+        "failed",
+        "archived"
+      ]
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 1
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "step_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "task_type": {
+            "type": "string",
+            "enum": [
+              "requirement_collection",
+              "entity_resolution",
+              "intent_analysis",
+              "route_selection",
+              "blueprint_generation",
+              "workflow_generation",
+              "tool_resolution",
+              "spec_generation",
+              "code_generation",
+              "calendar_action",
+              "artifact_registration",
+              "agent_instantiation",
+              "validation",
+              "custom_task"
+            ]
+          },
+          "objective": {
+            "type": "string",
+            "minLength": 1
+          },
+          "assigned_agent_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "assigned_agent_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "required_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "input_schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "output_schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "retry_policy": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "max_retries": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "fallback_allowed": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "max_retries",
+              "fallback_allowed"
+            ]
+          },
+          "validation_rule": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "schema_validation",
+                  "step_output_validation",
+                  "intent_fulfillment_validation",
+                  "custom_validation"
+                ]
+              },
+              "schema_name": {
+                "type": "string"
+              },
+              "required_fields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "required_outcomes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "success",
+              "failed",
+              "skipped",
+              "blocked"
+            ]
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "step_index",
+          "name",
+          "task_type",
+          "objective",
+          "assigned_agent_type",
+          "required_tools",
+          "input_schema",
+          "output_schema",
+          "depends_on",
+          "retry_policy",
+          "validation_rule",
+          "status"
+        ]
+      }
+    },
+    "final_validation_rule": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "intent_fulfillment_validation",
+            "custom_validation"
+          ]
+        },
+        "required_outcomes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "type",
+        "required_outcomes"
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "workflow_id",
+    "workflow_type",
+    "source_intent_id",
+    "name",
+    "status",
+    "version",
+    "goal",
+    "steps",
+    "final_validation_rule"
+  ]
+}

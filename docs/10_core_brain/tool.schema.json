@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nethub.local/schemas/tool.schema.json",
+  "title": "Tool Schema",
+  "description": "Structured tool definition used by blueprint and runtime.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "tool_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "tool_type": {
+      "type": "string",
+      "enum": [
+        "runtime_tool",
+        "integration_tool",
+        "system_tool"
+      ]
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "input_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_name": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema_name"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_name": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema_name"
+      ]
+    },
+    "implementation_type": {
+      "type": "string",
+      "enum": [
+        "prebuilt",
+        "generated_code",
+        "external_adapter"
+      ]
+    },
+    "execution_mode": {
+      "type": "string",
+      "enum": [
+        "local_runtime",
+        "remote_api",
+        "sandbox_runtime"
+      ]
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "entrypoint": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "artifact_manifest_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "registered",
+        "active",
+        "failed",
+        "archived"
+      ]
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "tool_name",
+    "tool_type",
+    "description",
+    "input_contract",
+    "output_contract",
+    "implementation_type",
+    "execution_mode",
+    "dependencies",
+    "status",
+    "version"
+  ]
+}
