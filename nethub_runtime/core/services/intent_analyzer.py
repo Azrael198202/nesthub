@@ -195,6 +195,17 @@ class SemanticIntentPlugin:
             and any(marker and marker in lowered_text for marker in field_capture_markers)
         )
 
+        explicit_create_requested = bool(action_flags.get("agent_create_like"))
+        hinted_create_requested = "create_information_agent" in intent_hints and bool(setup.get("active"))
+        create_requested = bool(explicit_create_requested or hinted_create_requested)
+        query_requested = bool(action_flags.get("query_like") or "query_agent_knowledge" in intent_hints)
+        capture_requested = bool(action_flags.get("knowledge_capture_like") or "capture_agent_knowledge" in intent_hints)
+
+        # Creation intent should take precedence over stale collection/setup state,
+        # but must not override explicit query/capture signals in active usage turns.
+        if create_requested and not (query_requested or capture_requested):
+            return ("create_information_agent", "agent_management", ["agent", "dialog"], {"need_agent": False})
+
         if collection.get("active"):
             return ("capture_agent_knowledge", "agent_management", ["knowledge", "dialog"], {"need_agent": False})
 
@@ -220,9 +231,6 @@ class SemanticIntentPlugin:
             or looks_like_field_capture
         ):
             return ("capture_agent_knowledge", "agent_management", ["knowledge", "dialog"], {"need_agent": False})
-
-        if action_flags.get("agent_create_like") or "create_information_agent" in intent_hints:
-            return ("create_information_agent", "agent_management", ["agent", "dialog"], {"need_agent": True})
 
         return None
 
@@ -448,7 +456,28 @@ class SemanticIntentPlugin:
             or ("?" in text or "？" in text)
         )
         is_record = bool(action_flags.get("record_like")) or has_numeric or self._contains_any(text, record_markers)
-        need_agent = bool(action_flags.get("agent_create_like")) or self._contains_any(text, agent_markers)
+        if bool(action_flags.get("agent_create_like")) or self._contains_any(text, agent_markers):
+            constraints = {"need_agent": False}
+            self._remember_runtime_intent(
+                text,
+                intent="create_information_agent",
+                domain="agent_management",
+                output_requirements=["agent", "dialog"],
+                constraints=constraints,
+                keyword_signals=keyword_signals,
+                analysis_meta=analysis_meta,
+            )
+            return {
+                "intent": "create_information_agent",
+                "domain": "agent_management",
+                "output_requirements": ["agent", "dialog"],
+                "constraints": constraints,
+                "analysis": {
+                    "runtime_keywords": keyword_signals,
+                    "model_routing": analysis_meta,
+                    "agent_creation_fallback": True,
+                },
+            }
 
         if is_query:
             intent = "data_query"
@@ -460,7 +489,7 @@ class SemanticIntentPlugin:
             intent = "general_task"
             outputs = ["text"]
 
-        constraints = {"need_agent": need_agent}
+        constraints = {"need_agent": False}
         self._remember_runtime_intent(
             text,
             intent=intent,

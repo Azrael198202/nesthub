@@ -15,6 +15,20 @@
     "synonyms": {}
   },
   "intent_detection": {
+    "query_markers": [
+      "查",
+      "查询",
+      "查看",
+      "看看",
+      "检索",
+      "搜索",
+      "问",
+      "list",
+      "query",
+      "find",
+      "show",
+      "search"
+    ],
     "group_query_markers": [
       "按类别",
       "按时间",
@@ -49,6 +63,77 @@
       "完成创建"
     ],
     "default_completion_phrase": "完成添加",
+    "creation_followup_prompt": "请继续补充智能体用途、字段和触发词；确认完成时请回复你配置的完成短语。",
+    "messages": {
+      "creation_initial_question": "这个智能体需要收集什么信息？如果你已经描述完整，也可以直接说明完成条件。",
+      "creation_schema_question": "请说明这个智能体需要收集哪些字段，以及什么情况下算创建完成。",
+      "creation_continue_question": "如果字段和完成条件已经齐了，请直接回复完成创建；否则继续补充需要收集的信息。",
+      "creation_completed_template": "已完成创建{role}。启动关键字：{activation_keywords}",
+      "configured_agent_missing_message": "当前还没有完成信息型智能体的创建，请先完成创建。",
+      "no_executable_operation_message": "当前没有可执行的信息型智能体操作。",
+      "query_before_creation_message": "当前还没有完成信息型智能体的创建。",
+      "query_not_found_template": "当前没有找到对应的{entity_label}信息。",
+      "answer_field_template": "{subject}的{field}是{value}。",
+      "answer_keyword_template": "{subject}的{keyword}是{value}。",
+      "answer_keyword_missing_template": "当前没有记录{subject}的{keyword}。",
+      "answer_record_found_template": "已找到{subject}的{entity_label}资料。",
+      "setup_completion_hint_with_purpose": "如果没有，请回答：没有了，完成创建。系统会根据“{purpose}”自动补全采集结构。",
+      "setup_completion_hint_generic": "如果没有，请回答：没有了，完成创建。系统会自动补全采集结构。",
+      "knowledge_added_batch_template": "已完成添加，并记录了{count}条{entity_label}。"
+    },
+    "defaults": {
+      "purpose_default": "信息收集",
+      "entity_label_default": "信息条目",
+      "next_question_default": "请继续补充。",
+      "schema_prompt_template": "请补充 {key}。",
+      "role_default": "信息管理智能体",
+      "role_template": "{entity_label}信息智能体",
+      "description_default": "用于记录和查询结构化信息。",
+      "knowledge_added_message_default": "已完成添加，并已记录该信息。",
+      "knowledge_added_message_template": "已完成添加，并已记录该{entity_label}信息。",
+      "unnamed_record_default": "未命名对象",
+      "recovered_description_template": "从长期记忆恢复的{entity_label}信息智能体",
+      "field_prompt_item_name": "好的，请问要记录的对象名称是什么？",
+      "field_prompt_item_type": "它属于什么类型或角色？",
+      "field_prompt_summary": "请给出一句简要说明。",
+      "field_prompt_details": "还有什么需要记录的？如果没有了，请回答 完成添加。"
+    },
+    "default_fields": [
+      {
+        "key": "item_name",
+        "prompt": "好的，请问要记录的对象名称是什么？"
+      },
+      {
+        "key": "item_type",
+        "prompt": "它属于什么类型或角色？"
+      },
+      {
+        "key": "summary",
+        "prompt": "请给出一句简要说明。"
+      },
+      {
+        "key": "details",
+        "prompt": "还有什么需要记录的？如果没有了，请回答 完成添加。"
+      }
+    ],
+    "activation_keyword_templates": [],
+    "include_query_aliases_in_activation_keywords": false,
+    "creation_parsing": {
+      "field_markers": [
+        "请收集字段",
+        "收集字段",
+        "字段"
+      ],
+      "trigger_markers": [
+        "触发词",
+        "启动关键字",
+        "关键词"
+      ],
+      "completion_markers": [
+        "完成条件",
+        "完成短语"
+      ]
+    },
     "field_capture_markers": [
       "名称",
       "名字",
@@ -603,6 +688,123 @@
       {
         "pattern": "整理成md",
         "ext": ".md"
+      },
+      {
+        "pattern": "word文档",
+        "ext": ".docx"
+      },
+      {
+        "pattern": "word文件",
+        "ext": ".docx"
+      },
+      {
+        "pattern": "doc文档",
+        "ext": ".docx"
+      },
+      {
+        "pattern": "docx文档",
+        "ext": ".docx"
+      },
+      {
+        "pattern": "整理成word",
+        "ext": ".docx"
+      },
+      {
+        "pattern": "保存为word",
+        "ext": ".docx"
+      },
+      {
+        "pattern": "生成word",
+        "ext": ".docx"
+      },
+      {
+        "pattern": "输出word",
+        "ext": ".docx"
+      },
+      {
+        "pattern": "excel文件",
+        "ext": ".xlsx"
+      },
+      {
+        "pattern": "excel表格",
+        "ext": ".xlsx"
+      },
+      {
+        "pattern": "xls文件",
+        "ext": ".xlsx"
+      },
+      {
+        "pattern": "xlsx文件",
+        "ext": ".xlsx"
+      },
+      {
+        "pattern": "整理成excel",
+        "ext": ".xlsx"
+      },
+      {
+        "pattern": "保存为excel",
+        "ext": ".xlsx"
+      },
+      {
+        "pattern": "生成excel",
+        "ext": ".xlsx"
+      },
+      {
+        "pattern": "输出excel",
+        "ext": ".xlsx"
+      },
+      {
+        "pattern": "ppt文件",
+        "ext": ".pptx"
+      },
+      {
+        "pattern": "ppt文档",
+        "ext": ".pptx"
+      },
+      {
+        "pattern": "pptx文件",
+        "ext": ".pptx"
+      },
+      {
+        "pattern": "powerpoint",
+        "ext": ".pptx"
+      },
+      {
+        "pattern": "整理成ppt",
+        "ext": ".pptx"
+      },
+      {
+        "pattern": "生成ppt",
+        "ext": ".pptx"
+      },
+      {
+        "pattern": "输出ppt",
+        "ext": ".pptx"
+      },
+
+      {
+        "pattern": "pdf文件",
+        "ext": ".pdf"
+      },
+      {
+        "pattern": "pdf文档",
+        "ext": ".pdf"
+      },
+      {
+        "pattern": "导出pdf",
+        "ext": ".pdf"
+      },
+      {
+        "pattern": "保存为pdf",
+        "ext": ".pdf"
+      },
+      {
+        "pattern": "生成pdf",
+        "ext": ".pdf"
+      },
+      {
+        "pattern": "输出pdf",
+        "ext": ".pdf"
       }
     ],
     "output_delivery_words": [

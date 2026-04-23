@@ -81,6 +81,38 @@ provider_policies:
     request_timeout_cap_sec: 15
     skip_unhealthy: true
 
+local_composite_profiles:
+  active_profile_env: "NETHUB_ACTIVE_LORA_PROFILE"
+  default_profile: "lora_sft"
+  profiles:
+    base_local:
+      enabled: true
+      description: "Base local model execution without domain adapter bias."
+      adapter_hint:
+        mode: "base"
+    lora_sft:
+      enabled: true
+      description: "Primary local composite profile backed by the latest validated LoRA training output."
+      adapter_hint:
+        mode: "lora"
+        training_profile: "lora_sft"
+      task_routing_overrides:
+        semantic_parsing:
+          primary: "ollama:qwen2.5:7b-instruct"
+          fallback:
+            - "ollama:qwen2.5:3b-instruct"
+            - "groq:llama-3.1-8b-instant"
+        document_analysis:
+          primary: "ollama:deepseek-r1:7b"
+          fallback:
+            - "ollama:qwen2.5:7b-instruct"
+            - "groq:llama-3.3-70b-versatile"
+        llm_execution:
+          primary: "ollama:qwen2.5:7b-instruct"
+          fallback:
+            - "ollama:deepseek-r1:7b"
+            - "groq:llama-3.3-70b-versatile"
+
 routing_policies:
   # ----------------------------------------------------------------
   # Escalation gate (global defaults):

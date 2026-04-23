@@ -5,7 +5,7 @@ from typing import Any
 from pathlib import Path
 
 from nethub_runtime.app.bootstrap import bootstrap_runtime
-from nethub_runtime.core.services.core_engine import AICore
+from nethub_runtime.core.services.core_engine_provider import create_core_engine
 
 LOGGER = logging.getLogger("nethub_runtime.app.main")
 
@@ -39,7 +39,7 @@ def start_app(model_config_path: str | Path | None = None) -> dict[str, Any]:
     # ========== 第2-6步：AI Core 完整初始化 ==========
     # (在 AICore.__init__ 中完成)
     try:
-        core = AICore(model_config_path=model_config_path)
+        core = create_core_engine(model_config_path=model_config_path)
         context["core"] = core
         LOGGER.info("✓ AI Core initialized")
         

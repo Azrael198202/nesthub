@@ -55,7 +55,7 @@ class CapabilityRouter:
         # Unknown step names from LLM-generated plans default to llm_execution
         return mapping.get(step_name, "llm_execution")
 
-    def _executor_type_for_step(self, step_name: str, route: dict[str, Any]) -> str:
+    def _executor_type_for_step(self, step_name: str, route: dict[str, Any], workflow_executor_type: str | None = None) -> str:
         tool_name = str(route.get("tool", "") or "")
         service_name = str(route.get("service", "") or "")
         if step_name == "manage_information_agent":
@@ -68,6 +68,8 @@ class CapabilityRouter:
             return "tool"
         if tool_name not in {"", "none"}:
             return "tool"
+        if workflow_executor_type in {"agent", "knowledge_retrieval", "tool", "llm", "code"}:
+            return workflow_executor_type
         if service_name in {"generic", "knowledge_memory"}:
             return "llm"
         return "llm"
@@ -192,7 +194,7 @@ class CapabilityRouter:
             route = intent_routes.get(step.name, analysis_routes.get(step.name, default_route))
             model_choice = self.model_router.route(self._task_kind_from_step(step.name))
             availability = self.model_router.ensure_available(model_choice["provider"], model_choice["model"])
-            executor_type = self._executor_type_for_step(step.name, route)
+            executor_type = self._executor_type_for_step(step.name, route, workflow_executor_type=step.executor_type)
             selector = self._selection_rationale(
                 task=task,
                 step=step.model_dump(),

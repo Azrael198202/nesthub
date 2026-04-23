@@ -2428,6 +2428,52 @@ function deriveWorkItems() {
   });
 }
 
+function mergeWorkflowSteps(existingSteps, liveSteps) {
+  const planned = Array.isArray(existingSteps) ? existingSteps : [];
+  const live = Array.isArray(liveSteps) ? liveSteps : [];
+  if (!planned.length) return live;
+  if (!live.length) return planned;
+
+  const byName = new Map();
+  const byLabel = new Map();
+  live.forEach((step) => {
+    const name = String(step?.name || "").trim();
+    const label = String(step?.label || "").trim();
+    if (name) byName.set(name, step);
+    if (label) byLabel.set(label, step);
+  });
+
+  let matchedCount = 0;
+  const merged = planned.map((step) => {
+    const name = String(step?.name || "").trim();
+    const label = String(step?.label || "").trim();
+    const hit = (name && byName.get(name)) || (label && byLabel.get(label));
+    if (!hit) return step;
+    matchedCount += 1;
+    return {
+      ...step,
+      status: hit.status || step.status || "sleeping",
+      preview: hit.preview || step.preview || "",
+      label: step.label || hit.label || step.name || hit.name || "",
+    };
+  });
+
+  // When planning step ids and runtime step ids are completely different,
+  // prefer real runtime progress to avoid misleading sleeping/working ghosts.
+  if (matchedCount === 0) {
+    return live;
+  }
+
+  const existingKeys = new Set(
+    merged.map((step) => `${String(step?.name || "").trim()}::${String(step?.label || "").trim()}`)
+  );
+  live.forEach((step) => {
+    const key = `${String(step?.name || "").trim()}::${String(step?.label || "").trim()}`;
+    if (!existingKeys.has(key)) merged.push(step);
+  });
+  return merged;
+}
+
 function buildWorkPipeline(item) {
   const route = item?.route || {};
   const taskSpec = route.taskSpec || {};
@@ -2437,9 +2483,9 @@ function buildWorkPipeline(item) {
   // ── Real workflow steps from the backend (compound pipelines) ──────────
   const workflowSteps = Array.isArray(route.workflowSteps) ? route.workflowSteps : [];
   if (workflowSteps.length > 0) {
-    return workflowSteps.map((step) => ({
-      id: step.name || step.label,
-      name: step.label || step.name,
+    return workflowSteps.map((step, index) => ({
+      id: step.name || step.label || `step_${index + 1}`,
+      name: currentLocale === "zh-CN" ? `工作流步骤 ${index + 1}` : currentLocale === "ja-JP" ? `ワークフローステップ ${index + 1}` : `Workflow Step ${index + 1}`,
       agents: [{
         name: step.label || step.name,
         state: step.status || (item?.status === "packed" ? "packed" : item?.status === "working" ? "working" : "sleeping"),
@@ -4924,9 +4970,13 @@ async function _pollExecutionProgress(sessionId, requestText, stopFlag) {
       const data = await resp.json();
       const steps = Array.isArray(data.steps) ? data.steps : [];
       if (steps.length > 0 && latestDashboard) {
+        const existingSteps = Array.isArray(latestDashboard?.lastVoiceRoute?.workflowSteps)
+          ? latestDashboard.lastVoiceRoute.workflowSteps
+          : [];
         latestDashboard.lastVoiceRoute = {
+          ...(latestDashboard.lastVoiceRoute || {}),
           requestText,
-          workflowSteps: steps,
+          workflowSteps: mergeWorkflowSteps(existingSteps, steps),
         };
         renderWorkTab();
       }
@@ -4940,6 +4990,7 @@ async function sendVoiceMessage(message, options = {}) {
   const { speakReply = true, localeOverride = "" } = options;
   const clean = String(message || "").trim();
   if (!clean) return;
+  const sessionId = _voiceChatSessionId();
   updateSpokenLine(`${t("speakers.you")}: ${clean}`);
   isBuddyThinking = true;
   renderFloatingBuddy();
@@ -4953,7 +5004,7 @@ async function sendVoiceMessage(message, options = {}) {
   if (latestDashboard) {
     latestDashboard.conversation = latestDashboard.conversation || [];
     latestDashboard.conversation.push({ speaker: "You", text: clean, time: _timeStr, createdAt: "" });
-    // Show initial "processing" placeholder so the Work tab shows the right request immediately
+    // Show initial "processing" placeholder first
     latestDashboard.lastVoiceRoute = {
       requestText: clean,
       workflowSteps: [{ name: "thinking", label: "⚙️ 处理中...", status: "working", preview: "" }],
@@ -4961,8 +5012,33 @@ async function sendVoiceMessage(message, options = {}) {
     renderWorkTab();
   }
 
+  // Ask backend for planned core+ workflow so Factory Line appears immediately.
+  try {
+    const previewResp = await fetch("/api/tvbox/workflow-plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: clean, sessionId }),
+    });
+    if (previewResp.ok && latestDashboard) {
+      const previewPayload = await previewResp.json();
+      const planned = Array.isArray(previewPayload?.steps) ? previewPayload.steps : [];
+      if (planned.length > 0) {
+        latestDashboard.lastVoiceRoute = {
+          ...(latestDashboard.lastVoiceRoute || {}),
+          requestText: clean,
+          workflowSteps: planned.map((step, idx) => ({
+            ...step,
+            status: idx === 0 ? "working" : (step.status || "sleeping"),
+          })),
+        };
+        renderWorkTab();
+      }
+    }
+  } catch (_) {
+    // planning preview is optional; fallback to live polling only.
+  }
+
   // ── Live step progress polling ──────────────────────────────────────────
-  const sessionId = _voiceChatSessionId();
   const pollStop = { stop: false };
   _pollExecutionProgress(sessionId, clean, pollStop);
 

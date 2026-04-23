@@ -45,12 +45,148 @@ class InformationAgentService:
         normalized = [str(item).strip() for item in phrases if str(item).strip()]
         return normalized or [self._default_completion_phrase()]
 
+    def _creation_followup_prompt(self) -> str:
+        configured = str(self._information_collection_policy().get("creation_followup_prompt") or "").strip()
+        if configured:
+            return configured
+        return "Please continue refining the agent settings; reply with the configured completion phrase when done."
+
+    def _message_text(self, key: str, default: str) -> str:
+        messages = self._information_collection_policy().get("messages", {})
+        if not isinstance(messages, dict):
+            return default
+        configured = str(messages.get(key) or "").strip()
+        return configured or default
+
+    def _default_text(self, key: str, default: str) -> str:
+        defaults = self._information_collection_policy().get("defaults", {})
+        if not isinstance(defaults, dict):
+            return default
+        configured = str(defaults.get(key) or "").strip()
+        return configured or default
+
+    def _activation_keyword_templates(self) -> list[str]:
+        payload = self._information_collection_policy().get("activation_keyword_templates", [])
+        if not isinstance(payload, list):
+            return []
+        templates: list[str] = []
+        for item in payload:
+            value = str(item).strip()
+            if value and value not in templates:
+                templates.append(value)
+        return templates
+
+    def _include_query_aliases_in_activation_keywords(self) -> bool:
+        return bool(self._information_collection_policy().get("include_query_aliases_in_activation_keywords", False))
+
+    def _build_activation_keywords(
+        self,
+        *,
+        entity_label: str,
+        query_aliases: dict[str, str] | None = None,
+        existing: list[str] | None = None,
+    ) -> list[str]:
+        keywords: list[str] = []
+        for item in list(existing or []):
+            value = str(item).strip()
+            if value and value not in keywords:
+                keywords.append(value)
+        if self._include_query_aliases_in_activation_keywords():
+            aliases = query_aliases or {}
+            for key in aliases.keys():
+                value = str(key).strip()
+                if value and value not in keywords:
+                    keywords.append(value)
+        for template in self._activation_keyword_templates():
+            try:
+                value = template.format(entity_label=entity_label).strip()
+            except Exception:
+                value = template.strip()
+            if value and value not in keywords:
+                keywords.append(value)
+        return keywords
+
+    def _explicit_creation_completion_requested(self, user_text: str, *, finalize_requested: bool = False) -> bool:
+        if finalize_requested:
+            return True
+        text = str(user_text or "").strip()
+        if not text:
+            return False
+        markers = set(self._completion_phrases())
+        return any(marker and marker in text for marker in markers)
+
+    def _creation_parsing_policy(self) -> dict[str, Any]:
+        payload = self._information_collection_policy().get("creation_parsing", {})
+        return payload if isinstance(payload, dict) else {}
+
+    def _extract_marked_value(self, text: str, markers: list[str]) -> str:
+        for marker in markers:
+            marker_text = str(marker).strip()
+            if not marker_text:
+                continue
+            for separator in ("：", ":"):
+                token = f"{marker_text}{separator}"
+                if token in text:
+                    return text.split(token, 1)[1].strip()
+        return ""
+
+    def _split_list_values(self, text: str) -> list[str]:
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return []
+        parts = re.split(r"[，,、；;。\n]+", cleaned)
+        values: list[str] = []
+        for item in parts:
+            value = str(item).strip()
+            if value and value not in values:
+                values.append(value)
+        return values
+
+    def _parse_creation_structured_input(self, text: str) -> dict[str, Any]:
+        policy = self._creation_parsing_policy()
+        field_markers = [str(item) for item in list(policy.get("field_markers", []) or []) if str(item).strip()]
+        trigger_markers = [str(item) for item in list(policy.get("trigger_markers", []) or []) if str(item).strip()]
+        completion_markers = [str(item) for item in list(policy.get("completion_markers", []) or []) if str(item).strip()]
+        if not field_markers and not trigger_markers and not completion_markers:
+            return {}
+
+        fields_raw = self._extract_marked_value(text, field_markers)
+        triggers_raw = self._extract_marked_value(text, trigger_markers)
+        completion_raw = self._extract_marked_value(text, completion_markers)
+
+        fields = self._split_list_values(fields_raw)
+        triggers = self._split_list_values(triggers_raw)
+        completion_phrase = completion_raw.strip().strip("“”\"'")
+        if completion_phrase and len(completion_phrase) < 2:
+            completion_phrase = ""
+
+        schema_fields = []
+        for field in fields:
+            key = self.normalize_slug(field)
+            schema_fields.append(
+                {
+                    "key": key,
+                    "prompt": self._default_text("schema_prompt_template", "Please provide {key}.").format(key=field),
+                }
+            )
+
+        return {
+            "schema_fields": schema_fields,
+            "activation_keywords": triggers,
+            "completion_phrase": completion_phrase,
+        }
+
     def default_information_field_definitions(self) -> list[dict[str, str]]:
+        configured_fields = self._information_collection_policy().get("default_fields", [])
+        if isinstance(configured_fields, list):
+            normalized_configured = self._normalize_schema_fields(configured_fields)
+            if normalized_configured:
+                return normalized_configured
         return [
-            {"key": "item_name", "prompt": "好的，请问要记录的对象名称是什么？"},
-            {"key": "item_type", "prompt": "它属于什么类型或角色？"},
-            {"key": "summary", "prompt": "请给出一句简要说明。"},
-            {"key": "details", "prompt": "还有什么需要记录的？如果没有了，请回答 完成添加。"},
+            {"key": "item_name", "prompt": self._default_text("field_prompt_item_name", "Please provide the item name.")},
+            {"key": "item_type", "prompt": self._default_text("field_prompt_item_type", "Please provide the item type or role.")},
+            {"key": "summary", "prompt": self._default_text("field_prompt_summary", "Please provide a short summary.")},
+            {"key": "details", "prompt": self._default_text("field_prompt_details", "Please add any extra details, or reply with the completion phrase.")},
         ]
 
     def _default_agent_workflow_state(self, user_text: str = "") -> dict[str, Any]:
@@ -67,7 +203,10 @@ class InformationAgentService:
             "query_aliases": {},
             "completion_phrase": self._default_completion_phrase(),
             "next_action": "ask_user",
-            "next_question": "这个智能体需要收集什么信息？如果你已经描述完整，也可以直接说明完成条件。",
+            "next_question": self._message_text(
+                "creation_initial_question",
+                "What information should this agent collect? If complete, you can also provide the completion condition.",
+            ),
             "summary": user_text.strip(),
             "completion_ready": False,
             "conversation": [{"role": "user", "content": user_text}] if user_text.strip() else [],
@@ -84,7 +223,7 @@ class InformationAgentService:
             prompt = str(item.get("prompt") or "").strip()
             if not key:
                 continue
-            normalized.append({"key": key, "prompt": prompt or f"请补充 {key}。"})
+            normalized.append({"key": key, "prompt": prompt or self._default_text("schema_prompt_template", "Please provide {key}.").format(key=key)})
         return normalized or self.default_information_field_definitions()
 
     def _normalize_agent_workflow_state(self, payload: dict[str, Any], previous: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -95,13 +234,22 @@ class InformationAgentService:
         missing_fields = payload.get("missing_fields") if isinstance(payload.get("missing_fields"), list) else previous.get("missing_fields", [])
         conversation = payload.get("conversation") if isinstance(payload.get("conversation"), list) else previous.get("conversation", [])
         purpose = str(payload.get("purpose") or previous.get("purpose") or "").strip()
-        entity_label = str(payload.get("entity_label") or previous.get("entity_label") or purpose or "信息条目").strip()
+        entity_label = str(
+            payload.get("entity_label")
+            or previous.get("entity_label")
+            or purpose
+            or self._default_text("entity_label_default", "Information Item")
+        ).strip()
         profile = str(payload.get("profile") or previous.get("profile") or "generic_information").strip() or "generic_information"
         capture_mode = str(payload.get("capture_mode") or previous.get("capture_mode") or "guided_collection").strip() or "guided_collection"
         default_completion_phrase = self._default_completion_phrase()
         completion_phrase = str(payload.get("completion_phrase") or previous.get("completion_phrase") or default_completion_phrase).strip() or default_completion_phrase
         next_action = str(payload.get("next_action") or previous.get("next_action") or "ask_user").strip() or "ask_user"
-        next_question = str(payload.get("next_question") or previous.get("next_question") or "请继续补充。").strip() or "请继续补充。"
+        next_question = str(
+            payload.get("next_question")
+            or previous.get("next_question")
+            or self._default_text("next_question_default", "Please continue.")
+        ).strip() or self._default_text("next_question_default", "Please continue.")
         summary = str(payload.get("summary") or previous.get("summary") or purpose or entity_label).strip()
         return {
             "status": str(payload.get("status") or previous.get("status") or "collecting_requirements"),
@@ -132,7 +280,12 @@ class InformationAgentService:
         inferred_entity_label = str(profile.get("entity_label") or "").strip()
         inferred_schema = self._normalize_schema_fields(profile.get("knowledge_schema") or [])
         inferred_aliases = {str(key): str(value) for key, value in dict(profile.get("query_aliases") or {}).items()}
-        entity_label = inferred_entity_label or state.get("entity_label") or self.normalize_slug(purpose).replace("_", " ") or "信息条目"
+        entity_label = (
+            inferred_entity_label
+            or state.get("entity_label")
+            or self.normalize_slug(purpose).replace("_", " ")
+            or self._default_text("entity_label_default", "Information Item")
+        )
         completion_requested = finalize_requested or any(marker in user_text for marker in self._completion_phrases())
         schema_fields = inferred_schema or state.get("schema_fields") or self.default_information_field_definitions()
         if not state.get("purpose") and user_text.strip() and not completion_requested:
@@ -148,13 +301,20 @@ class InformationAgentService:
                     "summary": user_text.strip(),
                     "conversation": conversation,
                     "missing_fields": ["schema_fields", "activation_keywords"],
-                    "next_question": "请说明这个智能体需要收集哪些字段，以及什么情况下算创建完成。",
+                    "next_question": self._message_text(
+                        "creation_schema_question",
+                        "Please list the fields this agent should collect and define the completion condition.",
+                    ),
                     "next_action": "ask_user",
                 },
                 state,
             )
         if completion_requested:
-            activation_keywords = state.get("activation_keywords") or [f"添加{entity_label}到{entity_label}智能体中", f"查询{entity_label}智能体"]
+            activation_keywords = self._build_activation_keywords(
+                entity_label=entity_label,
+                query_aliases=inferred_aliases,
+                existing=state.get("activation_keywords") or [],
+            )
             return self._normalize_agent_workflow_state(
                 {
                     **state,
@@ -185,7 +345,10 @@ class InformationAgentService:
                 "query_aliases": inferred_aliases,
                 "schema_fields": schema_fields,
                 "conversation": conversation,
-                "next_question": "如果字段和完成条件已经齐了，请直接回复完成创建；否则继续补充需要收集的信息。",
+                "next_question": self._message_text(
+                    "creation_continue_question",
+                    "If fields and completion condition are ready, reply with the completion phrase; otherwise continue refining.",
+                ),
                 "next_action": "ask_user",
             },
             state,
@@ -238,42 +401,122 @@ class InformationAgentService:
         return payload if isinstance(payload, dict) else None
 
     def _advance_agent_creation_workflow(self, previous: dict[str, Any], user_text: str, *, finalize_requested: bool = False) -> dict[str, Any]:
+        """
+        多轮字段/触发词/完成条件补全与归一化，提升健壮性和体验。
+        """
         payload = self._invoke_agent_workflow_model(previous, user_text, finalize_requested=finalize_requested)
         if payload is None:
-            return self._fallback_agent_workflow_update(previous, user_text, finalize_requested=finalize_requested)
-        merged = self._normalize_agent_workflow_state(payload, previous)
+            merged = self._fallback_agent_workflow_update(previous, user_text, finalize_requested=finalize_requested)
+        else:
+            merged = self._normalize_agent_workflow_state(payload, previous)
+        # conversation 补全
+        conversation = list(merged.get("conversation") or previous.get("conversation") or [])
         if user_text.strip():
-            merged.setdefault("conversation", list(previous.get("conversation", [])))
-            merged["conversation"] = [*list(previous.get("conversation", [])), {"role": "user", "content": user_text.strip()}]
+            conversation.append({"role": "user", "content": user_text.strip()})
+        # 多轮补全所有字段/触发词/完成条件
+        policy = self._information_collection_policy()
+        field_markers = [str(item) for item in list(policy.get("creation_parsing", {}).get("field_markers", [])) if str(item).strip()]
+        trigger_markers = [str(item) for item in list(policy.get("creation_parsing", {}).get("trigger_markers", [])) if str(item).strip()]
+        completion_markers = [str(item) for item in list(policy.get("creation_parsing", {}).get("completion_markers", [])) if str(item).strip()]
+        all_fields = []
+        all_triggers = []
+        all_completion_phrases = []
+        for msg in conversation:
+            content = str(msg.get("content") or "")
+            # 字段
+            fields_raw = self._extract_marked_value(content, field_markers)
+            all_fields.extend(self._split_list_values(fields_raw))
+            # 触发词
+            triggers_raw = self._extract_marked_value(content, trigger_markers)
+            all_triggers.extend(self._split_list_values(triggers_raw))
+            # 完成条件
+            completion_raw = self._extract_marked_value(content, completion_markers)
+            if completion_raw:
+                all_completion_phrases.append(completion_raw.strip().strip("“”\"'"))
+        # 字段归一化
+        field_aliases = policy.get("field_aliases", {})
+        normalized_fields = []
+        for field in all_fields:
+            key = self.normalize_slug(field)
+            key = field_aliases.get(field, key)
+            if key and key not in normalized_fields:
+                normalized_fields.append(key)
+        # 触发词去重
+        normalized_triggers = []
+        for trig in all_triggers:
+            trig = trig.strip()
+            if trig and trig not in normalized_triggers:
+                normalized_triggers.append(trig)
+        # 合并到 merged
+        if normalized_fields:
+            merged["schema_fields"] = self._normalize_schema_fields([{"key": k, "prompt": self._default_text("schema_prompt_template", "请补充 {key}。" ).format(key=k)} for k in normalized_fields])
+            merged["missing_fields"] = [item for item in list(merged.get("missing_fields") or []) if str(item) != "schema_fields"]
+        if normalized_triggers:
+            merged["activation_keywords"] = self._build_activation_keywords(
+                entity_label=str(merged.get("entity_label") or self._default_text("entity_label_default", "Information Item")),
+                query_aliases=merged.get("query_aliases") or {},
+                existing=[*list(merged.get("activation_keywords") or []), *normalized_triggers],
+            )
+            merged["missing_fields"] = [item for item in list(merged.get("missing_fields") or []) if str(item) != "activation_keywords"]
+        if all_completion_phrases:
+            merged["completion_phrase"] = all_completion_phrases[-1]
+        # 判断是否可以自动完成
+        if normalized_fields and normalized_triggers:
+            merged["completion_ready"] = True
+            merged["next_action"] = "finalize_agent"
+            merged["next_question"] = ""
+            merged["missing_fields"] = []
+        else:
+            # 没补全则继续追问
+            merged["completion_ready"] = False
+            if str(merged.get("next_action") or "") == "finalize_agent":
+                merged["next_action"] = "ask_user"
+                merged["next_question"] = (
+                    str(merged.get("next_question") or "").strip()
+                    or self._creation_followup_prompt()
+                )
+        merged["conversation"] = conversation
         return merged
 
     def _build_blueprint_from_workflow_state(self, workflow_state: dict[str, Any]) -> dict[str, Any]:
-        purpose = str(workflow_state.get("purpose") or workflow_state.get("summary") or "信息收集").strip()
-        entity_label = str(workflow_state.get("entity_label") or purpose or "信息条目").strip()
+        purpose = str(workflow_state.get("purpose") or workflow_state.get("summary") or self._default_text("purpose_default", "Information Collection")).strip()
+        entity_label = str(
+            workflow_state.get("entity_label")
+            or purpose
+            or self._default_text("entity_label_default", "Information Item")
+        ).strip()
         schema_fields = self._normalize_schema_fields(workflow_state.get("schema_fields"))
         profile = str(workflow_state.get("profile") or "generic_information")
         if profile == "generic_information":
-            if entity_label and entity_label != "信息条目":
+            if entity_label and entity_label != self._default_text("entity_label_default", "Information Item"):
                 profile = "entity_directory"
         capture_mode = str(workflow_state.get("capture_mode") or "guided_collection")
-        activation_keywords = [str(item).strip() for item in workflow_state.get("activation_keywords", []) if str(item).strip()]
-        if not activation_keywords:
-            activation_keywords = [f"添加{entity_label}到{entity_label}智能体中", f"查询{entity_label}智能体"]
+        activation_keywords = self._build_activation_keywords(
+            entity_label=entity_label,
+            query_aliases=workflow_state.get("query_aliases") or {},
+            existing=[str(item).strip() for item in workflow_state.get("activation_keywords", []) if str(item).strip()],
+        )
         base_profile = {
             "profile": profile,
             "entity_label": entity_label,
-            "role": f"{entity_label}信息智能体",
+            "role": self._default_text("role_template", "{entity_label} Information Agent").format(entity_label=entity_label),
             "knowledge_schema": schema_fields,
             "query_aliases": {str(key): str(value) for key, value in dict(workflow_state.get("query_aliases") or {}).items()},
             "completion_phrase": str(workflow_state.get("completion_phrase") or self._default_completion_phrase()),
             "capture_mode": capture_mode,
-            "knowledge_added_message": f"已完成添加，并已记录该{entity_label}信息。",
+            "knowledge_added_message": self._default_text(
+                "knowledge_added_message_template",
+                "Added successfully and recorded {entity_label} information.",
+            ).format(entity_label=entity_label),
             "signals": {
                 "combined_text": purpose,
                 "profile_seed": profile,
                 "entity_label": entity_label,
-                "role_name": f"{entity_label}信息智能体",
-                "knowledge_added_message": f"已完成添加，并已记录该{entity_label}信息。",
+                "role_name": self._default_text("role_template", "{entity_label} Information Agent").format(entity_label=entity_label),
+                "knowledge_added_message": self._default_text(
+                    "knowledge_added_message_template",
+                    "Added successfully and recorded {entity_label} information.",
+                ).format(entity_label=entity_label),
                 "query_aliases": workflow_state.get("query_aliases") or {},
                 "knowledge_schema": schema_fields,
             },
@@ -286,7 +529,7 @@ class InformationAgentService:
         return {
             **identity,
             "profile": profile,
-            "role": f"{entity_label}信息智能体",
+            "role": self._default_text("role_template", "{entity_label} Information Agent").format(entity_label=entity_label),
             "description": purpose,
             "knowledge_entity_label": entity_label,
             "knowledge_schema": schema_fields,
@@ -338,7 +581,7 @@ class InformationAgentService:
         profile_definition = self._resolve_profile_definition(signals)
         if profile_definition is not None and profile_definition.get("role_name"):
             return str(profile_definition.get("role_name"))
-        return "信息管理智能体"
+        return self._default_text("role_default", "Information Management Agent")
 
     def infer_capture_mode(self, signals: dict[str, Any]) -> str:
         profile = self.agent_framework_service.infer_information_profile(
@@ -351,7 +594,7 @@ class InformationAgentService:
         profile_definition = self._resolve_profile_definition(signals)
         if profile_definition is not None and profile_definition.get("knowledge_added_message"):
             return str(profile_definition.get("knowledge_added_message"))
-        return "已完成添加，并已记录该信息。"
+        return self._default_text("knowledge_added_message_default", "Added successfully and recorded the information.")
 
     def normalize_slug(self, text: str) -> str:
         normalized = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "_", text.lower()).strip("_")
@@ -392,14 +635,17 @@ class InformationAgentService:
         return {
             **identity,
             "profile": profile.get("profile", "generic_information"),
-            "role": profile.get("role", "信息管理智能体"),
-            "description": purpose or "用于记录和查询结构化信息。",
-            "knowledge_entity_label": profile.get("entity_label", "信息条目"),
+            "role": profile.get("role", self._default_text("role_default", "Information Management Agent")),
+            "description": purpose or self._default_text("description_default", "Used to record and query structured information."),
+            "knowledge_entity_label": profile.get("entity_label", self._default_text("entity_label_default", "Information Item")),
             "knowledge_schema": profile.get("knowledge_schema", self.default_information_field_definitions()),
             "query_aliases": profile.get("query_aliases", {}),
             "completion_phrase": profile.get("completion_phrase", self._default_completion_phrase()),
             "capture_mode": profile.get("capture_mode", "guided_collection"),
-            "knowledge_added_message": profile.get("knowledge_added_message", "已完成添加，并已记录该信息。"),
+            "knowledge_added_message": profile.get(
+                "knowledge_added_message",
+                self._default_text("knowledge_added_message_default", "Added successfully and recorded the information."),
+            ),
             "agent_class": profile.get("agent_class", "information"),
             "agent_layer": profile.get("agent_layer", "knowledge"),
             "workflow_roles": profile.get("workflow_roles", ["knowledge_base"]),
@@ -424,7 +670,10 @@ class InformationAgentService:
                         "agent_id": configured_agent.get("agent_id"),
                         "record_id": record_id,
                         "record": complete_record,
-                        "entity_label": configured_agent.get("knowledge_entity_label", "信息条目"),
+                        "entity_label": configured_agent.get(
+                            "knowledge_entity_label",
+                            self._default_text("entity_label_default", "Information Item"),
+                        ),
                     },
                     item_id=record_id,
                 )
@@ -444,7 +693,7 @@ class InformationAgentService:
         direct_records: list[dict[str, Any]] = []
         for item in extracted:
             record = {
-                "item_name": item.get("actor") or item.get("label") or item.get("content") or "未命名对象",
+                "item_name": item.get("actor") or item.get("label") or item.get("content") or self._default_text("unnamed_record_default", "Unnamed Item"),
                 "item_type": item.get("record_type") or "generic",
                 "summary": item.get("content") or item.get("raw_text") or text,
                 "contact": item.get("location") or "",
@@ -569,27 +818,47 @@ class InformationAgentService:
                 break
         if semantic_field:
             subject = record.get("item_name") or record.get("item_type") or entity_label
-            return f"{subject}的{semantic_field}是{record.get(semantic_field)}。"
+            return self._message_text("answer_field_template", "{subject} {field} is {value}.").format(
+                subject=subject,
+                field=semantic_field,
+                value=record.get(semantic_field),
+            )
         for keyword, field in mapping.items():
             if keyword in text:
                 value = record.get(field)
                 if value:
                     subject = record.get("item_name") or record.get("item_type") or entity_label
-                    return f"{subject}的{keyword}是{value}。"
+                    return self._message_text("answer_keyword_template", "{subject} {keyword} is {value}.").format(
+                        subject=subject,
+                        keyword=keyword,
+                        value=value,
+                    )
                 subject = record.get("item_name") or record.get("item_type") or entity_label
-                return f"当前没有记录{subject}的{keyword}。"
+                return self._message_text("answer_keyword_missing_template", "No {keyword} is recorded for {subject}.").format(
+                    subject=subject,
+                    keyword=keyword,
+                )
         subject = record.get("item_name") or record.get("item_type") or entity_label
-        return f"已找到{subject}的{entity_label}资料。"
+        return self._message_text("answer_record_found_template", "Found {entity_label} data for {subject}.").format(
+            subject=subject,
+            entity_label=entity_label,
+        )
 
     def build_configured_agent_payload(self, state: dict[str, Any]) -> dict[str, Any]:
         configured_agent = state.get("configured_agent") or {}
         return {
             "agent_id": configured_agent.get("agent_id", "information_agent"),
             "name": configured_agent.get("name", "information_agent"),
-            "role": configured_agent.get("role", "信息管理智能体"),
-            "description": configured_agent.get("description", configured_agent.get("purpose", "用于记录和查询结构化信息。")),
+            "role": configured_agent.get("role", self._default_text("role_default", "Information Management Agent")),
+            "description": configured_agent.get(
+                "description",
+                configured_agent.get("purpose", self._default_text("description_default", "Used to record and query structured information.")),
+            ),
             "knowledge_namespace": configured_agent.get("knowledge_namespace", "agent_knowledge/information_agent"),
-            "knowledge_entity_label": configured_agent.get("knowledge_entity_label", "信息条目"),
+            "knowledge_entity_label": configured_agent.get(
+                "knowledge_entity_label",
+                self._default_text("entity_label_default", "Information Item"),
+            ),
             "schema_fields": [item.get("key") for item in configured_agent.get("knowledge_schema", self.default_information_field_definitions())],
             "knowledge_records": list((configured_agent.get("knowledge_records") or {}).values()),
             "status": configured_agent.get("status", "draft"),
@@ -603,8 +872,14 @@ class InformationAgentService:
     def _setup_completion_hint(self, draft: dict[str, Any]) -> str:
         purpose = str(draft.get("purpose") or "").strip()
         if purpose:
-            return f"如果没有，请回答：没有了，完成创建。系统会根据“{purpose}”自动补全采集结构。"
-        return "如果没有，请回答：没有了，完成创建。系统会自动补全采集结构。"
+            return self._message_text(
+                "setup_completion_hint_with_purpose",
+                "If there is nothing else, reply with the completion phrase. The system will auto-complete fields for \"{purpose}\".",
+            ).format(purpose=purpose)
+        return self._message_text(
+            "setup_completion_hint_generic",
+            "If there is nothing else, reply with the completion phrase. The system will auto-complete field collection.",
+        )
 
     def manage_information_agent(
         self,
@@ -621,11 +896,18 @@ class InformationAgentService:
         setup = state.get("agent_setup") or {}
         collection = state.get("knowledge_collection") or {}
 
-        if task.intent == "create_information_agent" and not setup.get("active") and configured_agent.get("status") != "active":
-            workflow_state = self._advance_agent_creation_workflow(self._default_agent_workflow_state(text), text)
+        if task.intent == "create_information_agent" and not setup.get("active"):
+            # First turn always enters guided creation mode; do not auto-finalize.
+            workflow_state = self._default_agent_workflow_state(text)
             updated = self.session_store.patch(
                 context.session_id,
                 {
+                    "knowledge_collection": {
+                        "active": False,
+                        "field_index": 0,
+                        "fields": self.default_information_field_definitions(),
+                        "data": {},
+                    },
                     "agent_setup": {
                         "active": True,
                         "stage": "ai_workflow",
@@ -635,13 +917,19 @@ class InformationAgentService:
                 },
             )
             return {
-                "message": str(workflow_state.get("next_question") or "这个智能体需要收集什么信息？"),
+                "message": str(
+                    workflow_state.get("next_question")
+                    or self._message_text(
+                        "creation_initial_question",
+                        "What information should this agent collect? If complete, you can also provide the completion condition.",
+                    )
+                ),
                 "dialog_state": {"stage": "ai_workflow", "next_action": workflow_state.get("next_action", "ask_user")},
                 "agent": self.build_configured_agent_payload(updated),
                 "workflow_state": workflow_state,
             }
 
-        if task.intent in {"refine_information_agent", "finalize_information_agent"} and setup.get("active"):
+        if task.intent in {"create_information_agent", "refine_information_agent", "finalize_information_agent"} and setup.get("active"):
             previous_workflow_state = setup.get("workflow_state") or self._default_agent_workflow_state()
             workflow_state = self._advance_agent_creation_workflow(
                 previous_workflow_state,
@@ -674,7 +962,13 @@ class InformationAgentService:
                     },
                 )
                 return {
-                    "message": f"已完成创建{blueprint['role']}。启动关键字：{', '.join(blueprint.get('activation_keywords', []))}",
+                    "message": self._message_text(
+                        "creation_completed_template",
+                        "Creation completed for {role}. Activation keywords: {activation_keywords}",
+                    ).format(
+                        role=blueprint["role"],
+                        activation_keywords=", ".join(blueprint.get("activation_keywords", [])),
+                    ),
                     "dialog_state": {"stage": "completed", "next_action": "activate_agent"},
                     "agent": self.build_configured_agent_payload(updated),
                     "workflow_state": workflow_state,
@@ -705,7 +999,10 @@ class InformationAgentService:
         if task.intent == "capture_agent_knowledge":
             if configured_agent.get("status") != "active" and not collection.get("active"):
                 return {
-                    "message": "当前还没有完成信息型智能体的创建，请先完成创建。",
+                    "message": self._message_text(
+                        "configured_agent_missing_message",
+                        "No active information agent is available yet. Please complete creation first.",
+                    ),
                     "dialog_state": {"stage": "configured_agent_missing"},
                 }
 
@@ -722,8 +1019,24 @@ class InformationAgentService:
                             "knowledge_collection": {"active": False, "field_index": 0, "fields": field_defs, "data": {}},
                         },
                     )
-                    base_message = str(configured_agent.get("knowledge_added_message") or "已完成添加，并已记录该信息。")
-                    message = base_message if len(direct_records) == 1 else f"已完成添加，并记录了{len(direct_records)}条{configured_agent.get('knowledge_entity_label', '信息')}。"
+                    base_message = str(
+                        configured_agent.get("knowledge_added_message")
+                        or self._default_text("knowledge_added_message_default", "Added successfully and recorded the information.")
+                    )
+                    message = (
+                        base_message
+                        if len(direct_records) == 1
+                        else self._message_text(
+                            "knowledge_added_batch_template",
+                            "Added successfully and recorded {count} {entity_label} entries.",
+                        ).format(
+                            count=len(direct_records),
+                            entity_label=configured_agent.get(
+                                "knowledge_entity_label",
+                                self._default_text("entity_label_default", "Information Item"),
+                            ),
+                        )
+                    )
                     return {
                         "message": message,
                         "dialog_state": {"stage": "knowledge_added"},
@@ -760,7 +1073,10 @@ class InformationAgentService:
                             },
                         )
                         return {
-                            "message": str(configured_agent.get("knowledge_added_message") or "已完成添加，并已记录该信息。"),
+                            "message": str(
+                                configured_agent.get("knowledge_added_message")
+                                or self._default_text("knowledge_added_message_default", "Added successfully and recorded the information.")
+                            ),
                             "dialog_state": {"stage": "knowledge_added"},
                             "knowledge": record,
                             "knowledge_vector_record": vector_records[0],
@@ -826,7 +1142,10 @@ class InformationAgentService:
                     },
                 )
                 return {
-                    "message": str(configured_agent.get("knowledge_added_message") or "已完成添加，并已记录该信息。"),
+                    "message": str(
+                        configured_agent.get("knowledge_added_message")
+                        or self._default_text("knowledge_added_message_default", "Added successfully and recorded the information.")
+                    ),
                     "dialog_state": {"stage": "knowledge_added"},
                     "knowledge": record,
                     "knowledge_vector_record": vector_records[0],
@@ -849,7 +1168,10 @@ class InformationAgentService:
                     },
                 )
                 return {
-                    "message": str(configured_agent.get("knowledge_added_message") or "已完成添加，并已记录该信息。"),
+                    "message": str(
+                        configured_agent.get("knowledge_added_message")
+                        or self._default_text("knowledge_added_message_default", "Added successfully and recorded the information.")
+                    ),
                     "dialog_state": {"stage": "knowledge_added"},
                     "knowledge": record,
                     "knowledge_vector_record": vector_records[0],
@@ -875,7 +1197,7 @@ class InformationAgentService:
                 "agent": self.build_configured_agent_payload(updated),
             }
 
-        return {"message": "当前没有可执行的信息型智能体操作。"}
+        return {"message": self._message_text("no_executable_operation_message", "No executable information-agent operation is available.")}
 
     def query_information_knowledge(self, *, text: str, context: CoreContextSchema) -> dict[str, Any]:
         state = self.session_store.get(context.session_id)
@@ -890,9 +1212,16 @@ class InformationAgentService:
                 )
         records = configured_agent.get("knowledge_records") or {}
         if configured_agent.get("status") != "active":
-            return {"message": "当前还没有完成信息型智能体的创建。", "answer": None, "knowledge_hits": []}
+            return {
+                "message": self._message_text("query_before_creation_message", "No information agent has been fully created yet."),
+                "answer": None,
+                "knowledge_hits": [],
+            }
         schema_fields = configured_agent.get("knowledge_schema") or self.default_information_field_definitions()
-        entity_label = str(configured_agent.get("knowledge_entity_label") or "信息条目")
+        entity_label = str(
+            configured_agent.get("knowledge_entity_label")
+            or self._default_text("entity_label_default", "Information Item")
+        )
         normalized_text = str(text).strip().lower()
         record = self.find_record_by_text(text, records, schema_fields)
         knowledge_hits = self.vector_store.search(
@@ -945,7 +1274,14 @@ class InformationAgentService:
                 for item in records.values()
             ]
         if not record:
-            return {"message": f"当前没有找到对应的{entity_label}信息。", "answer": None, "knowledge_hits": knowledge_hits}
+            return {
+                "message": self._message_text(
+                    "query_not_found_template",
+                    "No matching {entity_label} information was found.",
+                ).format(entity_label=entity_label),
+                "answer": None,
+                "knowledge_hits": knowledge_hits,
+            }
         answer = self.answer_record_field(text, record, configured_agent.get("query_aliases") or {}, entity_label, schema_fields)
         return {"message": answer, "answer": answer, "knowledge": record, "knowledge_hits": knowledge_hits}
 
@@ -990,17 +1326,26 @@ class InformationAgentService:
                 continue
             if metadata_type != "information_agent_definition":
                 continue
-            entity_label = str(metadata.get("entity_label") or "信息条目")
+            entity_label = str(
+                metadata.get("entity_label")
+                or self._default_text("entity_label_default", "Information Item")
+            )
             schema_fields = [
-                {"key": str(item), "prompt": f"请补充 {item}。"}
+                {
+                    "key": str(item),
+                    "prompt": self._default_text("schema_prompt_template", "Please provide {key}.").format(key=str(item)),
+                }
                 for item in list(metadata.get("schema_fields") or [])
                 if str(item).strip()
             ] or self.default_information_field_definitions()
             return {
                 "agent_id": str(metadata.get("agent_id") or f"recovered_{session_id}"),
                 "name": str(metadata.get("agent_id") or f"{entity_label}_agent"),
-                "role": f"{entity_label}信息智能体",
-                "description": f"从长期记忆恢复的{entity_label}信息智能体",
+                "role": self._default_text("role_template", "{entity_label} Information Agent").format(entity_label=entity_label),
+                "description": self._default_text(
+                    "recovered_description_template",
+                    "Recovered {entity_label} information agent from long-term memory.",
+                ).format(entity_label=entity_label),
                 "knowledge_namespace": "agent_knowledge/information_agent",
                 "knowledge_entity_label": entity_label,
                 "knowledge_schema": schema_fields,
@@ -1014,12 +1359,18 @@ class InformationAgentService:
                 "knowledge_records": {},
             }
         if fallback_record is not None:
-            entity_label = str(fallback_record.get("entity_label") or "信息条目")
+            entity_label = str(
+                fallback_record.get("entity_label")
+                or self._default_text("entity_label_default", "Information Item")
+            )
             return {
                 "agent_id": str(fallback_record.get("agent_id") or f"recovered_{session_id}"),
                 "name": str(fallback_record.get("agent_id") or f"{entity_label}_agent"),
-                "role": f"{entity_label}信息智能体",
-                "description": f"从长期记忆恢复的{entity_label}信息智能体",
+                "role": self._default_text("role_template", "{entity_label} Information Agent").format(entity_label=entity_label),
+                "description": self._default_text(
+                    "recovered_description_template",
+                    "Recovered {entity_label} information agent from long-term memory.",
+                ).format(entity_label=entity_label),
                 "knowledge_namespace": "agent_knowledge/information_agent",
                 "knowledge_entity_label": entity_label,
                 "knowledge_schema": self.default_information_field_definitions(),

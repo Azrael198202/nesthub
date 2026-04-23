@@ -7,7 +7,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from nethub_runtime.core.services.core_engine import AICore
+from nethub_runtime.core.services.core_engine_provider import create_core_engine
 
 router = APIRouter()
 
@@ -53,7 +53,7 @@ class TrainingRunStartRequest(BaseModel):
     dry_run: bool = True
     note: str = ""
 
-core_engine = AICore()
+core_engine = create_core_engine()
 
 @router.post("/handle")
 async def handle(payload: HandleRequest) -> HandleResponse:

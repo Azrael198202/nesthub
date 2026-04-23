@@ -375,6 +375,12 @@ class ModelRouter:
         if not routing:
             routing = policies.get("default") or policies.get("general_chat", {})
 
+        profile_override = self._profile_override_routing(task_type)
+        if profile_override:
+            merged_routing = dict(routing or {})
+            merged_routing.update(profile_override)
+            routing = merged_routing
+
         if not routing:
             any_model = self._get_any_available_model()
             return [] if any_model == "unknown" else [any_model]
@@ -421,6 +427,37 @@ class ModelRouter:
             LOGGER.warning("No models available!")
             return "unknown"
         return list(self.model_cache.keys())[0]
+
+    def _local_profile_config(self) -> dict[str, Any]:
+        payload = self.config.get("local_composite_profiles", {})
+        return payload if isinstance(payload, dict) else {}
+
+    def active_local_profile_info(self) -> dict[str, Any]:
+        profile_config = self._local_profile_config()
+        env_name = str(profile_config.get("active_profile_env") or "NETHUB_ACTIVE_LORA_PROFILE").strip() or "NETHUB_ACTIVE_LORA_PROFILE"
+        default_profile = str(profile_config.get("default_profile") or "base_local").strip() or "base_local"
+        requested_profile = str(os.getenv(env_name, default_profile) or default_profile).strip() or default_profile
+        profiles = profile_config.get("profiles", {})
+        profiles = profiles if isinstance(profiles, dict) else {}
+        resolved_name = requested_profile if requested_profile in profiles else default_profile
+        resolved = profiles.get(resolved_name, {}) if isinstance(profiles.get(resolved_name, {}), dict) else {}
+        return {
+            "name": resolved_name,
+            "requested": requested_profile,
+            "source_env": env_name,
+            "enabled": bool(resolved.get("enabled", True)),
+            "description": str(resolved.get("description") or ""),
+            "task_routing_overrides": dict(resolved.get("task_routing_overrides") or {}),
+            "adapter_hint": dict(resolved.get("adapter_hint") or {}),
+        }
+
+    def _profile_override_routing(self, task_type: str) -> dict[str, Any] | None:
+        profile = self.active_local_profile_info()
+        overrides = profile.get("task_routing_overrides") or {}
+        if not isinstance(overrides, dict):
+            return None
+        override = overrides.get(task_type) or overrides.get("default")
+        return dict(override) if isinstance(override, dict) else None
     
     def get_model_config(self, model_id: str) -> dict[str, Any]:
         """获取模型配置"""
@@ -674,6 +711,7 @@ class ModelRouter:
         schema_errors: list[str] | None = None,
         tool_calls_valid: bool = True,
         tool_calls: list[dict[str, Any]] | None = None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> None:
         """Persist a full invocation record (score + schema + tool calls) to the runtime learning store."""
         try:
@@ -692,6 +730,8 @@ class ModelRouter:
                 detail_parts.append(f"schema_errors={schema_errors[:3]}")
             if tool_calls:
                 detail_parts.append(f"tool_calls={[c['name'] for c in tool_calls]}")
+            if runtime_context:
+                detail_parts.append(f"runtime_context={runtime_context}")
             store.record_attempt(
                 task_type=task_type,
                 gap="model_invocation",
@@ -703,12 +743,26 @@ class ModelRouter:
         except Exception as exc:
             LOGGER.debug("Write to knowledge store skipped: %s", exc)
 
+    def _prepare_runtime_invoke_context(self, task_type: str, params: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        sanitized = dict(params)
+        explicit_profile = sanitized.pop("local_profile", None)
+        explicit_adapter_hint = sanitized.pop("adapter_hint", None)
+        profile = explicit_profile if isinstance(explicit_profile, dict) else self.active_local_profile_info()
+        adapter_hint = dict(explicit_adapter_hint) if isinstance(explicit_adapter_hint, dict) else dict(profile.get("adapter_hint") or {})
+        runtime_context = {
+            "task_type": task_type,
+            "local_profile": profile,
+            "adapter_hint": adapter_hint,
+        }
+        return sanitized, runtime_context
+
     async def _invoke_single(
         self,
         model: str,
         messages: list[dict],
         merged_params: dict,
         timeout_sec: float,
+        runtime_context: dict[str, Any] | None = None,
     ) -> tuple[str, Any]:
         """Attempt one model invocation (with per-provider retry policy).
         Returns (text, raw_response). Raises on failure.
@@ -728,6 +782,13 @@ class ModelRouter:
             try:
                 if min_interval_ms > 0:
                     await asyncio.sleep(min_interval_ms / 1000.0)
+                if runtime_context and str(model_config.get("provider_type") or "").lower() == "ollama":
+                    LOGGER.info(
+                        "Applying local runtime context for %s: profile=%s adapter_hint=%s",
+                        litellm_model,
+                        (runtime_context.get("local_profile") or {}).get("name", "base_local"),
+                        runtime_context.get("adapter_hint") or {},
+                    )
                 response = await acompletion(
                     model=litellm_model,
                     messages=messages,
@@ -758,6 +819,7 @@ class ModelRouter:
         task_type: str,
         prompt_preview: str,
         output_schema: dict[str, Any] | None = None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> str | None:
         """Try *candidates* in order.
 
@@ -777,8 +839,17 @@ class ModelRouter:
             if not await self._candidate_is_ready(model, timeout_sec):
                 continue
             try:
-                LOGGER.info("[%s tier] invoking %s for %s", tier, model, task_type)
-                text, raw_response = await self._invoke_single(model, messages, merged_params, timeout_sec)
+                if runtime_context:
+                    LOGGER.info(
+                        "[%s tier] invoking %s for %s with local_profile=%s",
+                        tier,
+                        model,
+                        task_type,
+                        (runtime_context.get("local_profile") or {}).get("name", "base_local"),
+                    )
+                else:
+                    LOGGER.info("[%s tier] invoking %s for %s", tier, model, task_type)
+                text, raw_response = await self._invoke_single(model, messages, merged_params, timeout_sec, runtime_context=runtime_context)
 
                 # ── Schema validation ────────────────────────────────────────
                 schema_result = self.validate_schema(text, output_schema)
@@ -818,6 +889,7 @@ class ModelRouter:
                         schema_errors=schema_result["errors"],
                         tool_calls_valid=tool_result["all_valid"],
                         tool_calls=tool_result["tool_calls"],
+                        runtime_context=runtime_context,
                     )
                     LOGGER.info(
                         "[%s tier] %s accepted — score=%.3f schema_valid=%s tool_calls_valid=%s",
@@ -864,7 +936,7 @@ class ModelRouter:
             or self.config.get("routing_policies", {}).get("default", {}).get("timeout_sec")
             or 30
         )
-        merged_params = {**task_params, **kwargs}
+        merged_params, runtime_context = self._prepare_runtime_invoke_context(task_type, {**task_params, **kwargs})
 
         # ── 1. Rule layer: mock fast-path ──────────────────────────────────
         if self.mock_llm_calls:
@@ -895,7 +967,7 @@ class ModelRouter:
             result = await self._invoke_candidates(
                 local_models, messages, merged_params, timeout_sec,
                 tier="local", task_type=task_type, prompt_preview=prompt_preview,
-                output_schema=output_schema,
+                output_schema=output_schema, runtime_context=runtime_context,
             )
             if result is not None:
                 return result
@@ -915,7 +987,7 @@ class ModelRouter:
         result = await self._invoke_candidates(
             cloud_models, messages, merged_params, timeout_sec,
             tier="cloud", task_type=task_type, prompt_preview=prompt_preview,
-            output_schema=output_schema,
+            output_schema=output_schema, runtime_context=runtime_context,
         )
         if result is not None:
             return result
@@ -937,7 +1009,7 @@ class ModelRouter:
             or self.config.get("routing_policies", {}).get("default", {}).get("timeout_sec")
             or 30
         )
-        merged_params = {**task_params, **kwargs}
+        merged_params, runtime_context = self._prepare_runtime_invoke_context(task_type, {**task_params, **kwargs})
 
         if self.mock_llm_calls:
             model = self.select_model(task_type)
@@ -972,7 +1044,7 @@ class ModelRouter:
             result = await self._invoke_candidates(
                 local_models, messages, merged_params, timeout_sec,
                 tier="local", task_type=task_type, prompt_preview=text_preview,
-                output_schema=output_schema,
+                output_schema=output_schema, runtime_context=runtime_context,
             )
             if result is not None:
                 return result
@@ -988,7 +1060,7 @@ class ModelRouter:
         result = await self._invoke_candidates(
             cloud_models, messages, merged_params, timeout_sec,
             tier="cloud", task_type=task_type, prompt_preview=text_preview,
-            output_schema=output_schema,
+            output_schema=output_schema, runtime_context=runtime_context,
         )
         if result is not None:
             return result
